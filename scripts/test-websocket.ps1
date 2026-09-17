@@ -12,6 +12,7 @@ if (-not $Endpoint.IsLoopback -or $Endpoint.Scheme -ne 'ws') {
 }
 
 $socket = [System.Net.WebSockets.ClientWebSocket]::new()
+$socket.Options.SetRequestHeader('Origin', "http://$($Endpoint.Authority)")
 $timeout = [System.Threading.CancellationTokenSource]::new()
 $timeout.CancelAfter([TimeSpan]::FromSeconds($TimeoutSeconds))
 
@@ -19,7 +20,7 @@ function Send-Json {
     param([hashtable] $Message)
     $bytes = [System.Text.Encoding]::UTF8.GetBytes(($Message | ConvertTo-Json -Depth 8 -Compress))
     $segment = [System.ArraySegment[byte]]::new($bytes)
-    $socket.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $timeout.Token).GetAwaiter().GetResult()
+    [void]$socket.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $timeout.Token).GetAwaiter().GetResult()
 }
 
 function Receive-Event {
@@ -48,7 +49,7 @@ function Receive-Event {
 }
 
 try {
-    $socket.ConnectAsync($Endpoint, $timeout.Token).GetAwaiter().GetResult()
+    [void]$socket.ConnectAsync($Endpoint, $timeout.Token).GetAwaiter().GetResult()
     Send-Json @{
         type = 'session.start'
         protocolVersion = 1
@@ -58,10 +59,25 @@ try {
         $event = Receive-Event
     } while ($event.type -ne 'session.ready')
 
-    # Synthetic silence exercises transport without capturing a microphone or meeting.
+    # A synthetic tone followed by silence exercises turn detection without device capture.
+    $audio = [byte[]]::new(3200)
+    for ($sample = 0; $sample -lt 1600; $sample++) {
+        $value = [int16](4096 * [Math]::Sin(2 * [Math]::PI * 440 * $sample / 16000))
+        $bytes = [BitConverter]::GetBytes($value)
+        $audio[2 * $sample] = $bytes[0]
+        $audio[2 * $sample + 1] = $bytes[1]
+    }
+    for ($index = 0; $index -lt 4; $index++) {
+        [void]$socket.SendAsync(
+            [System.ArraySegment[byte]]::new($audio),
+            [System.Net.WebSockets.WebSocketMessageType]::Binary,
+            $true,
+            $timeout.Token
+        ).GetAwaiter().GetResult()
+    }
     $audio = [byte[]]::new(3200)
     for ($index = 0; $index -lt 10; $index++) {
-        $socket.SendAsync(
+        [void]$socket.SendAsync(
             [System.ArraySegment[byte]]::new($audio),
             [System.Net.WebSockets.WebSocketMessageType]::Binary,
             $true,

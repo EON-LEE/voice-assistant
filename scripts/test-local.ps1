@@ -2,7 +2,8 @@
 param(
     [string] $Dotnet = 'dotnet',
     [ValidateSet('Debug', 'Release')]
-    [string] $Configuration = 'Release'
+    [string] $Configuration = 'Release',
+    [switch] $IncludeDesktop
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,6 +17,10 @@ if ($LASTEXITCODE -ne 0) {
 
 $applications = @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.csproj' -Recurse)
 $tests = @(Get-ChildItem -LiteralPath (Join-Path $root 'tests') -Filter '*.csproj' -Recurse)
+if (-not $IncludeDesktop) {
+    $applications = @($applications | Where-Object { $_.FullName -notmatch '[\\/]VoiceAssistant\.Desktop[\\/]' })
+    $tests = @($tests | Where-Object { $_.FullName -notmatch '[\\/]VoiceAssistant\.Desktop\.Tests[\\/]' })
+}
 if ($applications.Count -eq 0 -or $tests.Count -eq 0) {
     throw 'Application and test projects must both be present. Integrate the component worktrees first.'
 }

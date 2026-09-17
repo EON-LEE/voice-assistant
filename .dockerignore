@@ -1,0 +1,15 @@
+.git
+.github
+.playwright-mcp
+**/node_modules
+**/dist
+**/bin
+**/obj
+**/TestResults
+**/test-results
+**/playwright-report
+**/.compiled
+**/.env
+**/.env.*
+*.zip
+*.png

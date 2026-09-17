@@ -67,6 +67,17 @@ After the sibling browser component is present, build from repository root:
 docker build -f .\src\VoiceAssistant.Api\Dockerfile -t voice-assistant .
 ```
 
+If the build environment cannot connect to NuGet.org, an approved NuGet v3
+source can be selected without disabling TLS verification. The Microsoft public
+mirror used for local container verification is:
+
+```powershell
+docker build --build-arg NUGET_SOURCE=https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json -f .\src\VoiceAssistant.Api\Dockerfile -t voice-assistant .
+```
+
+Keep credentials out of build arguments. This override is for a public or
+otherwise credential-free approved feed; it does not change runtime behavior.
+
 The multi-stage build runs frontend `npm ci` + `npm run build`, publishes the API, and copies `dist` to `wwwroot` in the final non-root .NET 8 image (port 8080). An API-only checkout can build/test/publish with dotnet; the full container intentionally requires browser sources. Repository `.dockerignore` should exclude all `node_modules`, `bin`, `obj`, `.git` and local secrets.
 
 ## Data handling and limits

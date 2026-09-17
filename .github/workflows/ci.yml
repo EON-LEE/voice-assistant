@@ -16,9 +16,17 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Build applications and run offline tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: Build API and run offline tests
         shell: pwsh
         run: .\scripts\test-local.ps1
+      - name: Build browser app and run unit and Chromium tests
+        shell: pwsh
+        env:
+          VOICE_ASSISTANT_BACKEND_E2E: '1'
+        run: .\scripts\test-web.ps1 -InstallBrowsers
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -26,3 +34,18 @@ jobs:
           name: test-results
           path: '**/TestResults/*.trx'
           if-no-files-found: ignore
+      - name: Upload browser test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-report
+          path: tests/VoiceAssistant.Web.E2E/playwright-report/
+          if-no-files-found: ignore
+
+  linux-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build non-root Linux web image
+        run: docker build --file src/VoiceAssistant.Api/Dockerfile --tag voice-assistant:test .

@@ -1,21 +1,29 @@
 # voice-assistant
 
-An Azure-native Windows meeting assistant that listens to English meeting audio
+An Azure-hosted, installation-free web meeting assistant that listens to shared English meeting audio
 and displays short English replies for the user to read aloud. It does not speak,
 send Teams messages, or make commitments on the user's behalf.
 
 ## Architecture
 
 ```text
-Teams playback -> Windows loopback capture -> PCM audio over WebSocket
+Teams tab/system audio -> browser audio sharing -> PCM audio over WebSocket
   -> Azure Speech -> conversation context + optional Azure AI Search
-  -> Azure OpenAI streaming reply -> Windows reply panel
+  -> Azure OpenAI streaming reply -> browser reply panel
 ```
 
-The Windows app captures playback from the selected output device, including a
-headset. It does not need to scrape the Teams screen or join the meeting as a bot.
-Device loopback can also capture other applications playing on the same device;
-it must not be presented as Teams-only capture.
+Open the web app and explicitly start sharing audio through the browser's
+screen-sharing chooser. Teams in an Edge/Chrome tab with **Share tab audio** is
+the recommended first path. Capturing a desktop Teams application's audio
+requires browser/OS support for system audio; sharing a window alone does not
+guarantee an audio track. System audio can include other applications. No
+installer or browser extension is required.
+
+The browser needs HTTPS (or localhost for development), a user gesture, and
+permission to share. The cloud server cannot independently listen to a PC.
+Captured video is not sent to the server; only shared audio is processed.
+If the selected source contains no audio track, the app must explain this and
+stop rather than silently use the microphone.
 
 The initial implementation separates streaming speech recognition from text
 generation. Foundry-hosted models provide English replies, while Azure AI Search
@@ -26,11 +34,12 @@ are possible later alternatives, not prerequisites for displaying text replies.
 
 | Component | Location | Responsibility |
 | --- | --- | --- |
-| Windows desktop | `src/VoiceAssistant.Desktop` | Explicit audio capture, transcription, readable replies |
+| Browser app | `src/VoiceAssistant.Web` | Audio-sharing consent, transcription, readable replies |
 | ASP.NET Core API | `src/VoiceAssistant.Api` | Authentication, audio recognition, retrieval, streaming generation |
 | Wire contract | `contracts` | Versioned client/server message definitions |
 | Azure infrastructure | `infra` | Parameterized deployment and prerequisites |
 | Component tests | `tests` | Offline provider, protocol, and state tests |
+| Optional legacy desktop | `src/VoiceAssistant.Desktop` | Preserved prototype; not required for the web product |
 
 The components are being implemented in parallel worktrees. A component's
 presence or passing offline tests is not evidence of a successful Azure
@@ -38,21 +47,29 @@ deployment or a live Teams meeting test.
 
 ## Build and test
 
-Use Windows and the .NET 8 SDK, not only the .NET runtime.
+Contributors need Node.js 22 and the .NET 8 SDK, not only the .NET runtime.
+End users need only a supported browser. The preserved optional desktop
+prototype and its tests additionally require Windows.
 
-To open the desktop app in its default, explicitly labeled offline demo:
-
-```powershell
-dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj
-```
-
-Click **Start**, then **Suggest**. Demo mode uses no audio device and no Azure
-connection. See the [desktop guide](src/VoiceAssistant.Desktop/README.md) before
-switching to Development or Production mode.
+To build and test the API and browser app:
 
 ```powershell
 .\scripts\test-local.ps1
+$env:VOICE_ASSISTANT_BACKEND_E2E = '1'
+.\scripts\test-web.ps1 -InstallBrowsers
 ```
+
+Start the browser development server:
+
+```powershell
+Set-Location .\src\VoiceAssistant.Web
+npm ci
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Open `http://127.0.0.1:5173`. The explicit offline demo does not use meeting
+audio or Azure. Live and local synthetic modes additionally need the API;
+see each component's configuration guide.
 
 An isolated SDK can be selected without changing machine-wide settings:
 
@@ -60,21 +77,49 @@ An isolated SDK can be selected without changing machine-wide settings:
 .\scripts\test-local.ps1 -Dotnet 'C:\path\to\dotnet.exe'
 ```
 
-The script builds every application project and runs every test project. Windows
-CI performs the same checks. Follow your organization's PowerShell execution
+The .NET script builds/tests the API by default; use `-IncludeDesktop` to include
+the preserved Windows prototype. The web script builds the browser bundle and
+runs unit and Chromium tests. CI performs the same checks. Follow your organization's PowerShell execution
 policy; do not weaken machine-wide policy to run these commands.
 
 After starting the API in its explicitly configured, loopback-only fake-provider
 mode, test the actual WebSocket transport without capturing any meeting:
 
 ```powershell
-.\scripts\test-websocket.ps1 -Endpoint 'ws://127.0.0.1:8080/api/meeting'
+.\scripts\test-websocket.ps1 -Endpoint 'ws://127.0.0.1:5080/api/meeting'
 ```
 
-This smoke test sends synthetic PCM silence and requires a final transcript and
+This smoke test sends a synthetic PCM tone followed by silence and requires a final transcript and
 a consistent streamed reply from the deterministic fake provider. It is not a
 speech-recognition accuracy, live grounding, or cloud latency test. Fake mode
 must never silently replace a failed Azure connection.
+
+## What the tests establish
+
+The browser suite covers explicit consent, sharing rejection, missing audio,
+source-ended and disconnected cleanup, answer pinning, and a narrow viewport.
+With `VOICE_ASSISTANT_BACKEND_E2E=1`, it also starts the real local API and sends
+synthetic audio through the browser's native AudioContext/AudioWorklet and a real
+WebSocket. No microphone, actual screen selection, or meeting is captured.
+
+Testing the published bundle against an already running local server:
+
+```powershell
+$env:VOICE_ASSISTANT_WEB_URL = 'http://localhost:5081'
+$env:VOICE_ASSISTANT_BACKEND_E2E = '1'
+$env:VOICE_ASSISTANT_API_EXTERNAL = '1'
+Set-Location .\tests\VoiceAssistant.Web.E2E
+npm test
+```
+
+These checks prove transport and lifecycle behavior, not Azure speech accuracy.
+For a real meeting-like acceptance run, configure an authenticated Azure
+deployment, open a permitted public English video in a separate browser tab,
+choose **Live**, sign in, grant consent, and share that tab **with audio**. Verify
+that the transcript follows the actual spoken words and that the English answer
+responds to them. Confirm Stop releases sharing. Record latency separately;
+never count a Fake or Demo reply as a successful Azure inference. Do not save
+the video's audio or a full transcript in the repository.
 
 ## Responsible meeting use
 
@@ -102,8 +147,12 @@ before applying infrastructure. Infrastructure templates are not proof that
 resources have been created.
 
 Production clients use Microsoft Entra authentication and encrypted transport.
-Azure service access should use managed identity; do not package long-lived
-Azure keys or client secrets in the desktop app.
+The browser uses authorization code + PKCE and keeps tokens in memory. A
+same-origin authenticated endpoint issues a short-lived, one-use WebSocket
+ticket; long-lived access tokens must not appear in WebSocket URLs. Azure
+service access should use managed identity; never send Azure keys or client
+secrets to the browser. Single-instance ticket storage requires matching
+deployment/scale restrictions until shared ticket storage is introduced.
 
 Knowledge starts with explicitly approved documents. Search results must be
 filtered by the authenticated user's permissions, with title, source URL, and
