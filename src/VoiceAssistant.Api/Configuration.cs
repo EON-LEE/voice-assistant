@@ -1,0 +1,63 @@
+namespace VoiceAssistant.Api;
+
+public sealed class ServiceSettings
+{
+    public string Mode { get; init; } = "Azure";
+    public string TenantId { get; init; } = "";
+    public string Audience { get; init; } = "";
+    public string ClientId { get; init; } = "";
+    public string Scope { get; init; } = "";
+    public string SpeechRegion { get; init; } = "";
+    public string SpeechEndpoint { get; init; } = "";
+    public string SpeechResourceId { get; init; } = "";
+    public string OpenAIEndpoint { get; init; } = "";
+    public string ChatDeployment { get; init; } = "";
+    public string EmbeddingDeployment { get; init; } = "";
+    public string SearchEndpoint { get; init; } = "";
+    public string SearchIndex { get; init; } = "";
+    public string[] AllowedOrigins { get; init; } = [];
+    public bool Fake => Mode == "Fake";
+    public bool SearchEnabled => !string.IsNullOrEmpty(SearchEndpoint);
+
+    public static ServiceSettings Read(IConfiguration config, IHostEnvironment environment)
+    {
+        string Get(string key) => config[key] ?? "";
+        var settings = new ServiceSettings
+        {
+            Mode = config["Provider:Mode"] ?? "Azure",
+            TenantId = Get("Authentication:TenantId"),
+            Audience = Get("Authentication:Audience"),
+            ClientId = Get("Authentication:ClientId"),
+            Scope = Get("Authentication:Scope"),
+            SpeechRegion = Get("Azure:SpeechRegion"),
+            SpeechEndpoint = Get("Azure:SpeechEndpoint"),
+            SpeechResourceId = Get("Azure:SpeechResourceId"),
+            OpenAIEndpoint = Get("Azure:OpenAIEndpoint"),
+            ChatDeployment = Get("Azure:ChatDeployment"),
+            EmbeddingDeployment = Get("Azure:EmbeddingDeployment"),
+            SearchEndpoint = Get("Azure:SearchEndpoint"),
+            SearchIndex = Get("Azure:SearchIndex"),
+            AllowedOrigins = config.GetSection("Security:AllowedOrigins").Get<string[]>() ?? []
+        };
+        if (settings.Mode is not ("Azure" or "Fake") || (settings.Fake && !environment.IsDevelopment()))
+            throw new InvalidOperationException("Fake requires Development; Provider:Mode must be Azure or Fake.");
+        if (!settings.Fake)
+        {
+            if (!Guid.TryParse(settings.TenantId, out _) || !Guid.TryParse(settings.ClientId, out _) ||
+                string.IsNullOrWhiteSpace(settings.Audience) || !settings.Scope.EndsWith("/Meeting.Access", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(settings.SpeechRegion) || string.IsNullOrWhiteSpace(settings.SpeechResourceId) ||
+                !Https(settings.OpenAIEndpoint) || string.IsNullOrWhiteSpace(settings.ChatDeployment) ||
+                settings.AllowedOrigins.Length == 0 || settings.AllowedOrigins.Any(origin => !OriginPolicy.IsCanonicalHttpsOrigin(origin)))
+                throw new InvalidOperationException("Azure mode requires valid Authentication, Speech, OpenAI and Security:AllowedOrigins configuration.");
+            if (settings.SpeechEndpoint.Length > 0 && !Https(settings.SpeechEndpoint))
+                throw new InvalidOperationException("Azure:SpeechEndpoint must be HTTPS.");
+            if ((settings.SearchEnabled || settings.SearchIndex.Length > 0) &&
+                (!Https(settings.SearchEndpoint) || settings.SearchIndex.Length == 0 || settings.EmbeddingDeployment.Length == 0))
+                throw new InvalidOperationException("Search requires endpoint, index and embedding deployment together.");
+        }
+        return settings;
+    }
+
+    private static bool Https(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0;
+}
