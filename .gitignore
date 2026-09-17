@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.vs/
+TestResults/
+**/TestResults/
+*.user
+*.suo
+.env
+.env.*
+!.env.example
