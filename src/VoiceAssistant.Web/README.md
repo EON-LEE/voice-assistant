@@ -1,0 +1,87 @@
+# Browser meeting assistant
+
+Installation-free TypeScript/Vite frontend for the same-origin Azure-hosted API. End users open a URL; no Windows app, extension, download, or microphone permission is needed. The preserved desktop project is not a dependency.
+
+## Build and run
+
+Developer prerequisites: Node 22.12+ (validated with 22.23.2), npm, modern Chromium browser for screen/tab audio support.
+
+```powershell
+Set-Location .\src\VoiceAssistant.Web
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm run dev
+```
+
+Vite serves `http://127.0.0.1:5173` and proxies `/api` (including WebSockets) to `http://localhost:5080`, preserving the incoming Host header. Serve `dist` from the ASP.NET API's same-origin static root in Azure; no Vite development server is needed in production. The frontend contains no cloud secrets or build-time tenant config.
+
+The page starts stopped in clearly labelled **Offline demo**. Start demo uses canned streaming replies and synthetic PCM in memory: no authentication, backend call, screen picker, or audio device is used. Select **Live** explicitly to use the server. No failed live connection ever switches to Demo.
+
+## Browser capture constraints and consent
+
+Use **Teams in a browser tab** where possible. After selecting Live, sign in (Azure only), check participant permission, then click **Share meeting audio**. Select the Teams tab and enable **Share tab audio** in the browser/OS prompt. The application invokes `getDisplayMedia({ video: true, audio: true })` only from that click, and creates/resumes `AudioContext` in the same gesture.
+
+The browser requires `video: true` to offer display audio; video is not attached to a video element, inspected, uploaded, recorded, or retained by this app. All video and audio tracks are stopped on Stop, session failure, permission/setup failure, source `ended`/audio `mute`, and page unload. A share granted after a cancelled/pending picker is also immediately stopped. Browsers do not let websites dismiss the picker themselves; dismiss an outstanding picker if you stop while it is open.
+
+Audio availability depends on the browser, OS, selected surface, and user's audio-sharing option. **Teams desktop/system audio is not guaranteed.** Window sharing frequently supplies no audio. A stream without audio fails visibly and releases all tracks; there is no microphone fallback. Screen/system audio can include other applications. No browser permission can bypass participant consent or meeting policy.
+
+The live source converts only audio tracks with a fixed-memory AudioWorklet: mono downmix, 127-tap low-pass FIR anti-alias filter, continuous fractional resampling to 16 kHz, clipped signed little-endian PCM16. It sends 640-byte/20ms frames without a WAV header, only after `session.ready`. Video is never sent. Eight recyclable transferable buffers cap the worklet queue; no growing per-sample arrays are used. Worklet starvation and WebSocket `bufferedAmount` exceeding 32,000 bytes stop visibly rather than accumulating audio or silently losing speech.
+
+Pause while speaking drops audio locally and cancels suggestions. Epoch-tagged worklet frames prevent already-queued pre-pause buffers being uploaded after resume; DSP history is reset to avoid retaining paused speech. Pause leaves the shared tracks open; **Stop** releases them. Already-uploaded audio cannot be recalled. Browser throttling/suspension can interrupt capture; keep the page available. No automatic reconnect, recording, TTS, Teams posting, or external source-link navigation is performed.
+
+## Agreed browser authentication contract
+
+Live initializes from same-origin `GET /api/client-config`:
+
+```json
+{
+  "clientId": "<SPA application GUID>",
+  "authority": "https://login.microsoftonline.com/<tenant GUID>",
+  "scope": "api://<API application GUID>/Meeting.Access",
+  "mode": "Azure",
+  "webSocketPath": "/api/meeting"
+}
+```
+
+Register an **Entra SPA** redirect URI matching `location.origin` (the deployed HTTPS origin), and grant the delegated API scope. This is not the desktop public-client registration. MSAL Browser uses authorization-code/PKCE and an explicitly clicked sign-in popup. Both token and temporary caches use `memoryStorage`; no access/refresh token is written to localStorage, sessionStorage, cookies, or a WebSocket query. Reloading loses the application token cache (the identity provider may still have an SSO cookie).
+
+After consent and capture preparation, the frontend acquires a token silently and sends:
+
+```http
+POST /api/session/ticket
+Authorization: Bearer <access token held in memory>
+```
+
+The API returns `{ "ticket": "<opaque one-use value>", "expiresAt": "<UTC ISO timestamp>" }`. A fresh ticket is exchanged for a same-origin `wss://<origin>/api/meeting?ticket=...` connection. Tickets are scoped to the meeting endpoint, single use, and expire within 30 seconds server-side; the browser rejects expired or implausibly distant expiries. No access token goes in the query. The API must validate Origin, ticket expiry/use/scope, tenant and audience; redact tickets/query strings from access telemetry. The frontend never logs tokens/tickets.
+
+Missing/malformed config, failed authorization, HTTP production, expired sign-in, or failed socket connection **fail closed visibly**, with capture cleanup. Interactive token renewal does not open a surprise popup during a meeting; stop and sign in again when needed. Browser sign-in/Azure services require manual tenant validation and are not exercised by offline tests.
+
+## Fake backend integration (real WebSocket, no capture)
+
+The API must run explicitly in `Development` with `Provider__Mode=Fake` and loopback binding/Origin/Host. Suggested backend address: `http://localhost:5080`. Its client config returns `mode: "Fake"` and the same `webSocketPath`; Entra fields are not required in Fake.
+
+Select **Local fake backend · synthetic audio** and Start synthetic test. This mode is restricted to exact loopback browser hostnames and rejects Azure config. It sends a 400ms synthetic 440Hz PCM burst followed by silence, never played through speakers, to trigger the fake backend transcript; click Suggest for its deterministic answer. This is distinct from the fully offline demo. Live sharing against local Fake is also possible explicitly, but is labelled **LOCAL FAKE** and requires capture consent.
+
+## Protocol and UI behavior
+
+The v1 WebSocket protocol is unchanged: first `session.start` with `protocolVersion:1` and `{encoding:"pcm_s16le",sampleRate:16000,channels:1}`, then binary PCM only after `session.ready`. Controls send `response.request`, `response.cancel`, `session.stop`. Stop attempts the last command before closing the socket; delivery cannot be guaranteed after a network failure.
+
+Server events: `session.ready`; `transcript.partial/final` (`turnId`, nonnegative `revision`, `text`); `response.started/cancelled` (`responseId`,`turnId`); incremental `response.delta` (`text`); authoritative `response.completed` (`text`,`sources:[{title,url,updatedAt}]`); `error` (`code`,`message`,`retryable`).
+
+Agreed additive completed `grounding` values `disabled`, `grounded`, `unavailable`, `no_matches` are displayed explicitly, including on pinned snapshots. Omission is accepted for older v1 services and displayed as not supplied. Sources are plain text, not auto-opened links.
+
+Transcript revisions cannot regress. Final text cannot be overwritten by partials. New turns invalidate old suggestions; only the active response ID receives deltas/completion. Cancel/pause suppress late answers; Pin creates an immutable text/source snapshot separate from new suggestions and survives session restarts until Unpin/reload. IDs are opaque; causal new-turn ordering relies on ordered WebSocket delivery. There is no client request ID in v1, so the server must preserve response-start ordering around cancellation/new requests.
+
+State is bounded: 64 transcript turns, 256 remembered response IDs, 32,768 characters per transcript/reply, 20 sources, 64KiB incoming text messages. Nonretryable errors stop; retryable errors stay visible. No reconnect/replay is automatic. All meeting text is page-memory only.
+
+## Validation
+
+`npm test` compiles and runs Node's test runner with tests in `tests/VoiceAssistant.Web.Tests`: conversion rates/endianness, stereo/clipping/nonfinite samples, chunk continuity and anti-alias rejection, reducer revision/cancellation/stale IDs/pins, strict event parsing, ready gating, disconnect/fatal/device cleanup, no-audio/permission failure, picker cancellation and late tracks, worklet source lifecycle mocks, explicit Demo, and WebSocket backpressure. No test requests actual meeting/screen or microphone permission.
+
+`npm run build` runs strict TypeScript typechecking and bundles both main UI and AudioWorklet. A local browser smoke checks Demo Start/Suggest/Pin/Pause/Stop. Coordinator-owned Playwright tests in a separate E2E directory cover full mocked-browser capture and actual fake-backend integration after merge.
+
+Stable automation selectors are `data-testid="mode|start|stop|suggest|pause|pin|transcript|reply|pinned-reply|status|error|consent|signin"`. Mode values are `demo`, `live`, `synthetic`. Live requires ready config and consent; Fake bypasses only Entra, never capture permission. Azure sign-in, real Teams audio support, OS permissions, throttling, and speech/AI quality require consented manual verification.
+
+References: [getDisplayMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia), [MSAL initialization](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/initialization), [MSAL caching](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/caching).

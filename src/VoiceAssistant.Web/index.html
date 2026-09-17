@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2317634f'/%3E%3Cpath d='M8 10h16v10H14l-6 4z' fill='white'/%3E%3C/svg%3E">
+    <title>Meeting English reply assistant</title>
+  </head>
+  <body>
+    <main>
+      <header><span class="eyebrow">YOUR MEETING COMPANION</span><h1>Find the words.<br>Stay in the conversation.</h1><p>Live English transcripts and short reply suggestions. Nothing is spoken or sent on your behalf.</p></header>
+      <section aria-labelledby="session-title" class="card controls">
+        <div class="section-heading"><h2 id="session-title">Your session</h2><span id="status" role="status">Stopped · no capture</span></div>
+        <label for="mode">Connection mode</label>
+        <select id="mode"><option value="demo">Offline demo · no permissions</option><option value="live">Live · share meeting audio</option><option value="synthetic">Local fake backend · synthetic audio</option></select>
+        <p id="mode-help">Explore the interface with sample text. No microphone, screen sharing, sign-in, or network connection.</p>
+        <div id="live-options" hidden>
+          <p class="notice"><strong>Recommended: Teams in a browser tab.</strong> Choose that tab in the browser's Share prompt and enable <strong>Share tab audio</strong>. Sharing a window may provide no audio. System audio depends on your browser and OS; Teams desktop audio is not guaranteed.</p>
+          <p>The browser requires video sharing to offer audio. Video stays in the browser: it is never displayed, uploaded, recorded, or retained by this app. System audio can include other apps. No microphone is requested.</p>
+          <label class="check"><input id="consent" type="checkbox"> I have permission from the participants to capture and send this meeting audio.</label>
+          <button id="signin" type="button" class="secondary">Sign in securely</button><span id="auth-status" role="status">Sign-in required before sharing.</span>
+        </div>
+        <div class="actions"><button id="start" type="button">Start demo</button><button id="stop" type="button" class="secondary" disabled>Stop session</button><label class="check"><input id="pause" type="checkbox" disabled> Pause while speaking</label></div>
+        <p id="error" role="alert" class="error" hidden></p>
+      </section>
+      <div class="workspace">
+        <section class="card transcript-panel" aria-labelledby="transcript-title"><div class="section-heading"><h2 id="transcript-title">English transcript</h2><span class="eyebrow">LIVE NOTES</span></div><div id="transcript" tabindex="0" aria-label="Partial and final meeting transcripts"><p class="empty">The conversation will appear here after you start.</p></div></section>
+        <section class="card reply-panel" aria-labelledby="reply-title"><div class="section-heading"><h2 id="reply-title">Your next reply</h2><span id="reply-status" role="status">Ready when you are</span></div><p id="reply" class="answer">Ask for a suggestion after a final transcript arrives.</p><ul id="sources" aria-label="Suggestion sources"></ul><div class="actions"><button id="suggest" type="button" disabled>Suggest a short reply</button><button id="cancel" type="button" class="secondary" disabled>Cancel</button><button id="pin" type="button" class="secondary" disabled>Pin this answer</button></div><p class="fine">Suggestions can be wrong. Check names, facts, and commitments before speaking.</p></section>
+        <section class="card pinned-panel" aria-labelledby="pinned-title"><div class="section-heading"><h2 id="pinned-title">Pinned answer</h2><button id="unpin" type="button" class="text-button" disabled>Unpin</button></div><p id="pinned" class="answer">Keep a useful answer here. New suggestions will not replace it.</p><ul id="pinned-sources" aria-label="Pinned sources"></ul></section>
+      </div>
+      <footer>Audio is streamed, never recorded to a file. Stop releases all shared tracks. Pause drops new audio locally; already-sent audio cannot be recalled. Text stays only in this page's memory.</footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
