@@ -40,6 +40,16 @@ deployment or a live Teams meeting test.
 
 Use Windows and the .NET 8 SDK, not only the .NET runtime.
 
+To open the desktop app in its default, explicitly labeled offline demo:
+
+```powershell
+dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj
+```
+
+Click **Start**, then **Suggest**. Demo mode uses no audio device and no Azure
+connection. See the [desktop guide](src/VoiceAssistant.Desktop/README.md) before
+switching to Development or Production mode.
+
 ```powershell
 .\scripts\test-local.ps1
 ```
