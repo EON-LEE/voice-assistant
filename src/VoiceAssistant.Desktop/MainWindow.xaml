@@ -1,0 +1,69 @@
+<Window x:Class="VoiceAssistant.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Meeting English Reply Assistant" Width="780" Height="900" MinWidth="560" MinHeight="620"
+        Closing="Window_Closing" Background="#F6F8FA" FontFamily="Segoe UI" FontSize="14">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="20">
+      <TextBlock Text="Meeting English Reply Assistant" FontSize="24" FontWeight="SemiBold"/>
+      <TextBlock Margin="0,8,0,12" TextWrapping="Wrap"
+                 Text="Suggestions only: nothing is spoken or sent to Teams. Obtain participants' consent before capturing meeting audio. Output loopback includes ALL apps playing on the selected device, not just Teams."/>
+      <Border Padding="12" Background="#EAF2FF" CornerRadius="4">
+        <StackPanel>
+          <Label Target="{Binding ElementName=ModeBox}" Content="_Connection mode" Padding="0,0,0,4"/>
+          <ComboBox x:Name="ModeBox" SelectedIndex="0" SelectionChanged="ModeBox_SelectionChanged"
+                    AutomationProperties.Name="Connection mode" MinHeight="30"/>
+          <TextBlock x:Name="ModeDescription" TextWrapping="Wrap" Margin="0,6,0,0"/>
+          <TextBlock x:Name="EndpointText" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel>
+      </Border>
+      <Label Target="{Binding ElementName=DeviceBox}" Content="_Output device (choose the same speaker/headset as Teams)" Margin="0,10,0,0"/>
+      <DockPanel>
+        <Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="_Refresh" Click="Refresh_Click"/>
+        <ComboBox x:Name="DeviceBox" DisplayMemberPath="Name" MinHeight="30"
+                  AutomationProperties.Name="Output loopback device"/>
+      </DockPanel>
+      <CheckBox x:Name="SyntheticBox" Content="Development: use synthetic silence (no device capture)"
+                Checked="Synthetic_Changed" Unchecked="Synthetic_Changed"/>
+      <CheckBox x:Name="ConsentBox">
+        <TextBlock TextWrapping="Wrap" Text="I have permission to capture and send the selected output audio for this session. No microphone is captured and this app never saves audio to disk."/>
+      </CheckBox>
+      <WrapPanel Margin="0,8,0,4">
+        <Button x:Name="StartButton" Content="_Start session" Click="Start_Click"/>
+        <Button x:Name="StopButton" Content="S_top" Click="Stop_Click" IsEnabled="False"/>
+        <CheckBox x:Name="PauseBox" Content="_Pause while speaking" IsEnabled="False"
+                  Checked="Pause_Changed" Unchecked="Pause_Changed"/>
+        <CheckBox Content="Always on _top" Checked="Topmost_Changed" Unchecked="Topmost_Changed"/>
+      </WrapPanel>
+      <TextBlock x:Name="StatusText" Text="Stopped - no audio capture" FontWeight="SemiBold"
+                 Margin="0,6,0,4" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+      <TextBlock x:Name="ErrorText" Foreground="#A31515" TextWrapping="Wrap"
+                 AutomationProperties.LiveSetting="Assertive" Margin="0,0,0,8"/>
+      <TextBlock Text="English transcript (partial / final)" FontWeight="SemiBold" Margin="0,8,0,4"/>
+      <TextBox x:Name="TranscriptBox" IsReadOnly="True" Height="150"
+               AutomationProperties.Name="English partial and final transcripts"/>
+      <WrapPanel Margin="0,12,0,8">
+        <Button x:Name="RequestButton" Content="_Suggest a short reply" Click="Request_Click" IsEnabled="False"/>
+        <Button x:Name="CancelButton" Content="_Cancel suggestion" Click="Cancel_Click" IsEnabled="False"/>
+        <Button x:Name="PinButton" Content="_Pin snapshot" Click="Pin_Click" IsEnabled="False"/>
+      </WrapPanel>
+      <TextBlock Text="New suggestion (check accuracy before speaking)" FontWeight="SemiBold" Margin="0,0,0,4"/>
+      <TextBox x:Name="ReplyBox" IsReadOnly="True" Height="115" FontSize="18"
+               AutomationProperties.Name="New streaming reply suggestion"/>
+      <TextBlock x:Name="ReplyStatus" Margin="0,4,0,0"/>
+      <TextBox x:Name="SourcesBox" IsReadOnly="True" MaxHeight="90" Margin="0,4,0,0"
+               AutomationProperties.Name="Suggestion reference sources"/>
+      <DockPanel Margin="0,16,0,4">
+        <Button DockPanel.Dock="Right" Content="_Unpin" Click="Unpin_Click"/>
+        <TextBlock Text="Pinned snapshot (never replaced by incoming answers)" FontWeight="SemiBold"
+                   VerticalAlignment="Center" TextWrapping="Wrap"/>
+      </DockPanel>
+      <TextBox x:Name="PinnedBox" IsReadOnly="True" Height="100" FontSize="18"
+               AutomationProperties.Name="Pinned immutable reply snapshot"/>
+      <TextBox x:Name="PinnedSourcesBox" IsReadOnly="True" MaxHeight="90" Margin="0,4,0,0"
+               AutomationProperties.Name="Pinned reference sources"/>
+      <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#454545"
+                 Text="Pause drops audio locally and cancels the current suggestion; already-sent audio cannot be recalled. Stop disconnects and releases the device. Reconnect always requires another Start. Text stays in memory until you close the app; pinning is not a recording."/>
+    </StackPanel>
+  </ScrollViewer>
+</Window>
