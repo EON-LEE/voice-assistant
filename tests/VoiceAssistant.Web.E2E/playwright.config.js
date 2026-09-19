@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { join } from 'node:path';
 
 const baseURL = process.env.VOICE_ASSISTANT_WEB_URL ?? 'http://127.0.0.1:5173';
 const endpoint = new URL(baseURL);
@@ -10,7 +11,7 @@ const servers = [];
 if (process.env.VOICE_ASSISTANT_BACKEND_E2E === '1' &&
     process.env.VOICE_ASSISTANT_API_EXTERNAL !== '1') {
   servers.push({
-    command: 'dotnet run --no-build --configuration Release --no-launch-profile',
+    command: `dotnet "${join('bin', 'Release', 'net8.0', 'VoiceAssistant.Api.dll')}"`,
     cwd: '../../src/VoiceAssistant.Api',
     url: 'http://localhost:5080/health/live',
     reuseExistingServer: false,
@@ -24,7 +25,7 @@ if (process.env.VOICE_ASSISTANT_BACKEND_E2E === '1' &&
 }
 if (!process.env.VOICE_ASSISTANT_WEB_URL) {
   servers.push({
-    command: 'npm run dev -- --host 127.0.0.1 --port 5173 --strictPort',
+    command: `node "${join('node_modules', 'vite', 'bin', 'vite.js')}" --host 127.0.0.1 --port 5173 --strictPort`,
     cwd: '../../src/VoiceAssistant.Web',
     url: baseURL,
     reuseExistingServer: false,

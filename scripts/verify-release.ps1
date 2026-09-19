@@ -71,6 +71,7 @@ function Invoke-Verification {
 $previousBackend = $env:VOICE_ASSISTANT_BACKEND_E2E
 $previousExternal = $env:VOICE_ASSISTANT_API_EXTERNAL
 $previousWebUrl = $env:VOICE_ASSISTANT_WEB_URL
+$previousViteAuth = $env:VOICE_ASSISTANT_VITE_AUTH_TESTS
 Push-Location $root
 try {
     Save-Report
@@ -78,6 +79,7 @@ try {
         & (Join-Path $PSScriptRoot 'test-local.ps1') -Dotnet $Dotnet
     }
     $env:VOICE_ASSISTANT_BACKEND_E2E = '1'
+    $env:VOICE_ASSISTANT_VITE_AUTH_TESTS = '1'
     Remove-Item Env:VOICE_ASSISTANT_API_EXTERNAL -ErrorAction SilentlyContinue
     Remove-Item Env:VOICE_ASSISTANT_WEB_URL -ErrorAction SilentlyContinue
     Invoke-Verification 'web-build-unit-and-real-local-api-browser-tests' {
@@ -108,5 +110,6 @@ finally {
     $env:VOICE_ASSISTANT_BACKEND_E2E = $previousBackend
     $env:VOICE_ASSISTANT_API_EXTERNAL = $previousExternal
     $env:VOICE_ASSISTANT_WEB_URL = $previousWebUrl
+    $env:VOICE_ASSISTANT_VITE_AUTH_TESTS = $previousViteAuth
     Pop-Location
 }
