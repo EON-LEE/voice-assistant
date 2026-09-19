@@ -58,6 +58,8 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         config.AuthorizationToken = authorization;
         config.SpeechRecognitionLanguage = "en-US";
         config.SetProperty(PropertyId.Speech_SegmentationSilenceTimeoutMs, "700");
+        config.SetProperty("OPENSSL_DISABLE_CRL_CHECK", "false");
+        config.SetProperty("OPENSSL_CONTINUE_ON_CRL_DOWNLOAD_FAILURE", "false");
         return config;
     }
 

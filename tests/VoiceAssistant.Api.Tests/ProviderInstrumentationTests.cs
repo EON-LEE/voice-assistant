@@ -42,6 +42,8 @@ public sealed class ProviderInstrumentationTests
         Assert.Equal("en-US", config.SpeechRecognitionLanguage);
         Assert.Equal("700", config.GetProperty(PropertyId.Speech_SegmentationSilenceTimeoutMs));
         Assert.Equal("test-only-token", config.AuthorizationToken);
+        Assert.Equal("false", config.GetProperty("OPENSSL_DISABLE_CRL_CHECK"));
+        Assert.Equal("false", config.GetProperty("OPENSSL_CONTINUE_ON_CRL_DOWNLOAD_FAILURE"));
     }
 
     [Fact]
