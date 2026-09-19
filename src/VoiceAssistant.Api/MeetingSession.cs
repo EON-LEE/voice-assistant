@@ -33,11 +33,13 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private string? responseId;
     private string? responseTurn;
     private string? lastTurn;
+    private long lastFinalTimestamp;
+    private MeetingMetrics.ResponseMeasurement? responseMeasurement;
     private int generationNumber;
     private bool responseActive;
     private int overflow;
     private readonly List<Task> retired = [];
-    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0);
+    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0);
     private sealed record AudioMessage(byte[] Bytes);
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
     private sealed record Completion(string Text, Source[] Sources, string Grounding);
@@ -56,7 +58,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             if (start is null || start.Type != WebSocketMessageType.Text || !IsValidStart(start.Bytes))
                 throw new ProviderException("invalid_start", "First message must be protocol v1 session.start with PCM16LE 16 kHz mono audio.");
             speech = await provider.StartSpeechAsync(
-                transcript => EnqueueCallback(new("transcript", transcript), lifetime),
+                transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
                 error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
             await SendAsync(new { type = "session.ready", protocolVersion = 1 }, lifetime.Token);
             receiver = ReceiveLoopAsync(lifetime.Token);
@@ -83,14 +85,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             conversation.Add(new(transcript.Text));
                             while (conversation.Count > 12 || conversation.Sum(turn => turn.Text.Length) > 24000) conversation.RemoveAt(0);
                             lastTurn = transcript.TurnId;
-                            await StartResponseAsync(lifetime.Token);
+                            lastFinalTimestamp = message.Timestamp;
+                            await StartResponseAsync(lifetime.Token, manual: false);
                         }
                         else if (responseActive && transcript.TurnId != responseTurn)
                             await CancelResponseAsync(lifetime.Token);
                         break;
                     case "response.request":
                         if (lastTurn is null) await ErrorAsync("no_transcript", "Wait for a finalized utterance.", true, lifetime.Token);
-                        else await StartResponseAsync(lifetime.Token);
+                        else await StartResponseAsync(lifetime.Token, manual: true);
                         break;
                     case "response.cancel":
                         await CancelResponseAsync(lifetime.Token);
@@ -102,6 +105,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                     case "fatal": throw (ProviderException)message.Value!;
                     case "delta" when message.Generation == generationNumber && responseActive:
                         await SendAsync(new { type = "response.delta", responseId, turnId = responseTurn, text = (string)message.Value! }, lifetime.Token);
+                        responseMeasurement?.FirstDeltaSent();
                         break;
                     case "complete" when message.Generation == generationNumber && responseActive:
                         var completion = (Completion)message.Value!;
@@ -114,6 +118,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             sources = completion.Sources,
                             grounding = completion.Grounding
                         }, lifetime.Token);
+                        responseMeasurement?.CompletedSent();
                         responseActive = false;
                         break;
                     case "generation.error" when message.Generation == generationNumber && responseActive:
@@ -272,7 +277,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         return new(data.ToArray(), result.MessageType);
     }
 
-    private async Task StartResponseAsync(CancellationToken lifetime)
+    private async Task StartResponseAsync(CancellationToken lifetime, bool manual)
     {
         await CancelResponseAsync(lifetime);
         generation?.Dispose();
@@ -281,6 +286,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         responseId = Guid.NewGuid().ToString("N");
         responseTurn = lastTurn;
         responseActive = true;
+        responseMeasurement = new(lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual);
         var number = ++generationNumber;
         await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
         if (!generationTask.IsCompleted) retired.Add(generationTask);
@@ -295,6 +301,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         generationNumber++;
         if (!responseActive) return;
         responseActive = false;
+        responseMeasurement = null;
         await SendAsync(new { type = "response.cancelled", responseId, turnId = responseTurn }, cancellation);
     }
 
@@ -302,7 +309,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     {
         try
         {
-            var grounding = await provider.RetrieveAsync(history[^1].Text, objectId, cancellation);
+            var grounding = await MeetingMetrics.MeasureRetrievalAsync(provider, history[^1].Text, objectId, cancellation);
             var text = new StringBuilder();
             await foreach (var delta in provider.AnswerAsync(history, grounding, cancellation).WithCancellation(cancellation))
             {

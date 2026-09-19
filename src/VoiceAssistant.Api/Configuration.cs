@@ -12,6 +12,7 @@ public sealed class ServiceSettings
     public string SpeechResourceId { get; init; } = "";
     public string OpenAIEndpoint { get; init; } = "";
     public string ChatDeployment { get; init; } = "";
+    public int ChatMaxOutputTokens { get; init; } = 2048;
     public string EmbeddingDeployment { get; init; } = "";
     public string SearchEndpoint { get; init; } = "";
     public string SearchIndex { get; init; } = "";
@@ -34,6 +35,7 @@ public sealed class ServiceSettings
             SpeechResourceId = Get("Azure:SpeechResourceId"),
             OpenAIEndpoint = Get("Azure:OpenAIEndpoint"),
             ChatDeployment = Get("Azure:ChatDeployment"),
+            ChatMaxOutputTokens = ReadChatTokenLimit(config),
             EmbeddingDeployment = Get("Azure:EmbeddingDeployment"),
             SearchEndpoint = Get("Azure:SearchEndpoint"),
             SearchIndex = Get("Azure:SearchIndex"),
@@ -45,17 +47,33 @@ public sealed class ServiceSettings
         {
             if (!Guid.TryParse(settings.TenantId, out _) || !Guid.TryParse(settings.ClientId, out _) ||
                 string.IsNullOrWhiteSpace(settings.Audience) || !settings.Scope.EndsWith("/Meeting.Access", StringComparison.Ordinal) ||
-                string.IsNullOrWhiteSpace(settings.SpeechRegion) || string.IsNullOrWhiteSpace(settings.SpeechResourceId) ||
-                !Https(settings.OpenAIEndpoint) || string.IsNullOrWhiteSpace(settings.ChatDeployment) ||
                 settings.AllowedOrigins.Length == 0 || settings.AllowedOrigins.Any(origin => !OriginPolicy.IsCanonicalHttpsOrigin(origin)))
                 throw new InvalidOperationException("Azure mode requires valid Authentication, Speech, OpenAI and Security:AllowedOrigins configuration.");
-            if (settings.SpeechEndpoint.Length > 0 && !Https(settings.SpeechEndpoint))
-                throw new InvalidOperationException("Azure:SpeechEndpoint must be HTTPS.");
+            settings.ValidateAzureProvider();
             if ((settings.SearchEnabled || settings.SearchIndex.Length > 0) &&
                 (!Https(settings.SearchEndpoint) || settings.SearchIndex.Length == 0 || settings.EmbeddingDeployment.Length == 0))
                 throw new InvalidOperationException("Search requires endpoint, index and embedding deployment together.");
         }
         return settings;
+    }
+
+    public void ValidateAzureProvider()
+    {
+        if (Mode != "Azure" || string.IsNullOrWhiteSpace(SpeechRegion) || string.IsNullOrWhiteSpace(SpeechResourceId) ||
+            !Https(OpenAIEndpoint) || string.IsNullOrWhiteSpace(ChatDeployment))
+            throw new InvalidOperationException("Azure provider requires Speech region/resource ID and OpenAI endpoint/deployment.");
+        if (SpeechEndpoint.Length > 0 && !Https(SpeechEndpoint))
+            throw new InvalidOperationException("Azure:SpeechEndpoint must be HTTPS.");
+        if (ChatMaxOutputTokens is < 64 or > 4096)
+            throw new InvalidOperationException("Azure:ChatMaxOutputTokens must be an integer from 64 to 4096.");
+    }
+
+    public static int ReadChatTokenLimit(IConfiguration config)
+    {
+        var value = config["Azure:ChatMaxOutputTokens"];
+        if (value is null) return 2048;
+        if (int.TryParse(value, out var limit) && limit is >= 64 and <= 4096) return limit;
+        throw new InvalidOperationException("Azure:ChatMaxOutputTokens must be an integer from 64 to 4096.");
     }
 
     private static bool Https(string value) =>

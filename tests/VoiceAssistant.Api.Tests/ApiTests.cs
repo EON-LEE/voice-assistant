@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
@@ -26,6 +27,22 @@ public sealed class ApiTests
     [Fact]
     public async Task FakeStreamsOverRealWebSocketAndSupportsManualResponse()
     {
+        var firstDeltaMetric = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completedMetric = new TaskCompletionSource<double>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, owner) =>
+            {
+                if (instrument.Meter.Name == MeetingMetrics.MeterName) owner.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
+        {
+            if (!tags.ToArray().Contains(new KeyValuePair<string, object?>("provider", "Fake"))) return;
+            if (instrument.Name == "voiceassistant.stt_final_to_first_delta") firstDeltaMetric.TrySetResult(value);
+            if (instrument.Name == "voiceassistant.stt_final_to_completed") completedMetric.TrySetResult(value);
+        });
+        listener.Start();
         await using var host = await Host.StartAsync();
         using var socket = await host.ConnectAsync();
         await Send(socket, Start);
@@ -41,6 +58,8 @@ public sealed class ApiTests
         Assert.Equal(FakeMeetingProvider.AnswerText, response.GetProperty("text").GetString());
         Assert.Equal("disabled", response.GetProperty("grounding").GetString());
         Assert.Equal(0, response.GetProperty("sources").GetArrayLength());
+        Assert.True(await firstDeltaMetric.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0);
+        Assert.True(await completedMetric.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0);
         await Send(socket, """{"type":"response.request"}""");
         Assert.Equal(FakeMeetingProvider.AnswerText, (await Until(socket, "response.completed")).GetProperty("text").GetString());
         await Send(socket, """{"type":"session.stop"}""");
@@ -181,8 +200,10 @@ public sealed class ApiTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => Host.StartAsync(environment: "Production"));
     }
 
-    [Fact]
-    public async Task CancelledGenerationCannotLeakLateResults()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledGenerationCannotLeakLateResults(bool newUtterance)
     {
         var provider = new DelayedProvider();
         await using var host = await Host.StartAsync(provider: provider);
@@ -192,11 +213,16 @@ public sealed class ApiTests
         await socket.SendAsync(Enumerable.Repeat((byte)1, 640).ToArray(), WebSocketMessageType.Binary, true, CancellationToken.None);
         var first = await Until(socket, "response.started");
         await provider.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Send(socket, """{"type":"response.request"}""");
-        var cancelled = await Receive(socket);
+        if (newUtterance)
+        {
+            provider.Emit(new("new-turn", 1, "A new utterance", false));
+            provider.Emit(new("new-turn", 2, "A new utterance", true));
+        }
+        else await Send(socket, """{"type":"response.request"}""");
+        var cancelled = await Until(socket, "response.cancelled");
         Assert.Equal("response.cancelled", cancelled.GetProperty("type").GetString());
         Assert.Equal(first.GetProperty("responseId").GetString(), cancelled.GetProperty("responseId").GetString());
-        var second = await Receive(socket);
+        var second = await Until(socket, "response.started");
         Assert.Equal("response.started", second.GetProperty("type").GetString());
         provider.Release.TrySetResult();
         while (true)
@@ -255,8 +281,12 @@ public sealed class ApiTests
         private readonly FakeMeetingProvider fake = new();
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation) =>
-            fake.StartSpeechAsync(transcript, error, cancellation);
+        public Action<Transcript> Emit { get; private set; } = _ => throw new InvalidOperationException("Speech is not started.");
+        public Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation)
+        {
+            Emit = transcript;
+            return fake.StartSpeechAsync(transcript, error, cancellation);
+        }
         public Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation) => fake.RetrieveAsync(query, objectId, cancellation);
         public async IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellation)

@@ -45,7 +45,8 @@ Environment variables (`__` maps to `:`):
 | `Azure__SpeechResourceId` | Full ARM Speech resource ID for `aad#resourceId#token` authorization |
 | `Azure__SpeechEndpoint` | Optional HTTPS custom Speech endpoint; omitted uses regional endpoint |
 | `Azure__OpenAIEndpoint` | HTTPS Azure OpenAI endpoint |
-| `Azure__ChatDeployment` | Chat deployment supporting standard streaming chat, temperature and max output tokens |
+| `Azure__ChatDeployment` | Deployment supporting streaming chat completions |
+| `Azure__ChatMaxOutputTokens` | Optional completion token budget64..4096, default2048 (reasoning models share it with reasoning tokens); temperature is omitted for compatibility |
 | `Azure__SearchEndpoint` | Optional HTTPS Search endpoint |
 | `Azure__SearchIndex` | Required with Search endpoint |
 | `Azure__EmbeddingDeployment` | Required with Search; `text-embedding-3-small`, 1536 dimensions |
@@ -87,3 +88,23 @@ Audio exists only in bounded transient buffers and the live Speech SDK push stre
 Errors are explicit safe messages; raw SDK exception details are suppressed. Startup, idle, response, write and session deadlines bound resource usage; 100 total sessions and one per identity, bounded queues, message/audio rates and bounded history prevent unbounded accumulation. A slow peer or overloaded recognizer is disconnected rather than silently dropping transcript/audio. New turns and manual cancellation invalidate stale generation before sending subsequent output.
 
 SDK references: [Speech Entra auth](https://learn.microsoft.com/azure/ai-services/speech-service/how-to-configure-azure-ad-auth), [Azure OpenAI .NET streaming](https://learn.microsoft.com/dotnet/api/overview/azure/ai.openai-readme), [Search vector quickstart](https://learn.microsoft.com/azure/search/search-get-started-vector).
+
+## Content-free timing metrics
+
+The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:
+
+| Instrument | Meaning |
+| --- | --- |
+| `voiceassistant.stt_final_to_first_delta` | Final STT **callback** to first successfully sent response delta |
+| `voiceassistant.stt_final_to_completed` | Final STT callback to successfully sent model response completion |
+| `voiceassistant.retrieval_duration` | Retrieval call elapsed time, including disabled/no-match/error/cancellation paths |
+
+These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. Superseded/cancelled generation does not record subsequent delta/completion timings. Grounding-unavailable deterministic refusal is not recorded as a successful model completion.
+
+Tags are bounded `provider=Azure|Fake|TestDouble`; response `trigger=automatic|manual`; retrieval `outcome=grounded|disabled|no_matches|unavailable|unknown|failed|cancelled`. No content, IDs, URLs or arbitrary error messages are metric tags. No exporter, persistence, or new WebSocket event is enabled; an approved operational `MeterListener`/OpenTelemetry configuration may subscribe. Never mix Fake/TestDouble observations with Azure measurements.
+
+The [live-provider acceptance probe](../../tools/VoiceAssistant.LiveProbe/README.md) directly exercises this same provider with an explicit opt-in original synthetic WAV and standard noninteractive `DefaultAzureCredential`. It separately reports content-free real service evidence or **BLOCKED**, never fake Azure success.
+
+### Speech endpoint verification
+
+Keep `Azure__SpeechEndpoint` as the HTTPS resource endpoint from the portal, for example `https://<custom-subdomain>.cognitiveservices.azure.com/`; do not append a guessed recognition WebSocket path. [Speech SDK release notes](https://learn.microsoft.com/azure/ai-services/speech-service/releasenotes) document portal-endpoint `FromEndpoint` support beginning1.43, before this project's pinned1.46. [Private endpoint guidance](https://learn.microsoft.com/azure/ai-services/speech-service/speech-services-private-link#construct-endpoint-url) states the SDK chooses the service URL path. A native SDK regression test checks that the HTTPS root, en-US language and segmentation configuration are preserved; actual Azure endpoint/RBAC reachability still requires the live probe.
