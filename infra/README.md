@@ -120,6 +120,9 @@ raw stdout/stderr on error. Timeouts kill only the launched PID tree; a timed-ou
 Azure mutation may still complete server-side, so its outcome is **Unknown**
 and must be read back before retry. Automatic CLI extension installation is
 disabled per process. No credentials are bridged from Az.Accounts into CLI.
+ACR name lookup allows 90 seconds for context/token initialization and ARM
+response. `REGISTRY_NAME_CHECK_TIMEOUT` means availability is **unknown**, not
+that the name is occupied; do not pick a different registry to conceal a timeout.
 Knowledge ingestion still uses its documented Azure CLI operator path; the
 Az.Accounts adapter in this follow-up covers bootstrap/application deployment.
 
@@ -346,7 +349,7 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The original **51 offline checks**, plus **46
+compiled without diagnostics. The original **51 offline checks**, plus **48
 readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 

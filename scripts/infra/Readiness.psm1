@@ -233,9 +233,18 @@ function Get-AzureReadiness {
         }
     }
     if ($registryMissing -and -not @($report.checks | Where-Object { $_.status -ne 'PASS' }).Count) {
-        $name = Invoke-ReadinessAz $options @('acr', 'check-name', '--name', $config.registryName, '--subscription', $SubscriptionId)
-        if (-not $name.Succeeded -or -not $name.Data.nameAvailable) {
-            Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' 'REGISTRY_NAME_UNAVAILABLE_OR_UNVERIFIED'
+        # Az context loading/token refresh plus ARM name lookup can exceed the usual 30-second read budget.
+        $name = Invoke-ReadinessAz $options @('acr', 'check-name', '--name', $config.registryName, '--subscription', $SubscriptionId) 90
+        if (-not $name.Succeeded) {
+            Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' "REGISTRY_NAME_CHECK_$($name.Code)"
+        } elseif ($null -eq $name.Data -or
+            (-not ($name.Data -is [Collections.IDictionary]) -and -not $name.Data.PSObject.Properties['nameAvailable']) -or
+            ($name.Data -is [Collections.IDictionary] -and -not $name.Data.Contains('nameAvailable'))) {
+            Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' 'REGISTRY_NAME_CHECK_INVALID_RESPONSE'
+        } elseif ($name.Data.nameAvailable -isnot [bool]) {
+            Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' 'REGISTRY_NAME_CHECK_INVALID_RESPONSE'
+        } elseif (-not $name.Data.nameAvailable) {
+            Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' 'REGISTRY_NAME_UNAVAILABLE'
         } else {
             Add-ReadinessCheck $report 'cloud.registry' 'availability' $(if ($Stage -eq 'Bootstrap') { 'PASS' } else { 'BLOCKED' }) 'BOOTSTRAP_CREATION_REQUIRED'
         }

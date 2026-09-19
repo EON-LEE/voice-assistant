@@ -53,6 +53,7 @@ Save-Config
 $scenario = @{
     account = 'target'; provider = 'Registered'; group = $false; registry = $false; owned = $true; nameAvailable = $true
     registrySku = 'Basic'; location = 'eastus'; adminEnabled = $false; registryMode = 'LegacyRegistryPermissions'; failCommand = ''
+    failCode = 'COMMAND_FAILED'; nameTimeout = 0
     powershellAuth = $false; calls = (New-Object 'Collections.Generic.List[string]'); createdGroup = 0; createdRegistry = 0
 }
 & $processModule {
@@ -66,8 +67,9 @@ $scenario = @{
         }
         $line = $Arguments -join ' '
         $state.calls.Add($line) > $null
+        if ($line.StartsWith('acr check-name')) { $state.nameTimeout = $TimeoutSeconds }
         if ($state.failCommand -and $line.StartsWith($state.failCommand)) {
-            return [pscustomobject]@{ Succeeded = $false; Code = 'COMMAND_FAILED'; Data = 'PRIVATE_DIAGNOSTIC_SENTINEL' }
+            return [pscustomobject]@{ Succeeded = $false; Code = $state.failCode; Data = 'PRIVATE_DIAGNOSTIC_SENTINEL' }
         }
         $tags = [pscustomobject]@{ managedBy = 'voice-assistant-bootstrap'; projectId = 'ff8f97b4-5db4-458e-99de-0d63cfc96a4a' }
         if (-not $state.owned) { $tags.managedBy = 'unrelated-project' }
@@ -152,8 +154,16 @@ try {
     $scenario.provider = 'Registered'
     $scenario.nameAvailable = $false
     $report = Get-AzureReadiness @argsBase -Apply -CostApproved
-    Assert-True (Has-Check $report 'cloud.registry' 'BLOCKED' 'REGISTRY_NAME_UNAVAILABLE_OR_UNVERIFIED') 'Occupied registry name cannot be adopted'
+    Assert-True (Has-Check $report 'cloud.registry' 'BLOCKED' 'REGISTRY_NAME_UNAVAILABLE') 'Occupied registry name cannot be adopted'
     $scenario.nameAvailable = $true
+    $scenario.failCommand = 'acr check-name'
+    $scenario.failCode = 'TIMEOUT'
+    $report = Get-AzureReadiness @argsBase -Apply -CostApproved
+    Assert-True ((Has-Check $report 'cloud.registry' 'BLOCKED' 'REGISTRY_NAME_CHECK_TIMEOUT') -and
+        $report.execution -eq 'Blocked' -and $scenario.createdGroup -eq 0) 'Name-check timeout is explicitly unverified, not name occupied, and cannot create a group'
+    Assert-True ($scenario.nameTimeout -eq 90) 'Registry lookup has a bounded 90-second Az initialization/ARM request budget'
+    $scenario.failCommand = ''
+    $scenario.failCode = 'COMMAND_FAILED'
     $report = Get-AzureReadiness @argsBase -Apply -CostApproved
     Assert-True ($report.overallStatus -eq 'PASS' -and $report.execution -eq 'Succeeded' -and
         $scenario.createdGroup -eq 1 -and $scenario.createdRegistry -eq 1) 'Approved authenticated bootstrap creates only dedicated RG and ACR'
