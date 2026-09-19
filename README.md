@@ -4,6 +4,15 @@ An Azure-hosted, installation-free web meeting assistant that listens to shared 
 and displays short English replies for the user to read aloud. It does not speak,
 send Teams messages, or make commitments on the user's behalf.
 
+Deployed application: https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io
+
+The deployed API uses the real Azure provider; the UI deliberately starts in a
+labeled offline demo until **Live** is selected. Sign-in must use an account in
+the subscription's configured Entra tenant. A Windows work account from another
+tenant is not automatically a member. Operator Azure PowerShell authentication
+and interactive browser authentication are separate checks; neither authorizes
+bypassing the other.
+
 ## Architecture
 
 ```text
@@ -219,20 +228,32 @@ results cannot establish these targets.
 
 ## Verification status
 
-As of September 19, 2026:
+As of September 20, 2026 (private knowledge initialization is still in progress):
 
 | Verification | Result |
 | --- | --- |
-| API Release build and automated tests | 19 passed |
-| Browser production build and unit tests | 24 passed |
-| Chromium lifecycle and real local API transport | 10 passed; Windows published app and Linux container |
-| Infrastructure compile and offline checks | 51 passed; no Azure writes |
-| Azure deployment, Entra login, real Speech/OpenAI inference | Not performed; authenticated deployment prerequisites remain |
-| Actual video/Teams tab capture and end-to-end latency | Not verified; do not infer this from synthetic audio tests |
+| API Release build and automated tests | Passing; includes actual Azure SDK request-serialization regressions |
+| Browser production build and unit tests | 31 passed |
+| Chromium lifecycle and real local API transport | 18 passed on Windows, including 20 original-speech media restarts; published Linux image: 16 passed, 2 explicitly Vite-only tests skipped |
+| Infrastructure | Compiled and offline-tested; actual ARM validation, what-if and application deployment succeeded after fixing service-schema and polling-response mismatches |
+| Real Azure Speech and OpenAI | Original approved English WAV: 6 partial events, 1 final transcript, 35 streamed reply deltas; reviewed probe completed successfully |
+| Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |
+| Browser sign-in | Entra account selection reached; Windows work account rejected by the separate subscription tenant; full owner-account sign-in not verified |
+| Authorized knowledge ingestion | Storage public access is disabled by subscription governance; use a compliant private-network ingestion path, not a firewall exception |
+| Actual video/Teams tab capture and end-to-end latency | Not verified; original WAV service tests and mocked capture tests do not establish this |
 
-The local preview uses explicit Fake/Demo behavior. A real Azure-backed test
-requires a signed-in operator, authorized resource configuration, and browser
-sharing consent. Application users do not need a Windows installer.
+The local preview uses explicit Fake/Demo behavior. The deployed Azure services
+and real-provider probe do not. Probe timing includes its WAV tail and Speech
+shutdown; the fixture has no aligned speech-end ground truth, so speech-end
+latency fields remain null rather than being guessed. Three bounded text-only
+calls on one client observed a cold first delta of 7.297 seconds (including
+5.308 seconds acquiring a credential), then warm first deltas of 0.864 and
+1.773 seconds. These are small-sample observations, not a meeting p50/p95 SLA.
+
+Application users do not need a Windows installer. Interactive tenant sign-in,
+audio-sharing consent, approved knowledge sources, and measured meeting latency
+remain distinct acceptance gates. No company documents or actual meeting audio
+were used for the recorded automated tests.
 
 ## References
 
