@@ -19,14 +19,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
-      - name: Build API and run offline tests
+      - name: Acquire verified Bicep compiler
         shell: pwsh
-        run: .\scripts\test-local.ps1
-      - name: Build browser app and run unit and Chromium tests
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'bicep.exe'
+          Invoke-WebRequest 'https://github.com/Azure/bicep/releases/download/v0.47.16/bicep-win-x64.exe' -OutFile $path
+          $expected = '3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c'
+          if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $expected) { throw 'Bicep checksum mismatch.' }
+      - name: Verify all local acceptance gates
         shell: pwsh
-        env:
-          VOICE_ASSISTANT_BACKEND_E2E: '1'
-        run: .\scripts\test-web.ps1 -InstallBrowsers
+        run: |
+          .\scripts\verify-release.ps1 -InstallBrowsers `
+            -BicepPath (Join-Path $env:RUNNER_TEMP 'bicep.exe') `
+            -ReportPath (Join-Path $env:RUNNER_TEMP 'release-verification.json')
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: ${{ runner.temp }}/release-verification.json
+          if-no-files-found: warn
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

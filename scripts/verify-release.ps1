@@ -1,0 +1,112 @@
+[CmdletBinding()]
+param(
+    [string] $Dotnet = 'dotnet',
+    [string] $Npm = 'npm.cmd',
+    [Parameter(Mandatory = $true)]
+    [string] $BicepPath,
+    [Parameter(Mandatory = $true)]
+    [string] $ReportPath,
+    [switch] $InstallBrowsers,
+    [switch] $RequireLive
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$root = Split-Path $PSScriptRoot -Parent
+$reportFile = [IO.Path]::GetFullPath($ReportPath)
+if (Test-Path -LiteralPath $reportFile) {
+    throw 'Choose a new report path; verification evidence is not overwritten.'
+}
+$parent = Split-Path $reportFile -Parent
+if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+    throw 'The report parent directory must already exist.'
+}
+$revision = & git -C $root rev-parse HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the source revision.' }
+$dirty = & git -C $root status --porcelain
+if ($LASTEXITCODE -ne 0) { throw 'Cannot identify uncommitted changes.' }
+$report = [ordered]@{
+    schemaVersion = 1
+    startedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    completedAt = $null
+    revision = $revision.Trim()
+    sourceDirty = [bool]$dirty
+    status = 'RUNNING'
+    localVerification = 'NOT_RUN'
+    liveAzure = 'NOT_RUN'
+    stages = @()
+}
+
+function Save-Report {
+    $json = $report | ConvertTo-Json -Depth 8
+    [IO.File]::WriteAllText($reportFile, $json, [Text.UTF8Encoding]::new($false))
+}
+
+function Invoke-Verification {
+    param([string] $Name, [scriptblock] $Run)
+    $stage = [ordered]@{
+        name = $Name
+        status = 'RUNNING'
+        startedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        durationMs = 0
+    }
+    $report.stages += $stage
+    Save-Report
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        & $Run
+        $stage.status = 'PASS'
+    }
+    catch {
+        $stage.status = 'FAIL'
+        Write-Error -ErrorAction Continue "Verification stage failed: $Name. Inspect its command output."
+        throw
+    }
+    finally {
+        $stage.durationMs = [long]$clock.Elapsed.TotalMilliseconds
+        Save-Report
+    }
+}
+
+$previousBackend = $env:VOICE_ASSISTANT_BACKEND_E2E
+$previousExternal = $env:VOICE_ASSISTANT_API_EXTERNAL
+$previousWebUrl = $env:VOICE_ASSISTANT_WEB_URL
+Push-Location $root
+try {
+    Save-Report
+    Invoke-Verification 'api-build-and-tests' {
+        & (Join-Path $PSScriptRoot 'test-local.ps1') -Dotnet $Dotnet
+    }
+    $env:VOICE_ASSISTANT_BACKEND_E2E = '1'
+    Remove-Item Env:VOICE_ASSISTANT_API_EXTERNAL -ErrorAction SilentlyContinue
+    Remove-Item Env:VOICE_ASSISTANT_WEB_URL -ErrorAction SilentlyContinue
+    Invoke-Verification 'web-build-unit-and-real-local-api-browser-tests' {
+        & (Join-Path $PSScriptRoot 'test-web.ps1') -Npm $Npm -InstallBrowsers:$InstallBrowsers
+    }
+    Invoke-Verification 'infrastructure-offline-tests' {
+        & (Join-Path $PSScriptRoot 'infra\tests\Test-Offline.ps1') `
+            -BicepPath $BicepPath -BackendSchemaPath (Join-Path $root 'contracts\search-index.json')
+    }
+    $report.localVerification = 'PASS'
+    $report.status = 'LOCAL_PASS_LIVE_NOT_VERIFIED'
+    if ($RequireLive) {
+        $report.status = 'BLOCKED'
+        throw 'Local checks passed, but this run did not verify Azure deployment, real Speech/OpenAI, or real tab sharing. Release gate remains blocked.'
+    }
+    Write-Output "Local verification passed. Live Azure and real tab sharing remain NOT VERIFIED. Evidence: $reportFile"
+}
+catch {
+    if ($report.status -ne 'BLOCKED') {
+        $report.localVerification = 'FAIL'
+        $report.status = 'FAIL'
+    }
+    throw
+}
+finally {
+    $report.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    Save-Report
+    $env:VOICE_ASSISTANT_BACKEND_E2E = $previousBackend
+    $env:VOICE_ASSISTANT_API_EXTERNAL = $previousExternal
+    $env:VOICE_ASSISTANT_WEB_URL = $previousWebUrl
+    Pop-Location
+}

@@ -96,6 +96,21 @@ must never silently replace a failed Azure connection.
 
 ## What the tests establish
 
+To execute the API, browser, and infrastructure checks as one fail-closed run,
+write a new evidence report outside the repository:
+
+```powershell
+.\scripts\verify-release.ps1 -BicepPath 'C:\tools\bicep.exe' `
+  -ReportPath 'C:\existing-artifact-folder\verification.json' -InstallBrowsers
+```
+
+The report records the source revision, uncommitted-change flag, stage results,
+and durations without meeting content or credentials. Reports are not
+overwritten. Local success is explicitly `LOCAL_PASS_LIVE_NOT_VERIFIED`, never a
+claim of working cloud inference. `-RequireLive` makes the command fail as
+`BLOCKED` after passing local checks because this local suite does not exercise
+the actual authenticated Azure deployment or a user's tab-sharing selection.
+
 The browser suite covers explicit consent, sharing rejection, missing audio,
 source-ended and disconnected cleanup, answer pinning, and a narrow viewport.
 With `VOICE_ASSISTANT_BACKEND_E2E=1`, it also starts the real local API and sends
