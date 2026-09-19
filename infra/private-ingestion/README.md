@@ -186,6 +186,18 @@ Successful job completion entails source/ledger Blob writes through the private
 endpoint; the external workstation is still correctly blocked from Blob.
 No chat model call is required for this ingestion proof.
 
+**Disarm the job after success and before restarting readers:** set
+`confirmExclusiveMaintenance: false` and `createIndex: false` in the reviewed
+private-ingestion parameters, then apply that configuration incrementally.
+Verify the deployed job environment contains lowercase
+`INGEST_CONFIRM_EXCLUSIVE_MAINTENANCE=false` and `INGEST_CREATE_INDEX=false`,
+and that no execution is still running. Do not start a verification execution:
+reading back the configuration is sufficient. This ensures an accidental future
+manual start fails at the maintenance guard before DNS, token acquisition or
+data writes. A future approved ingestion requires a new actual maintenance
+window and explicit re-arming; a retained manual trigger is not permission to
+write while the web app is serving users.
+
 Only then restart the app, check HTTPS health and unchanged Entra requirements,
 and obtain fresh tickets/sessions. For failure, keep readers stopped, inspect
 redacted phase/status and endpoint/RBAC/schema metadata, and retry **explicitly**
@@ -204,10 +216,14 @@ The Docker image was built and its real nonroot Linux entrypoint passed with
 PowerShell 7.4's materialized JSON dates while still rejecting unzoned versions.
 `Test-Offline.ps1` includes these tests automatically.
 
-No private endpoint, private environment or job execution was applied by this
-implementation slice. Real policy approval, provisioning, DNS, identity token
-delivery, data-plane RBAC, Blob writes, embeddings and ACL-filtered retrieval
-remain live verification steps for the parent operator.
+The coordinating session reported live verification on 2026-09-20:
+`voice-ingest-job-l60o2w7` succeeded from 02:02:14 to 02:02:48 KST; the approved
+admin ACL returned one synthetic chunk and an unrelated principal returned
+zero; the vector field remained 1536-dimensional and non-retrievable. Storage
+public networking remained restricted without exceptions. These are
+coordinator-reported live results, distinct from this slice's offline checks.
+No cloud resources or executions were applied by this implementation session.
+The coordinator owns post-success disarming, restart and further acceptance.
 
 References: [jobs schema](https://learn.microsoft.com/azure/templates/microsoft.app/2024-03-01/jobs),
 [managed identity REST endpoint](https://learn.microsoft.com/azure/container-apps/managed-identity),
