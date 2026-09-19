@@ -174,7 +174,18 @@ try {
             }
             if ($result.Data.PSObject.Properties['error'] -or
                 ($result.Data.PSObject.Properties['status'] -and $result.Data.status -in @('Failed', 'Canceled'))) { throw 'ARM deployment operation failed.' }
-            $output = $result.Data
+            if ($operation -eq 'what-if') {
+                if (-not $result.Data.PSObject.Properties['status'] -or $result.Data.status -ne 'Succeeded' -or
+                    -not $result.Data.PSObject.Properties['properties'] -or $null -eq $result.Data.properties -or
+                    -not $result.Data.properties.PSObject.Properties['changes'] -or $null -eq $result.Data.properties.changes) {
+                    throw 'ARM what-if did not return a successful changes collection.'
+                }
+                $changes = @($result.Data.properties.changes | ForEach-Object {
+                    if (-not $_.PSObject.Properties['resourceId'] -or -not $_.PSObject.Properties['changeType']) { throw 'Invalid ARM what-if change.' }
+                    @{ resourceId = $_.resourceId; changeType = $_.changeType }
+                })
+                $output = @{ status = $result.Data.status; changes = $changes }
+            } else { $output = $result.Data }
         }
         default { throw 'Unsupported Azure PowerShell operation.' }
     }

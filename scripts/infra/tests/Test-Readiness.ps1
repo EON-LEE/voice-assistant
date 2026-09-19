@@ -310,6 +310,7 @@ try {
     Assert-True ($r.Succeeded -and $r.Data.properties.provisioningState -eq 'Succeeded') 'Az deployment validation maps explicit compiled template and parameters'
     $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'what-if') + $deployment) 15
     Assert-True ($r.Succeeded -and $r.Data.changes[0].changeType -eq 'Create') 'Az what-if follows a bounded subscription-scoped asynchronous result'
+    Assert-True (($r.Data | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_DIFF_SENTINEL|correlationId|properties') 'Nested ARM properties.changes normalizes to CLI-shaped summaries without configuration diffs'
     $entries = @(Get-Content -LiteralPath $log | ForEach-Object { $_ | ConvertFrom-Json })
     $poll = @($entries | Where-Object { $_.method -eq 'GET' -and $_.path -match '/operationResults/' })[-1]
     Assert-True ($poll.path.EndsWith('&sig=PRIVATE_POLL_SENTINEL%2B%2f%3D') -and
@@ -322,6 +323,12 @@ try {
         $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'what-if') + $deployment) 15
         Assert-True (-not $r.Succeeded -and ($r | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_POLL_SENTINEL') "Invalid Location header fails closed without URL disclosure: $mode"
     }
+    $env:VOICE_INFRA_FIXTURE_MODE = 'whatif-empty-changes'
+    $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'what-if') + $deployment) 15
+    Assert-True ($r.Succeeded -and $r.Data.PSObject.Properties['changes'] -and @($r.Data.changes).Count -eq 0) 'Successful empty ARM changes remain an explicit empty CLI-shaped array'
+    $env:VOICE_INFRA_FIXTURE_MODE = 'whatif-missing-changes'
+    $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'what-if') + $deployment) 15
+    Assert-True (-not $r.Succeeded) 'Missing ARM changes are rejected rather than reported as a successful empty preview'
     $env:VOICE_INFRA_FIXTURE_MODE = ''
     $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'create') + $deployment) 15
     Assert-True ($r.Succeeded -and $r.Data.properties.provisioningState -eq 'Succeeded') 'Az deployment create polls until terminal ARM status'

@@ -160,6 +160,9 @@ Entra applications, build/push an image, approve quota, or automatically consent
 ARM polling accepts dictionary headers or the Az.Accounts enumerable key/value
 header shape. It requires exactly one Location value on the approved ARM host
 and subscription, preserves signed queries privately, and never prints the URL.
+Successful ARM what-if `properties.changes` is normalized into root `changes`
+containing only resource IDs/change types for the shared deployment script.
+Missing changes fail explicitly; a genuine empty changes array remains valid.
 The lower-level `Deploy.ps1` also supports `-AuthProvider AzPowerShell`.
 
 Reports have `schemaVersion: 1`, `mode`, `stage`, `target`,
@@ -366,7 +369,7 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The original **51 offline checks**, plus **67
+compiled without diagnostics. The original **51 offline checks**, plus **70
 readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 
@@ -390,9 +393,12 @@ an ARM token and read the approved enabled subscription/tenant successfully.
 The new adapter's `account show` and dedicated group-existence requests were
 also verified read-only. This proves only ARM access, not deployment privileges,
 data-plane access, quota or application readiness.
+The corrected adapter also completed actual ARM what-if through `Deploy.ps1`,
+emitting only resource IDs/change types; nested ARM response handling and signed
+polling headers were verified without applying resources.
 
 **Not yet verified by this slice in Azure:** deployment policy/provider checks,
-live ARM validate/what-if, regional model capacity/quota, container build/push/
+live ARM validation, regional model capacity/quota, container build/push/
 pull, RBAC propagation, Entra registration/consent/redirect, live Speech and model
 calls, real index ingestion and ACL isolation, and browser microphone/tab-audio
 capture over the deployed HTTPS origin. No resources, roles or documents were

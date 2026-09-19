@@ -35,7 +35,10 @@ function Invoke-AzRestMethod {
         elseif ($Method -eq 'PUT') { $status = 201; $body = @{ properties = @{ provisioningState = 'Running' } } }
         else { $body = @{ properties = @{ provisioningState = 'Succeeded'; outputs = @{ browserUrl = @{ value = 'https://fixture.invalid' } } } } }
     } elseif ($Path -match '/operationResults/') {
-        $body = @{ status = 'Succeeded'; changes = @(@{ resourceId = '/fixture'; changeType = 'Create' }) }
+        $body = @{ status = 'Succeeded'; properties = @{ correlationId = 'fixture-correlation';
+            changes = @(@{ resourceId = '/fixture'; changeType = 'Create'; after = @{ private = 'PRIVATE_DIFF_SENTINEL' } }) } }
+        if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'whatif-empty-changes') { $body.properties.changes = @() }
+        if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'whatif-missing-changes') { $body.properties.Remove('changes') }
     } elseif ($Path -match '/checkNameAvailability') { $body = @{ nameAvailable = $true } }
     elseif ($Path -match '/registries') {
         $registry = @{ name = 'fixturemeetingacr'; location = 'eastus'; tags = $tags; sku = @{ name = 'Basic' }
