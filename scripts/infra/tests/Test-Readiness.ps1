@@ -310,6 +310,19 @@ try {
     Assert-True ($r.Succeeded -and $r.Data.properties.provisioningState -eq 'Succeeded') 'Az deployment validation maps explicit compiled template and parameters'
     $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'what-if') + $deployment) 15
     Assert-True ($r.Succeeded -and $r.Data.changes[0].changeType -eq 'Create') 'Az what-if follows a bounded subscription-scoped asynchronous result'
+    $entries = @(Get-Content -LiteralPath $log | ForEach-Object { $_ | ConvertFrom-Json })
+    $poll = @($entries | Where-Object { $_.method -eq 'GET' -and $_.path -match '/operationResults/' })[-1]
+    Assert-True ($poll.path.EndsWith('&sig=PRIVATE_POLL_SENTINEL%2B%2f%3D') -and
+        ($r | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_POLL_SENTINEL') 'Enumerable header values preserve signed query exactly without exposing polling URL'
+    $env:VOICE_INFRA_FIXTURE_MODE = 'header-dictionary'
+    $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'what-if') + $deployment) 15
+    Assert-True ($r.Succeeded -and $r.Data.changes[0].changeType -eq 'Create') 'Dictionary Location header remains supported'
+    foreach ($mode in @('header-duplicate-values', 'header-duplicate-entries', 'header-missing', 'header-bad-host')) {
+        $env:VOICE_INFRA_FIXTURE_MODE = $mode
+        $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'what-if') + $deployment) 15
+        Assert-True (-not $r.Succeeded -and ($r | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_POLL_SENTINEL') "Invalid Location header fails closed without URL disclosure: $mode"
+    }
+    $env:VOICE_INFRA_FIXTURE_MODE = ''
     $r = Invoke-AzPowerShellCommand (@('deployment', 'group', 'create') + $deployment) 15
     Assert-True ($r.Succeeded -and $r.Data.properties.provisioningState -eq 'Succeeded') 'Az deployment create polls until terminal ARM status'
     $r = Invoke-AzPowerShellCommand @('group', 'create', '--name', 'fixture-meeting-group', '--subscription', '11111111-1111-4111-8111-111111111111') 15

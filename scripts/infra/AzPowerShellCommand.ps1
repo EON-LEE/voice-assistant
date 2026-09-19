@@ -12,6 +12,18 @@ function Read-Option {
     if ($position + 1 -ge $script:arguments.Count) { throw 'Missing option value.' }
     return $script:arguments[$position + 1]
 }
+function Get-SingleArmHeader {
+    param($Headers, [string]$Name)
+    $entries = if ($Headers -is [Collections.IDictionary]) { @($Headers.GetEnumerator()) } else { @($Headers) }
+    $values = @()
+    foreach ($entry in $entries) {
+        if ($null -ne $entry -and $entry.Key -ieq $Name) { $values += @($entry.Value) }
+    }
+    if ($values.Count -ne 1 -or $values[0] -isnot [string] -or [string]::IsNullOrWhiteSpace($values[0])) {
+        throw 'ARM polling requires exactly one nonempty header value.'
+    }
+    return $values[0]
+}
 function Invoke-Arm {
     param([string]$Method, [string]$Path, $Body = $null, [int[]]$Expected = @(200, 201, 202))
     if ($Path -notlike "/subscriptions/$script:subscription/*" -and $Path -notlike "/subscriptions/$script:subscription`?*") { throw 'ARM request outside approved subscription.' }
@@ -145,11 +157,17 @@ try {
                     Start-Sleep -Seconds 4
                 }
             } elseif ($result.Status -eq 202) {
-                $pollUri = [uri]([string]$result.Headers['Location'])
-                if ($pollUri.Scheme -ne 'https' -or $pollUri.Host -ne 'management.azure.com') { throw 'Invalid ARM polling endpoint.' }
+                $location = Get-SingleArmHeader $result.Headers 'Location'
+                $pollUri = [uri]$location
+                if (-not $pollUri.IsAbsoluteUri -or $pollUri.Scheme -ne 'https' -or $pollUri.Host -ne 'management.azure.com' -or
+                    $pollUri.Port -ne 443 -or $pollUri.UserInfo -or $pollUri.Fragment) { throw 'Invalid ARM polling endpoint.' }
+                # Keep a potentially signed query byte-for-byte, privately, rather than rebuilding it.
+                $pathStart = $location.IndexOf('/', $location.IndexOf('://') + 3)
+                if ($pathStart -lt 0) { throw 'ARM polling endpoint requires a subscription path.' }
+                $pollPath = $location.Substring($pathStart)
                 for ($attempt = 0; $attempt -lt 100; $attempt++) {
                     Start-Sleep -Seconds 3
-                    $result = Invoke-Arm 'GET' $pollUri.PathAndQuery
+                    $result = Invoke-Arm 'GET' $pollPath
                     if ($result.Status -ne 202) { break }
                 }
                 if ($result.Status -eq 202) { throw 'ARM polling deadline reached.' }

@@ -17,7 +17,19 @@ function Invoke-AzRestMethod {
     if ($Path -match '/deployments/fixture-deployment') {
         if ($Path -match '/whatIf\?') {
             $status = 202
-            $headers.Location = 'https://management.azure.com/subscriptions/b0af194e-77a5-4471-bb43-67e78295b5c8/providers/Microsoft.Resources/operationResults/fixture?api-version=2022-09-01'
+            $location = 'https://management.azure.com/subscriptions/b0af194e-77a5-4471-bb43-67e78295b5c8/providers/Microsoft.Resources/operationResults/fixture?api-version=2022-09-01&sig=PRIVATE_POLL_SENTINEL%2B%2f%3D'
+            if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'header-dictionary') { $headers.Location = $location }
+            else {
+                $headers = New-Object 'Collections.Generic.List[Collections.Generic.KeyValuePair[string,string[]]]'
+                $values = [string[]]@($location)
+                if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'header-duplicate-values') { $values = @($location, $location) }
+                if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'header-bad-host') { $values = @($location.Replace('management.azure.com', 'example.invalid')) }
+                $key = if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'header-missing') { 'Retry-After' } else { 'lOcAtIoN' }
+                $headers.Add([Collections.Generic.KeyValuePair[string,string[]]]::new($key, $values))
+                if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'header-duplicate-entries') {
+                    $headers.Add([Collections.Generic.KeyValuePair[string,string[]]]::new('Location', [string[]]@($location)))
+                }
+            }
             $body = @{ status = 'Running' }
         } elseif ($Path -match '/validate\?') { $body = @{ properties = @{ provisioningState = 'Succeeded' } } }
         elseif ($Method -eq 'PUT') { $status = 201; $body = @{ properties = @{ provisioningState = 'Running' } } }

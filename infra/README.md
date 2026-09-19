@@ -157,6 +157,9 @@ then runs ARM validation and what-if. The Az.Accounts adapter uses resource-scop
 ARM requests, bounded asynchronous polling, and transient in-memory ACR OAuth
 exchange for manifest read (no registry credentials saved). It does not register
 Entra applications, build/push an image, approve quota, or automatically consent.
+ARM polling accepts dictionary headers or the Az.Accounts enumerable key/value
+header shape. It requires exactly one Location value on the approved ARM host
+and subscription, preserves signed queries privately, and never prints the URL.
 The lower-level `Deploy.ps1` also supports `-AuthProvider AzPowerShell`.
 
 Reports have `schemaVersion: 1`, `mode`, `stage`, `target`,
@@ -363,7 +366,7 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The original **51 offline checks**, plus **61
+compiled without diagnostics. The original **51 offline checks**, plus **67
 readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 
