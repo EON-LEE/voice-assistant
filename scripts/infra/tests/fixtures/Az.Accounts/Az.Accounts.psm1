@@ -7,6 +7,14 @@ function Get-AzContext {
         Environment = @{ Name = 'AzureCloud' }
     }
 }
+function Get-AzAccessToken {
+    param($ResourceUrl, $TenantId, $DefaultProfile)
+    if ($env:VOICE_INFRA_FIXTURE_MODE -eq 'token-failure') { throw 'PRIVATE_TOKEN_SENTINEL' }
+    [pscustomobject]@{
+        Token = (ConvertTo-SecureString 'PRIVATE_TOKEN_SENTINEL' -AsPlainText -Force)
+        ExpiresOn = [datetimeoffset]::UtcNow.AddHours(1)
+    }
+}
 function Invoke-AzRestMethod {
     param($Path, $Method, $DefaultProfile, $Payload)
     @{ path = $Path; method = $Method; payload = $Payload } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:VOICE_INFRA_FIXTURE_LOG
@@ -44,10 +52,16 @@ function Invoke-AzRestMethod {
         $registry = @{ name = 'fixturemeetingacr'; location = 'eastus'; tags = $tags; sku = @{ name = 'Basic' }
             properties = @{ provisioningState = 'Succeeded'; adminUserEnabled = $false; roleAssignmentMode = 'LegacyRegistryPermissions' } }
         if ($Path -match '/registries\?') { $body = @{ value = @($registry) } } else { $body = $registry }
+    } elseif ($Path -match '/Microsoft.Search/searchServices/') {
+        $body = @{ name = 'fixture-search'; properties = @{ disableLocalAuth = $true } }
+    } elseif ($Path -match '/Microsoft.CognitiveServices/accounts/') {
+        $body = @{ name = 'fixture-ai'; kind = 'OpenAI'; properties = @{ customSubDomainName = 'fixture-ai'; disableLocalAuth = $true } }
+    } elseif ($Path -match '/Microsoft.Storage/storageAccounts/') {
+        $body = @{ name = 'fixturestorage'; properties = @{ allowSharedKeyAccess = $false } }
     } elseif ($Path -match '/resourcegroups/fixture-missing') { $status = 404; $body = @{ error = @{ code = 'ResourceGroupNotFound' } } }
     elseif ($Path -match '/resourcegroups/') { $body = @{ name = 'fixture-meeting-group'; location = 'eastus'; tags = $tags } }
     elseif ($Path -match '/providers/') { $body = @{ registrationState = 'Registered' } }
     else { $body = @{ subscriptionId = 'b0af194e-77a5-4471-bb43-67e78295b5c8'; tenantId = '2573db8c-dfe5-4805-9e28-a0859692e705'; state = 'Enabled' } }
     [pscustomobject]@{ StatusCode = $status; Headers = $headers; Content = ($body | ConvertTo-Json -Depth 10 -Compress) }
 }
-Export-ModuleMember -Function Get-AzContext, Invoke-AzRestMethod
+Export-ModuleMember -Function Get-AzContext, Get-AzAccessToken, Invoke-AzRestMethod

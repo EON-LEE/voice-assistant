@@ -95,6 +95,32 @@ try {
             $data = (Invoke-Arm 'GET' "$base`?api-version=2022-12-01").Data
             $output = @{ id = $data.subscriptionId; tenantId = $data.tenantId; state = $data.state }
         }
+        'account get-access-token' {
+            $resource = Read-Option '--resource'
+            if ((Read-Option '--tenant') -ne $script:tenant -or
+                $resource -cnotin @('https://search.azure.com', 'https://cognitiveservices.azure.com', 'https://storage.azure.com/')) {
+                throw 'Only the approved tenant and ingestion service audiences are supported.'
+            }
+            $token = Get-AzAccessToken -ResourceUrl $resource -TenantId $script:tenant -DefaultProfile $script:context -ErrorAction Stop
+            $accessToken = if ($token.Token -is [Security.SecureString]) {
+                (New-Object Management.Automation.PSCredential('unused', $token.Token)).GetNetworkCredential().Password
+            } else { [string]$token.Token }
+            if ([string]::IsNullOrWhiteSpace($accessToken) -or $token.ExpiresOn -le [datetimeoffset]::UtcNow.AddMinutes(2)) { throw 'An unexpired ingestion token is required.' }
+            # This branch is captured by AzureProcess and consumed only in the caller's in-memory token cache.
+            $output = @{ accessToken = $accessToken; expiresOn = $token.ExpiresOn.ToUniversalTime().ToString('o') }
+        }
+        'search service' {
+            if ($script:arguments[2] -ne 'show') { throw 'Only Search metadata reads are supported.' }
+            $output = (Invoke-Arm 'GET' "$base/resourceGroups/$group/providers/Microsoft.Search/searchServices/$name`?api-version=2023-11-01").Data
+        }
+        'cognitiveservices account' {
+            if ($script:arguments[2] -ne 'show') { throw 'Only Cognitive Services metadata reads are supported.' }
+            $output = (Invoke-Arm 'GET' "$base/resourceGroups/$group/providers/Microsoft.CognitiveServices/accounts/$name`?api-version=2024-10-01").Data
+        }
+        'storage account' {
+            if ($script:arguments[2] -ne 'show') { throw 'Only Storage metadata reads are supported.' }
+            $output = (Invoke-Arm 'GET' "$base/resourceGroups/$group/providers/Microsoft.Storage/storageAccounts/$name`?api-version=2023-05-01").Data
+        }
         'provider show' {
             $provider = Read-Option '--namespace'
             if ($provider -notin @('Microsoft.ContainerRegistry', 'Microsoft.App', 'Microsoft.ManagedIdentity', 'Microsoft.CognitiveServices', 'Microsoft.Search', 'Microsoft.Storage', 'Microsoft.Insights')) { throw 'Unapproved provider.' }

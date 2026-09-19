@@ -137,8 +137,13 @@ provider errors. `REGISTRY_NAME_CHECK_TIMEOUT` means availability is **unknown**
 not that the name is occupied; do not pick a different registry to conceal a
 timeout. Mutation budgets remain separate (group 120 seconds, ACR 300 seconds,
 application deployment 900 seconds); none are automatically retried.
-Knowledge ingestion still uses its documented Azure CLI operator path; the
-Az.Accounts adapter in this follow-up covers bootstrap/application deployment.
+Knowledge ingestion also accepts `-AuthProvider AzPowerShell` for the existing
+approved operator context; the default remains `AzureCli`. Its metadata reads and
+Search/OpenAI/Storage token requests use the explicit subscription/tenant.
+SecureString token values are transiently converted only inside the captured
+subprocess pipe and the caller's in-memory HTTP token cache. Never invoke the
+adapter's `account get-access-token` branch directly to a console or redirect it
+to a file; use `Import-Knowledge.ps1`, which prints no tokens.
 
 Once an image has been built/pushed and complete main parameters are prepared:
 
@@ -289,6 +294,12 @@ ownership/permissions from a local file and does not claim to sync them.
   -EmbeddingDeployment meeting-embedding -CreateIndex -ConfirmExclusiveMaintenance -Apply
 ```
 
+For an existing Az.Accounts identity, add `-AuthProvider AzPowerShell` to the
+explicit apply command. No CLI login or credential export is needed. Token
+acquisition has a bounded 90-second process deadline; existing ingestion lease
+safety checks still reject any data request whose lease safety window elapsed
+while authentication was pending.
+
 `-CreateIndex` is for first creation only; it uses `If-None-Match: *` and never
 silently replaces an existing index. Omit it on subsequent runs. Existing indexes
 must match `infra/knowledge/index.json`: it preserves every backend field and
@@ -371,7 +382,7 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The **52 infrastructure/ingestion checks**, plus **70
+compiled without diagnostics. The **52 infrastructure/ingestion checks**, plus **77
 readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 

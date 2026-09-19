@@ -337,6 +337,47 @@ try {
     $env:VOICE_INFRA_FIXTURE_MODE = 'failure'
     $r = Invoke-AzPowerShellCommand (@('group', 'exists', '--name', 'fixture-missing') + $sub) 15
     Assert-True (-not $r.Succeeded -and ($r | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_DIAGNOSTIC_SENTINEL') 'Az provider exceptions remain explicit failures without raw provider content'
+    $env:VOICE_INFRA_FIXTURE_MODE = ''
+    foreach ($operation in @(
+        @{ args = @('search', 'service', 'show', '--name', 'fixture-search'); expectedName = 'fixture-search' },
+        @{ args = @('cognitiveservices', 'account', 'show', '--name', 'fixture-ai'); expectedName = 'fixture-ai' },
+        @{ args = @('storage', 'account', 'show', '--name', 'fixturestorage'); expectedName = 'fixturestorage' }
+    )) {
+        $r = Invoke-AzPowerShellCommand ($operation.args + @('--resource-group', 'fixture-meeting-group') + $sub) 15
+        Assert-True ($r.Succeeded -and $r.Data.name -eq $operation.expectedName -and
+            $r.Data.PSObject.Properties['properties']) "Az ingestion metadata preserves ARM name/properties shape: $($operation.expectedName)"
+    }
+    $tokenArguments = @('account', 'get-access-token', '--tenant', '2573db8c-dfe5-4805-9e28-a0859692e705', '--resource', 'https://storage.azure.com/') + $sub
+    $r = Invoke-AzPowerShellCommand $tokenArguments 15
+    Assert-True ($r.Succeeded -and $r.Data.accessToken -ceq 'PRIVATE_TOKEN_SENTINEL' -and
+        [datetimeoffset]::Parse($r.Data.expiresOn) -gt [datetimeoffset]::UtcNow) 'Az secure token is captured privately in CLI-compatible in-memory shape with expiry'
+    $r = Invoke-AzPowerShellCommand (@('account', 'get-access-token', '--tenant', '2573db8c-dfe5-4805-9e28-a0859692e705',
+        '--resource', 'https://graph.microsoft.com/') + $sub) 15
+    Assert-True (-not $r.Succeeded) 'Ingestion token adapter rejects an unrelated audience'
+    $env:VOICE_INFRA_FIXTURE_MODE = 'token-failure'
+    $r = Invoke-AzPowerShellCommand $tokenArguments 15
+    Assert-True (-not $r.Succeeded -and ($r | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_TOKEN_SENTINEL') 'Token acquisition failure cannot expose token/account exception content'
+    $env:VOICE_INFRA_FIXTURE_MODE = ''
+    $global:FixturePrivateTokenUsed = $false
+    function global:Invoke-WebRequest {
+        param($Method, $Uri, $Headers, $ContentType, $TimeoutSec, $MaximumRedirection, $UseBasicParsing, $ErrorAction, $Verbose, $Debug, $Body)
+        $global:FixturePrivateTokenUsed = $Headers.Authorization -ceq 'Bearer PRIVATE_TOKEN_SENTINEL'
+        throw (New-Object InvalidOperationException('PRIVATE_TOKEN_SENTINEL'))
+    }
+    try {
+        $message = ''
+        try {
+            $null = & (Join-Path $scriptsRoot 'Import-Knowledge.ps1') -ManifestPath (Join-Path $PSScriptRoot 'fixtures\manifest.json') `
+                -ContentRoot (Join-Path $PSScriptRoot 'fixtures') -AuthProvider AzPowerShell -Apply -ConfirmExclusiveMaintenance `
+                -TenantId '2573db8c-dfe5-4805-9e28-a0859692e705' -ResourceGroup 'fixture-meeting-group' `
+                -SearchName 'fixture-search' -OpenAIName 'fixture-ai' -StorageAccountName 'fixturestorage' -CommandTimeoutSeconds 15
+        } catch { $message = $_.Exception.Message }
+        Assert-True ($global:FixturePrivateTokenUsed -and $message -match 'Azure storage request failed' -and
+            $message -notmatch 'PRIVATE_TOKEN_SENTINEL') 'Import AuthProvider selects Az metadata/token path and keeps transport failures redacted without uploads'
+    } finally {
+        Remove-Item Function:\Invoke-WebRequest
+        Remove-Variable FixturePrivateTokenUsed -Scope Global
+    }
 } finally {
     $env:PSModulePath = $modulePath
     $env:VOICE_INFRA_FIXTURE_LOG = $oldLog
