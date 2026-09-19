@@ -117,6 +117,9 @@ try {
     }
     $storage = @($template.resources | Where-Object type -EQ 'Microsoft.Storage/storageAccounts')[0]
     Assert-True ($storage.properties.allowBlobPublicAccess -eq $false -and $storage.properties.allowSharedKeyAccess -eq $false) 'Private documents disallow anonymous and shared-key access'
+    $search = @($template.resources | Where-Object type -EQ 'Microsoft.Search/searchServices')[0]
+    Assert-True ($search.properties.disableLocalAuth -eq $true -and
+        -not $search.properties.PSObject.Properties['authOptions']) 'Entra-only Search disables keys without conflicting aadOrApiKey authOptions'
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
     Assert-True (-not $environment.properties.appLogsConfiguration.PSObject.Properties['destination'] -and
         -not $environment.properties.appLogsConfiguration.PSObject.Properties['logAnalyticsConfiguration']) 'Log destination/workspace are unset; never send the unsupported literal none'

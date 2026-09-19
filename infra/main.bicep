@@ -136,7 +136,6 @@ resource search 'Microsoft.Search/searchServices@2023-11-01' = {
     partitionCount: 1
     hostingMode: 'default'
     disableLocalAuth: true
-    authOptions: { aadOrApiKey: { aadAuthFailureMode: 'http401WithBearerChallenge' } }
     publicNetworkAccess: 'enabled'
   }
 }
