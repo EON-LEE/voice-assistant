@@ -41,8 +41,8 @@ are possible later alternatives, not prerequisites for displaying text replies.
 | Component tests | `tests` | Offline provider, protocol, and state tests |
 | Optional legacy desktop | `src/VoiceAssistant.Desktop` | Preserved prototype; not required for the web product |
 
-The components are being implemented in parallel worktrees. A component's
-presence or passing offline tests is not evidence of a successful Azure
+The browser, API, and infrastructure components are integrated from parallel
+worktrees. Passing offline tests is not evidence of a successful Azure
 deployment or a live Teams meeting test.
 
 ## Build and test
@@ -141,6 +141,26 @@ the video's audio or a full transcript in the repository.
 
 ## Azure and knowledge prerequisites
 
+See the [deployment and knowledge ingestion guide](infra/README.md) for the
+exact parameter preparation, validation, what-if, explicit deployment, and
+approved document import commands. Deployment requires an existing resource
+group and registry, a pushed image digest, approved Entra API/SPA registrations,
+and available model capacity. It does not silently reuse another application's
+identity, documents, or deployments.
+
+Run the infrastructure checks without signing in or uploading data:
+
+```powershell
+powershell.exe -NoProfile -File .\scripts\infra\tests\Test-Offline.ps1 `
+  -BicepPath 'C:\path\to\bicep.exe' `
+  -BackendSchemaPath .\contracts\search-index.json
+```
+
+The integrated checks compile Bicep, verify API/index schema compatibility,
+and exercise guarded deployment switches and document ACL/version/deletion
+handling with mocked Azure calls. Real ARM validation and deployment still
+require authentication.
+
 The deployment target is the user's `ME-M365CPI74210306-eonlee-1` subscription.
 Model availability, quotas, roles, pricing, and permitted regions must be checked
 before applying infrastructure. Infrastructure templates are not proof that
@@ -181,6 +201,23 @@ the final transcription event. Initial targets, not measured guarantees:
 Report cold/warm connection behavior, region, retrieval mode, model deployment,
 sample size, cancellations, and failures alongside latency. Offline fake-provider
 results cannot establish these targets.
+
+## Verification status
+
+As of September 19, 2026:
+
+| Verification | Result |
+| --- | --- |
+| API Release build and automated tests | 19 passed |
+| Browser production build and unit tests | 24 passed |
+| Chromium lifecycle and real local API transport | 10 passed; Windows published app and Linux container |
+| Infrastructure compile and offline checks | 51 passed; no Azure writes |
+| Azure deployment, Entra login, real Speech/OpenAI inference | Not performed; authenticated deployment prerequisites remain |
+| Actual video/Teams tab capture and end-to-end latency | Not verified; do not infer this from synthetic audio tests |
+
+The local preview uses explicit Fake/Demo behavior. A real Azure-backed test
+requires a signed-in operator, authorized resource configuration, and browser
+sharing consent. Application users do not need a Windows installer.
 
 ## References
 
