@@ -127,6 +127,37 @@ Keep the app stopped during ingestion and do not weaken controls if deployment
 or DNS is blocked by policy. Use an approved pre-existing private runner/network
 instead if this subscription cannot provision the required network resources.
 
+### Optional private-job diagnostics
+
+`enableDiagnostics` defaults to **false**. Explicitly setting it true provisions
+a dedicated `${namePrefix}-diagnostics` Log Analytics workspace with 30-day
+retention and Entra-only access, changes only this ingestion environment's
+destination to Azure Monitor, and attaches `ContainerAppConsoleLogs` and
+`ContainerAppSystemLogs` diagnostic categories using its workspace resource ID.
+No shared key is requested; no web environment, request/HTTP category, audio,
+ticket or general-purpose application logging is enabled. Include workspace
+ingestion/retention costs and `Microsoft.OperationalInsights` permissions in the
+review. This opt-in is appropriate only for the fixed synthetic-only image,
+whose entrypoint emits sanitized status/phase JSON and suppresses raw HTTP,
+source content and credential diagnostics. Do not reuse this logging setting
+for a general corporate-document ingestion image without another review.
+
+Terminal replicas can be cleaned up before live console logs are collected.
+The official CLI job-replica/log-auth API uses `2023-11-02-preview`; requesting
+replicas with `2024-03-01` can return Unsupported API version. After deletion,
+console streaming returns no replicas/404, so use opt-in retained diagnostics
+for an explicitly approved retry rather than repeatedly starting jobs blind.
+Environment system events are available through its documented event stream;
+decode a byte-array response as UTF-8 before processing JSON lines and inspect
+only the named job/execution. Never print stream credentials or signed URLs.
+
+The first observed execution pulled/started its image, then exited immediately:
+ARM `string(bool)` had emitted `"True"` while the fail-closed entrypoint requires
+`"true"`. The template now emits explicit lowercase ternary literals for both
+intent flags. Actual failed-execution environment metadata and local
+network-disabled reproduction confirmed this cause; it was not evidence of a
+DNS, NAT, image-pull or managed-identity networking failure.
+
 ## Run once and verify
 
 The parent operator owns cloud mutation and uses its existing, explicitly
@@ -145,7 +176,7 @@ bounded overall wait slightly longer than its 30-minute execution deadline.
 Do not start another execution merely because a client-side wait expired.
 Use ARM job-execution status, not the readiness of the unrelated web app, as the
 completion signal. Console output contains only redacted status/safe phase
-markers; no Log Analytics or content logging is configured.
+markers; Log Analytics collection occurs only with the private diagnostic opt-in.
 
 After `Succeeded`, query only `documentId eq 'private-ingestion-synthetic'` in
 Search using the explicit approved principal ACL filter, confirm expected
@@ -165,7 +196,7 @@ expansion, schema replacement or data deletion is part of recovery.
 
 ## Evidence boundaries
 
-The template compiled without diagnostics; 26 offline private-ingestion checks
+The template compiled without diagnostics; 30 offline private-ingestion checks
 passed for private network shape, separate/scoped identity, bounded manual job,
 private-IP pinning, managed-identity request boundaries and synthetic-only input.
 The Docker image was built and its real nonroot Linux entrypoint passed with

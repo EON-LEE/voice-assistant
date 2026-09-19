@@ -391,7 +391,7 @@ because a script's default is dry-run.
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
 compiled without diagnostics. The **54 infrastructure/ingestion checks**, **77
-readiness/bootstrap/adapter checks**, and **26 private-ingestion checks** passed on Windows PowerShell 5.1, including
+readiness/bootstrap/adapter checks**, and **30 private-ingestion checks** passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 
 ```powershell

@@ -11,6 +11,7 @@
     "allowedPrincipalId": { "value": "REPLACE_APPROVED_USER_OBJECT_GUID" },
     "documentUpdatedAt": { "value": "REPLACE_APPROVED_RFC3339_VERSION" },
     "createIndex": { "value": false },
-    "confirmExclusiveMaintenance": { "value": false }
+    "confirmExclusiveMaintenance": { "value": false },
+    "enableDiagnostics": { "value": false }
   }
 }

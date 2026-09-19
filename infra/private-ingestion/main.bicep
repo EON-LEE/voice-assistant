@@ -16,6 +16,8 @@ param embeddingDeployment string = 'meeting-embedding'
 param createIndex bool = false
 @description('Operator acknowledgement that all application readers are stopped/drained. Does not itself stop the app.')
 param confirmExclusiveMaintenance bool = false
+@description('Opt-in 30-day redacted console/system diagnostics for this synthetic-only ingestion environment; never web diagnostics.')
+param enableDiagnostics bool = false
 param vnetAddressPrefix string = '10.246.0.0/23'
 param infrastructureSubnetPrefix string = '10.246.0.0/24'
 param endpointSubnetPrefix string = '10.246.1.0/27'
@@ -161,12 +163,32 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: '${namePrefix}-environment'
   location: location
   properties: {
-    appLogsConfiguration: {}
+    appLogsConfiguration: enableDiagnostics ? { destination: 'azure-monitor' } : {}
     vnetConfiguration: {
       infrastructureSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', network.name, 'environment')
       internal: true
     }
     workloadProfiles: [{ name: 'Consumption', workloadProfileType: 'Consumption' }]
+  }
+}
+resource diagnosticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enableDiagnostics) {
+  name: '${namePrefix}-diagnostics'
+  location: location
+  properties: {
+    sku: { name: 'PerGB2018' }
+    retentionInDays: 30
+    features: { disableLocalAuth: true }
+  }
+}
+resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagnostics) {
+  name: 'synthetic-ingestion-only'
+  scope: environment
+  properties: {
+    workspaceId: diagnosticsWorkspace!.id
+    logs: [
+      { category: 'ContainerAppConsoleLogs', enabled: true }
+      { category: 'ContainerAppSystemLogs', enabled: true }
+    ]
   }
 }
 resource job 'Microsoft.App/jobs@2024-03-01' = {
@@ -201,8 +223,8 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
           { name: 'INGEST_ALLOWED_PRINCIPAL_ID', value: allowedPrincipalId }
           { name: 'INGEST_DOCUMENT_UPDATED_AT', value: documentUpdatedAt }
           { name: 'INGEST_BLOB_PRIVATE_IP', value: privateEndpointIp }
-          { name: 'INGEST_CREATE_INDEX', value: string(createIndex) }
-          { name: 'INGEST_CONFIRM_EXCLUSIVE_MAINTENANCE', value: string(confirmExclusiveMaintenance) }
+          { name: 'INGEST_CREATE_INDEX', value: createIndex ? 'true' : 'false' }
+          { name: 'INGEST_CONFIRM_EXCLUSIVE_MAINTENANCE', value: confirmExclusiveMaintenance ? 'true' : 'false' }
         ]
       }]
     }
@@ -214,3 +236,4 @@ output jobResourceId string = job.id
 output ingestionPrincipalId string = identity.properties.principalId
 output expectedPrivateBlobIp string = privateEndpointIp
 output privateEndpointResourceId string = endpoint.id
+output diagnosticsWorkspaceId string = enableDiagnostics ? diagnosticsWorkspace!.id : ''

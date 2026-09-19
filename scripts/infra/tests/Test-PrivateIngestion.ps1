@@ -36,7 +36,8 @@ try {
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
     Assert-True ($environment.properties.vnetConfiguration.internal -eq $true -and
         $environment.properties.vnetConfiguration.infrastructureSubnetId -match 'environment' -and
-        -not $environment.properties.appLogsConfiguration.PSObject.Properties['destination']) 'Dedicated internal environment uses approved subnet without content log export'
+        $template.parameters.enableDiagnostics.defaultValue -eq $false -and
+        $environment.properties.appLogsConfiguration -match "if\(parameters\('enableDiagnostics'\)") 'Dedicated internal environment defaults to no diagnostics and requires explicit opt-in'
     $network = @($template.resources | Where-Object type -EQ 'Microsoft.Network/virtualNetworks')[0]
     Assert-True ($network.properties.subnets.Count -eq 2 -and
         $network.properties.subnets[0].properties.delegations[0].properties.serviceName -eq 'Microsoft.App/environments') 'Separate delegated infrastructure and private endpoint subnets'
@@ -52,6 +53,18 @@ try {
     Assert-True ($blobRole.scope -match 'containers' -and $blobRole.scope -match 'documents') 'Job Blob access is documents-container scoped'
     Assert-True ($template.parameters.confirmExclusiveMaintenance.defaultValue -eq $false -and
         $template.parameters.createIndex.defaultValue -eq $false) 'Maintenance/index-creation intent is never silently assumed'
+    $flags = @($job.properties.template.containers[0].env | Where-Object name -In @('INGEST_CREATE_INDEX', 'INGEST_CONFIRM_EXCLUSIVE_MAINTENANCE'))
+    Assert-True ($flags.Count -eq 2 -and
+        @($flags | Where-Object { $_.value -notmatch ", 'true', 'false'\)\]$" -or $_.value -match '\[string\(' }).Count -eq 0) 'ARM boolean intent is explicitly lowercase, never string(bool) TitleCase'
+    $workspace = @($template.resources | Where-Object type -EQ 'Microsoft.OperationalInsights/workspaces')[0]
+    Assert-True ($workspace.condition -eq "[parameters('enableDiagnostics')]" -and $workspace.properties.retentionInDays -eq 30 -and
+        $workspace.properties.features.disableLocalAuth -eq $true) 'Private diagnostics workspace is opt-in, 30-day retention and Entra-only'
+    $diagnostic = @($template.resources | Where-Object type -EQ 'Microsoft.Insights/diagnosticSettings')[0]
+    Assert-True ($diagnostic.condition -eq "[parameters('enableDiagnostics')]" -and $diagnostic.scope -match 'managedEnvironments' -and
+        $diagnostic.properties.workspaceId -match 'diagnostics' -and
+        ($diagnostic.properties.logs.category -join ',') -ceq 'ContainerAppConsoleLogs,ContainerAppSystemLogs' -and
+        -not $diagnostic.properties.PSObject.Properties['metrics']) 'Only private environment console/system categories export; no web or request diagnostics'
+    Assert-True (($template | ConvertTo-Json -Depth 100 -Compress) -notmatch 'listKeys|sharedKey|allLogs|HTTPLogs') 'Diagnostics never retrieve workspace keys or enable broad HTTP/log groups'
 } finally { Remove-Item -LiteralPath $compiled -Force }
 
 Assert-PrivateBlobAddress '10.246.1.4' @('10.246.1.4')
