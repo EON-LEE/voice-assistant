@@ -5,8 +5,15 @@ targetScope = 'resourceGroup'
 @maxLength(64)
 param imageDigest string
 
+@allowed([
+  'voice-environment'
+  'voice-ingest-environment'
+])
+@description('Use the private diagnostic environment only for synthetic, content-free acceptance evidence.')
+param environmentName string = 'voice-environment'
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
-  name: 'voice-environment'
+  name: environmentName
 }
 
 resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
@@ -18,7 +25,7 @@ resource speech 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
 }
 
 resource job 'Microsoft.App/jobs@2024-03-01' = {
-  name: 'voice-live-acceptance'
+  name: environmentName == 'voice-environment' ? 'voice-live-acceptance' : 'voice-live-acceptance-private'
   location: resourceGroup().location
   identity: {
     type: 'UserAssigned'

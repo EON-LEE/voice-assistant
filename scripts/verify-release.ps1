@@ -89,6 +89,29 @@ try {
         & (Join-Path $PSScriptRoot 'infra\tests\Test-Offline.ps1') `
             -BicepPath $BicepPath -BackendSchemaPath (Join-Path $root 'contracts\search-index.json')
     }
+    Invoke-Verification 'live-probe-job-template' {
+        $compiled = [IO.Path]::GetTempFileName()
+        try {
+            & $BicepPath build (Join-Path $root 'tools\VoiceAssistant.LiveProbe\cloud-job.bicep') --outfile $compiled
+            if ($LASTEXITCODE -ne 0) { throw 'Live acceptance job template did not compile.' }
+            $template = Get-Content -LiteralPath $compiled -Raw | ConvertFrom-Json
+            $jobs = @($template.resources | Where-Object { $_.type -eq 'Microsoft.App/jobs' })
+            if ($template.resources.Count -ne 1 -or $jobs.Count -ne 1) {
+                throw 'Live acceptance must not create roles, identities, or additional resources.'
+            }
+            $configuration = $jobs[0].properties.configuration
+            $container = $jobs[0].properties.template.containers[0]
+            if ($configuration.triggerType -ne 'Manual' -or $configuration.replicaRetryLimit -ne 0 -or
+                $configuration.replicaTimeout -ne 180 -or $configuration.manualTriggerConfig.parallelism -ne 1 -or
+                $container.args -notcontains '--live' -or $container.args -contains '--help') {
+                throw 'Live acceptance execution limits or explicit service-call intent changed.'
+            }
+            Write-Output 'PASS: bounded manual acceptance job compiles without creating additional privileges.'
+        }
+        finally {
+            Remove-Item -LiteralPath $compiled
+        }
+    }
     $report.localVerification = 'PASS'
     $report.status = 'LOCAL_PASS_LIVE_NOT_VERIFIED'
     if ($RequireLive) {

@@ -143,9 +143,18 @@ docker build -f .\tools\VoiceAssistant.LiveProbe\Dockerfile -t voice-live-accept
 docker build --build-arg NUGET_SOURCE=https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json -f .\tools\VoiceAssistant.LiveProbe\Dockerfile -t voice-live-acceptance .
 ```
 
-`cloud-job.bicep` targets the existing project resource group `rg-voice-assistant-web`, with the job in that group's location (which must match `voice-environment`, as in the project deployment). It declares exactly one new **manual** job, `voice-live-acceptance`, using existing `voice-environment` and `voice-runtime` UAI, and the dedicated Speech/OpenAI resources. It creates no roles, identity, storage, public ingress, schedule, event trigger or secrets. Existing runtime identity permissions must already allow ACR pull, Speech and OpenAI data-plane operations. `AZURE_CLIENT_ID` selects that same UAI through the standard DefaultAzureCredential chain.
+`cloud-job.bicep` targets the existing project resource group `rg-voice-assistant-web`, with the job in that group's location. It declares exactly one new **manual** job, `voice-live-acceptance`, using an existing environment and `voice-runtime` UAI, and the dedicated Speech/OpenAI resources. It creates no roles, identity, storage, public ingress, schedule, event trigger or secrets. Existing runtime identity permissions must already allow ACR pull, Speech and OpenAI data-plane operations. `AZURE_CLIENT_ID` selects that same UAI through the standard DefaultAzureCredential chain.
 
-The only deployment parameter is required `imageDigest`, exactly64 lowercase hexadecimal characters (no `sha256:` prefix). The template constructs **only** `eonvoice20260920.azurecr.io/voice-live-acceptance@sha256:<digest>`; no mutable image tag or arbitrary command can be supplied. Bicep enforces length; the operator must validate hexadecimal syntax before deployment (PowerShell: `$digest -cmatch '^[0-9a-f]{64}$'`). Build/push the reviewed image to that repository and resolve its immutable digest before applying the template. Do not include a tag in the digest parameter.
+Required `imageDigest` is exactly64 lowercase hexadecimal characters (no `sha256:` prefix). The template constructs **only** `eonvoice20260920.azurecr.io/voice-live-acceptance@sha256:<digest>`; no mutable image tag or arbitrary command can be supplied. Bicep enforces length; the operator must validate hexadecimal syntax before deployment (PowerShell: `$digest -cmatch '^[0-9a-f]{64}$'`). Build/push the reviewed image to that repository and resolve its immutable digest before applying the template. Do not include a tag in the digest parameter.
+
+Optional `environmentName` is restricted to `voice-environment` (default) or the
+existing `voice-ingest-environment`. The latter permits retaining the numeric,
+content-free evidence through its explicitly enabled private diagnostics, without
+enabling any web environment logging. It still uses the web runtime identity.
+The private selection creates `voice-live-acceptance-private` rather than trying
+to move the existing job between environments; neither job is scheduled.
+Record the selected environment: a diagnostic-environment run is not a claim
+that every aspect of the web environment or interactive browser was exercised.
 
 The job fixes one replica, parallelism1, completion count1, retry0 and platform timeout180seconds, allowing the30-second credential preflight,120-second probe and bounded cleanup. Arguments are fixed in both image and job; neither exposes Fake/help/chat-only settings. The job receives no Search/Blob configuration and calls only the approved synthetic Speech/OpenAI path. Applying the template does not run the job: the coordinator must explicitly start exactly one execution and inspect its exit/status and bounded JSON output.
 

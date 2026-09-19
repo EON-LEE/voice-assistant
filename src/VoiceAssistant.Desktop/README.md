@@ -1,5 +1,10 @@
 # Windows meeting English reply assistant
 
+> Preserved legacy prototype, not the current product. Use the installation-free
+> browser app instead. The offline desktop demo remains a reference; its original
+> bearer-header transport is not compatible with the current browser-only
+> one-use-ticket/Origin authentication contract.
+
 .NET 8 WPF Windows client. It only displays suggested replies: no TTS, Teams posting, microphone input, file recording, or external actions. Audio and transcript/reply state are memory-only. Do not use with real participants without the appropriate consent.
 
 ## Build and offline demo
