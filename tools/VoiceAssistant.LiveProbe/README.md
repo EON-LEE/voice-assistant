@@ -124,3 +124,23 @@ dotnet test .\tests\VoiceAssistant.Api.Tests\VoiceAssistant.Api.Tests.csproj
 ```
 
 Tests cover headers/hash/provenance gates, sample/frame pacing, unknown ground truth, monotonic timing math, cancellation/deadlines, startup/recognition/model/cleanup failures, content redaction, non-Azure test labels, config/auth blocking, Speech credential renewal, and obsolete generation suppression. They do not make live service calls.
+
+## Linux runtime-managed-identity acceptance job
+
+`Dockerfile` builds the same probe/API code on .NET8 Debian Bookworm, includes only the original WAV/metadata fixture, and runs as the built-in non-root `APP_UID`. Speech1.48.2 and explicit fail-closed CRL settings are inherited from the API provider. The image has no listener, frontend, account keys, login cache or document access. Its fixed entrypoint runs `--live` with the original fixture and a120-second provider deadline; extra `--help` cannot replace these arguments and yield a false successful help-only run.
+
+From the integrated repository root (the original fixture commit must be present):
+
+```powershell
+docker build -f .\tools\VoiceAssistant.LiveProbe\Dockerfile -t voice-live-acceptance .
+# An approved credential-free NuGet mirror can be supplied if NuGet.org is unreachable:
+docker build --build-arg NUGET_SOURCE=https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public/nuget/v3/index.json -f .\tools\VoiceAssistant.LiveProbe\Dockerfile -t voice-live-acceptance .
+```
+
+`cloud-job.bicep` targets the existing project resource group `rg-voice-assistant-web`, with the job in that group's location (which must match `voice-environment`, as in the project deployment). It declares exactly one new **manual** job, `voice-live-acceptance`, using existing `voice-environment` and `voice-runtime` UAI, and the dedicated Speech/OpenAI resources. It creates no roles, identity, storage, public ingress, schedule, event trigger or secrets. Existing runtime identity permissions must already allow ACR pull, Speech and OpenAI data-plane operations. `AZURE_CLIENT_ID` selects that same UAI through the standard DefaultAzureCredential chain.
+
+The only deployment parameter is required `imageDigest`, exactly64 lowercase hexadecimal characters (no `sha256:` prefix). The template constructs **only** `eonvoice20260920.azurecr.io/voice-live-acceptance@sha256:<digest>`; no mutable image tag or arbitrary command can be supplied. Bicep enforces length; the operator must validate hexadecimal syntax before deployment (PowerShell: `$digest -cmatch '^[0-9a-f]{64}$'`). Build/push the reviewed image to that repository and resolve its immutable digest before applying the template. Do not include a tag in the digest parameter.
+
+The job fixes one replica, parallelism1, completion count1, retry0 and platform timeout180seconds, allowing the30-second credential preflight,120-second probe and bounded cleanup. Arguments are fixed in both image and job; neither exposes Fake/help/chat-only settings. The job receives no Search/Blob configuration and calls only the approved synthetic Speech/OpenAI path. Applying the template does not run the job: the coordinator must explicitly start exactly one execution and inspect its exit/status and bounded JSON output.
+
+Treat a job `Succeeded` plus matching probe JSON `status:SUCCESS`, `provider:Azure`, `scope:speech_openai_only`, `finalEvents:1`, `deltaEvents>0`, `exitCode:0` as **service acceptance for that image/runtime identity**, not browser JWT/ticket acceptance, physical audio capture, Search ACL verification or a latency/p95 guarantee. BLOCKED/FAILED/nonzero exit is not success. Keep the execution ID, image digest and source revision with the content-free evidence; a process-success status alone cannot attest to an unreviewed image's contents. The container build omits `.git` through the root Docker ignore, so source revision may be null; record source-to-image mapping externally rather than inventing provenance.
