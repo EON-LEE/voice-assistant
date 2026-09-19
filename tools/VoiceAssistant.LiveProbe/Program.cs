@@ -14,6 +14,8 @@ namespace VoiceAssistant.LiveProbe
             Azure Speech + OpenAI live-provider acceptance probe (no API/JWT/browser/Search test).
             Usage: VoiceAssistant.LiveProbe --live --audio <original.wav> --metadata <original.json> [--timeout-seconds 90]
                    VoiceAssistant.LiveProbe --help
+                   VoiceAssistant.LiveProbe --diagnose-auth
+                   VoiceAssistant.LiveProbe --diagnose-default-auth
             Requires explicit --live, approved synthetic en-US fixture metadata with SHA256,
             PCM16LE 16000 Hz mono WAV <=30 seconds and >=1 second zero tail, Azure__SpeechRegion,
             Azure__SpeechResourceId, Azure__OpenAIEndpoint, Azure__ChatDeployment; optional Azure__SpeechEndpoint.
@@ -22,16 +24,24 @@ namespace VoiceAssistant.LiveProbe
             stdout: one content-free JSON evidence object. No tokens, transcript, source content or paths.
             Exit: 0 SUCCESS; 1 FAILED; 2 BLOCKED (opt-in/config/fixture/auth unavailable); 3 CANCELLED.
             --help exits0 but is not acceptance evidence. Offline test doubles are never labelled Azure.
+            --diagnose-auth performs ONLY bounded AzurePowerShellCredential token acquisition and reports safe
+            categories (AUTHENTICATED is NOT service acceptance). No tokens, accounts or raw exceptions are printed.
+            --diagnose-default-auth checks the standard noninteractive DefaultAzureCredential chain instead.
             """;
 
         public static Task<int> RunAsync(string[] args, TextWriter output, CancellationToken cancellation) =>
+            args is ["--diagnose-auth"] ? AuthDiagnostic.RunAsync(output, cancellation) :
+            args is ["--diagnose-default-auth"] ? AuthDiagnostic.RunAsync(output, cancellation, CreateDefaultCredential()) :
             RunCoreAsync(args, output, cancellation,
                 () => new ConfigurationBuilder().AddEnvironmentVariables().Build(),
-                () => new DefaultAzureCredential(new DefaultAzureCredentialOptions
-                {
-                    ExcludeInteractiveBrowserCredential = true,
-                    ExcludeBrokerCredential = true
-                }));
+                CreateDefaultCredential);
+
+        internal static DefaultAzureCredential CreateDefaultCredential() => new(new DefaultAzureCredentialOptions
+        {
+            ExcludeInteractiveBrowserCredential = true,
+            ExcludeBrokerCredential = true,
+            CredentialProcessTimeout = TimeSpan.FromSeconds(20)
+        });
 
         internal static async Task<int> RunCoreAsync(string[] args, TextWriter output, CancellationToken cancellation,
             Func<IConfiguration> configuration, Func<TokenCredential> createCredential)
@@ -95,7 +105,7 @@ namespace VoiceAssistant.LiveProbe
             {
                 var credential = createCredential();
                 using var authentication = CancellationTokenSource.CreateLinkedTokenSource(stopped.Token);
-                authentication.CancelAfter(TimeSpan.FromSeconds(15));
+                authentication.CancelAfter(TimeSpan.FromSeconds(30));
                 try
                 {
                     await credential.GetTokenAsync(new TokenRequestContext(["https://cognitiveservices.azure.com/.default"]), authentication.Token)

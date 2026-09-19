@@ -18,9 +18,26 @@ Required environment variables are `Azure__SpeechRegion`, `Azure__SpeechResource
 
 `Azure__ChatMaxOutputTokens` optionally sets the completion budget64..4096 (default2048). On reasoning models this budget also covers reasoning tokens; an exhausted budget yielding no text is an explicit failure, not success. Temperature is omitted because some reasoning deployments reject custom temperature values. The provider does not send unsupported/raw reasoning flags; response wording remains bounded by the system prompt and the8000-character stream limit.
 
-Authentication uses the standard `DefaultAzureCredential` chain shared with the provider, including existing managed identity, Azure CLI, Azure PowerShell, and developer credentials. Interactive browser and broker are explicitly excluded. There is no custom token bridge, cached-token extraction, API key, interactive login retry, or check that assumes Azure CLI is the only credential. A credential failure or 15-second authentication timeout produces **BLOCKED** without opening a Speech stream or calling OpenAI. Successful token acquisition is not evidence of resource permissions; subsequent Azure service failures are **FAILED**, not passed readiness.
+Authentication uses the standard `DefaultAzureCredential` chain shared with the provider, including existing managed identity, Azure CLI, Azure PowerShell, and developer credentials. Interactive browser and broker are explicitly excluded. There is no custom token bridge, cached-token extraction, API key, interactive login retry, or check that assumes Azure CLI is the only credential. Local credential child processes have a20-second budget and overall authentication has a30-second timeout; failure produces **BLOCKED** without opening a Speech stream or calling OpenAI. Successful token acquisition is not evidence of resource permissions; subsequent Azure service failures are **FAILED**, not passed readiness.
 
 Flags are exactly `--live`, `--audio <path>`, `--metadata <path>`, `--timeout-seconds <1..180>` (default 90), or standalone `--help`. Unknown/duplicate flags are rejected. Ctrl+C requests cancellation. No `--source-revision` argument is accepted: caller-provided provenance would not attest to the binary.
+
+### Windows PowerShell credential diagnosis
+
+Standalone `--diagnose-auth` acquires a Cognitive Services token through the official `AzurePowerShellCredential`; `--diagnose-default-auth` checks the complete standard `DefaultAzureCredential` chain. These bounded30-second operations print only fixed error categories or `AUTHENTICATED`, scope `authentication_only`, and `serviceAcceptanceVerified:false`. They make **no Speech/OpenAI service calls**, and never print tokens, account IDs or raw SDK/process exceptions. Diagnostic success is not live acceptance.
+
+Azure.Identity1.17 invokes `pwsh -NoProfile -NonInteractive -EncodedCommand` and, if pwsh is absent on Windows, falls back to `powershell` with the same arguments. It does **not** override execution policy. A Windows host where every execution-policy scope is Undefined has effective Restricted policy, which can prevent even an installed/signed Az.Accounts module's format files from loading. `NoAzAccountModule` can therefore mean unloadable, not simply uninstalled. The error may be localized.
+
+If organizational policy permits it, launch the probe from a process with **process-only RemoteSigned** (signed downloaded modules remain required), not a persistent LocalMachine/CurrentUser change:
+
+```powershell
+Get-ExecutionPolicy -List
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
+dotnet .\tools\VoiceAssistant.LiveProbe\bin\Release\net8.0\VoiceAssistant.LiveProbe.dll --diagnose-default-auth
+# In this same process, run the explicit --live command once config and fixture are approved.
+```
+
+This standard setting is inherited by the SDK's child PowerShell via `PSExecutionPolicyPreference`; Group Policy remains authoritative. The probe never changes execution policy itself. Do not weaken mandated policy, install untrusted modules, copy tokens to environment variables, or replace the SDK credential with manual token extraction. In the observed Windows environment, the direct SDK credential failed under default Restricted policy and succeeded under process-only RemoteSigned using the existing login; this does not prove another host's credentials or resource roles.
 
 ## Fixture validation
 
