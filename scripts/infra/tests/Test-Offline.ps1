@@ -116,7 +116,8 @@ try {
         Assert-True ($template.parameters.$name.type -eq 'secureString') "Protected deployment parameter: $name"
     }
     $storage = @($template.resources | Where-Object type -EQ 'Microsoft.Storage/storageAccounts')[0]
-    Assert-True ($storage.properties.allowBlobPublicAccess -eq $false -and $storage.properties.allowSharedKeyAccess -eq $false) 'Private documents disallow anonymous and shared-key access'
+    Assert-True ($storage.properties.allowBlobPublicAccess -eq $false -and $storage.properties.allowSharedKeyAccess -eq $false -and
+        $storage.properties.publicNetworkAccess -eq 'Disabled') 'Private documents disable public networking, anonymous and shared-key access'
     $search = @($template.resources | Where-Object type -EQ 'Microsoft.Search/searchServices')[0]
     Assert-True ($search.properties.disableLocalAuth -eq $true -and
         -not $search.properties.PSObject.Properties['authOptions']) 'Entra-only Search disables keys without conflicting aadOrApiKey authOptions'
@@ -201,6 +202,10 @@ try {
     $manifestPath = Join-Path $fixtures 'manifest.json'
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     $plan = New-KnowledgePlan $manifestPath $fixtures
+    $knowledgeModule = Get-Module Knowledge
+    $normalized = & $knowledgeModule { ConvertTo-VersionTime ([datetime]::SpecifyKind([datetime]'2026-09-01T00:00:00', [DateTimeKind]::Utc)) }
+    Assert-True ($normalized -is [datetimeoffset] -and $normalized.ToString('yyyy-MM-ddTHH:mm:ssZ') -eq '2026-09-01T00:00:00Z') 'UTC dates materialized by PowerShell 7 JSON preserve version semantics'
+    Assert-Throws { & $knowledgeModule { ConvertTo-VersionTime ([datetime]::SpecifyKind([datetime]'2026-09-01T00:00:00', [DateTimeKind]::Unspecified)) } } 'RFC3339' 'Materialized unzoned JSON dates are still rejected'
     Assert-True ($plan.documents.Count -eq 1 -and $plan.documents[0].chunks.Count -eq 1) 'Approved synthetic markdown yields deterministic chunk plan'
     $again = New-KnowledgePlan $manifestPath $fixtures
     Assert-True ($again.documents[0].sourceHash -ceq $plan.documents[0].sourceHash -and
@@ -312,3 +317,4 @@ try {
     foreach ($file in $temporary) { Remove-Item -LiteralPath $file -Force }
 }
 & (Join-Path $PSScriptRoot 'Test-Readiness.ps1')
+& (Join-Path $PSScriptRoot 'Test-PrivateIngestion.ps1') -BicepPath $BicepPath

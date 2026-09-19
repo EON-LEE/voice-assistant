@@ -44,7 +44,14 @@ function Assert-KnowledgeSchema {
 }
 
 function ConvertTo-VersionTime {
-    param([string]$Value)
+    param($Value)
+    # PowerShell 7.4's JSON reader materializes RFC3339 dates; Windows PowerShell preserves strings.
+    if ($Value -is [datetimeoffset]) { return $Value.ToUniversalTime() }
+    if ($Value -is [datetime]) {
+        if ($Value.Kind -eq [DateTimeKind]::Unspecified) { throw 'updatedAt must be an explicit RFC3339 timestamp with timezone.' }
+        return ([datetimeoffset]$Value).ToUniversalTime()
+    }
+    if ($Value -isnot [string]) { throw 'updatedAt must be an explicit RFC3339 timestamp with timezone.' }
     if ($Value -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,7})?(Z|[+-]\d{2}:\d{2})$') { throw 'updatedAt must be an explicit RFC3339 timestamp with timezone.' }
     return [datetimeoffset]::Parse($Value, [Globalization.CultureInfo]::InvariantCulture).ToUniversalTime()
 }

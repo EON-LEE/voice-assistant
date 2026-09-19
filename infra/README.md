@@ -43,13 +43,17 @@ RBAC propagation. The operator also needs control-plane read access to the three
 services for the ingestion preflight (for example existing resource-group Reader);
 the ingestion data roles do not grant arbitrary subscription access.
 
-Services have public network endpoints with Entra authentication; keys/local
-authentication are disabled. Search sets `disableLocalAuth: true` and omits
+Speech/OpenAI/Search have public network endpoints with Entra authentication;
+keys/local authentication are disabled. Search sets `disableLocalAuth: true` and omits
 `authOptions`: Azure rejects `aadOrApiKey` options when local authentication is
-disabled. **Private Blob here means no public/anonymous data
-access, not Private Link/network isolation.** If company policy requires private
-endpoints/VNet egress, do not deploy this baseline unchanged. Source blobs are
-operator-only archives, not browser-readable citation links.
+disabled. Storage explicitly sets **publicNetworkAccess: Disabled**, matching
+the observed `StorageAccount_PublicNetwork_Modify` governance policy, with no
+override switch to bypass it. Use the [private ingestion route](private-ingestion/README.md)
+for the deployed baseline: a dedicated Blob private endpoint, DNS and manual
+job with a separate identity. Local operator ingestion requires an already
+approved private network path; a successful Entra login does not bypass the
+storage network boundary. Source blobs are operator-only archives, not
+browser-readable citation links.
 
 ## Prerequisites and deployment
 
@@ -273,6 +277,10 @@ The default is entirely offline: no token acquisition, HTTP, embeddings, index
 creation, uploads or deletion. Only explicitly listed UTF-8 `.txt`/`.md` files
 inside `ContentRoot` are accepted (1 MiB per file, 100 operations per manifest);
 traversal, symlinks, empty text and public/wildcard/empty ACLs fail.
+Actual local `-Apply` requires approved private connectivity/DNS to the Blob
+account. Do not re-enable public networking to make the local command work.
+The separate [one-shot synthetic job](private-ingestion/README.md) provides a
+bounded private route without adding Blob permissions to the web identity.
 
 Use `scripts\infra\tests\fixtures\manifest.json` as the shape reference, **not as
 production data**. Each upsert supplies `documentId`, `operation: "upsert"`,
@@ -382,8 +390,8 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The **52 infrastructure/ingestion checks**, plus **77
-readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
+compiled without diagnostics. The **54 infrastructure/ingestion checks**, **77
+readiness/bootstrap/adapter checks**, and **26 private-ingestion checks** passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 
 ```powershell

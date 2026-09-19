@@ -151,7 +151,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     allowBlobPublicAccess: false
     allowSharedKeyAccess: false
     defaultToOAuthAuthentication: true
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
     encryption: {
       keySource: 'Microsoft.Storage'
       services: { blob: { enabled: true, keyType: 'Account' } }

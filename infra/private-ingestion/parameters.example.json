@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "value": "koreacentral" },
+    "storageAccountName": { "value": "REPLACE_EXISTING_PRIVATE_STORAGE" },
+    "searchName": { "value": "REPLACE_EXISTING_SEARCH" },
+    "openAIName": { "value": "REPLACE_EXISTING_OPENAI" },
+    "registryName": { "value": "REPLACE_EXISTING_ACR" },
+    "image": { "value": "REPLACE_ACR.azurecr.io/voice-private-ingestion@sha256:REPLACE_DIGEST" },
+    "allowedPrincipalId": { "value": "REPLACE_APPROVED_USER_OBJECT_GUID" },
+    "documentUpdatedAt": { "value": "REPLACE_APPROVED_RFC3339_VERSION" },
+    "createIndex": { "value": false },
+    "confirmExclusiveMaintenance": { "value": false }
+  }
+}
