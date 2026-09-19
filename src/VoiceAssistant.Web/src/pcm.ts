@@ -20,7 +20,8 @@ export class PcmConverter {
   }
   reset(): void { this.history.fill(0); this.position = this.phase = this.previous = 0; }
   process(channels: readonly Float32Array[], emit: (sample: number) => void): void {
-    if (!channels.length || channels.length > 32) return;
+    if (!channels.length) return;
+    if (channels.length > 32) throw new Error("Unsupported audio input: at most 32 channels are allowed.");
     const length = channels[0]!.length;
     for (const channel of channels) if (channel.length !== length) throw new Error("Mismatched audio channels.");
     for (let frame = 0; frame < length; frame++) {

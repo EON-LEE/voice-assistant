@@ -17,6 +17,8 @@ npm run dev
 
 Vite serves `http://127.0.0.1:5173` and proxies `/api` (including WebSockets) to `http://localhost:5080`, preserving the incoming Host header. Serve `dist` from the ASP.NET API's same-origin static root in Azure; no Vite development server is needed in production. The frontend contains no cloud secrets or build-time tenant config.
 
+For isolated local integration runs set `VOICE_ASSISTANT_DEV_API=http://localhost:5084` before starting Vite; the default stays unchanged. `/health` is proxied to the same target for local E2E readiness checks. This is development-server configuration only, not production routing.
+
 The page starts stopped in clearly labelled **Offline demo**. Start demo uses canned streaming replies and synthetic PCM in memory: no authentication, backend call, screen picker, or audio device is used. Select **Live** explicitly to use the server. No failed live connection ever switches to Demo.
 
 ## Browser capture constraints and consent
@@ -81,6 +83,14 @@ State is bounded: 64 transcript turns, 256 remembered response IDs, 32,768 chara
 `npm test` compiles and runs Node's test runner with tests in `tests/VoiceAssistant.Web.Tests`: conversion rates/endianness, stereo/clipping/nonfinite samples, chunk continuity and anti-alias rejection, reducer revision/cancellation/stale IDs/pins, strict event parsing, ready gating, disconnect/fatal/device cleanup, no-audio/permission failure, picker cancellation and late tracks, worklet source lifecycle mocks, explicit Demo, and WebSocket backpressure. No test requests actual meeting/screen or microphone permission.
 
 `npm run build` runs strict TypeScript typechecking and bundles both main UI and AudioWorklet. A local browser smoke checks Demo Start/Suggest/Pin/Pause/Stop. Coordinator-owned Playwright tests in a separate E2E directory cover full mocked-browser capture and actual fake-backend integration after merge.
+
+The follow-up `media-playback.spec.js` uses the committed original offline speech fixture (140,204-byte canonical WAV; provenance/generator/metadata in `tests/VoiceAssistant.Web.E2E/fixtures`). Actual HTMLAudioElement decoding and `captureStream()` feed the native worklet and real local Fake API across **20 start/stop cycles**, checking nonzero 640-byte PCM frames, replies, all captured tracks ended, and all test/app AudioContexts closed. It additionally checks audio mute recovery by an explicit new Share, inert transcript/citation DOM text, rapid mode switching, and injected auth initialization/401 retry (no Entra traffic). Fake replies are deterministic; this is **not Azure semantic/STT validation**. `speechEndSample` is null, so no semantic speech-end latency is asserted. Audio playback uses a test-only zero-gain output.
+
+Unit tests execute the actual worklet processor against a mocked message port with transferred buffers to verify eight-credit overflow, 1/2/6/32-channel samples, unsupported channel errors, and pause epochs/partial-frame discard. Configuration initialization is single-flight and failures allow retry. A 401/403 ticket rejection clears the in-memory signed-in account, requiring a new explicit sign-in.
+
+To run follow-up browser cases, start Vite and the local Fake API, set `VOICE_ASSISTANT_WEB_URL` to the Vite origin, `VOICE_ASSISTANT_BACKEND_E2E=1`, and `VOICE_ASSISTANT_API_EXTERNAL=1`, then run `npm test -- media-playback.spec.js` from `tests/VoiceAssistant.Web.E2E`. The two injected auth module tests use Vite's source-module endpoint and require `VOICE_ASSISTANT_VITE_AUTH_TESTS=1`; otherwise they are **explicitly skipped**, so published/static-bundle suites never request development source modules. All media and UI cases run against both Vite and published assets. Run twice with `--repeat-each=2` for 40 total original-media capture cycles. No real browser picker, microphone, identity provider, or cloud service is invoked.
+
+Suggest is enabled and its command handler permits sending only when the **latest displayed turn is final**. An older final turn cannot enable generation while a newer partial turn is arriving; otherwise the backend could generate for the old turn and the stale-response filter would correctly discard that answer.
 
 Stable automation selectors are `data-testid="mode|start|stop|suggest|pause|pin|transcript|reply|pinned-reply|status|error|consent|signin"`. Mode values are `demo`, `live`, `synthetic`. Live requires ready config and consent; Fake bypasses only Entra, never capture permission. Azure sign-in, real Teams audio support, OS permissions, throttling, and speech/AI quality require consented manual verification.
 

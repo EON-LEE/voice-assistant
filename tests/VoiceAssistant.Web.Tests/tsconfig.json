@@ -14,6 +14,7 @@
     "../../src/VoiceAssistant.Web/src/protocol.ts",
     "../../src/VoiceAssistant.Web/src/state.ts",
     "../../src/VoiceAssistant.Web/src/pcm.ts",
+    "../../src/VoiceAssistant.Web/src/audio.worklet.ts",
     "../../src/VoiceAssistant.Web/src/session.ts",
     "../../src/VoiceAssistant.Web/src/transport.ts",
     "../../src/VoiceAssistant.Web/src/capture.ts"

@@ -35,6 +35,9 @@ function error(message: string): void {
   element("error").textContent = message;
   element("error").hidden = !message;
 }
+function canSuggest(): boolean {
+  return !!session?.isReady && !pause.checked && state.turns.at(-1)?.final === true;
+}
 function sourceList(id: string, reply: Reply | null): void {
   const list = element(id);
   list.replaceChildren();
@@ -66,7 +69,7 @@ function render(): void {
   element("reply-status").textContent = state.current ? state.current.complete ? "Complete" : "Streaming…" : "Ready when you are";
   element("pinned").textContent = state.pinned?.text || "Keep a useful answer here. New suggestions will not replace it.";
   sourceList("sources", state.current); sourceList("pinned-sources", state.pinned);
-  suggest.disabled = !session?.isReady || pause.checked || !state.turns.some(t => t.final);
+  suggest.disabled = !canSuggest();
   cancel.disabled = !session?.isReady;
   pause.disabled = !session?.isReady;
   pin.disabled = !state.current?.text;
@@ -76,6 +79,8 @@ function render(): void {
   mode.disabled = !!session;
   consent.disabled = !!session;
   signin.disabled = !!session || !configReady || fake;
+  if (configReady && !fake && !auth.signedIn)
+    element("auth-status").textContent = "Sign in first, then click Share meeting audio.";
 }
 async function configureMode(): Promise<void> {
   const generation = ++configGeneration;
@@ -135,7 +140,10 @@ start.addEventListener("click", () => {
 });
 stop.addEventListener("click", () => { void session?.stop(); });
 pause.addEventListener("change", () => { state.pause(pause.checked); session?.pause(pause.checked); render(); });
-suggest.addEventListener("click", () => { state.request(); error(""); session?.request(); render(); });
+suggest.addEventListener("click", () => {
+  if (!canSuggest()) return;
+  state.request(); error(""); session?.request(); render();
+});
 cancel.addEventListener("click", () => { state.cancel(); session?.cancel(); render(); });
 pin.addEventListener("click", () => { state.pin(); render(); });
 element("unpin").addEventListener("click", () => { state.pinned = null; render(); });
