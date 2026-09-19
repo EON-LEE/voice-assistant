@@ -16,6 +16,7 @@ namespace VoiceAssistant.LiveProbe
                    VoiceAssistant.LiveProbe --help
                    VoiceAssistant.LiveProbe --diagnose-auth
                    VoiceAssistant.LiveProbe --diagnose-default-auth
+                   VoiceAssistant.LiveProbe --live --chat-only [--timeout-seconds 90]
             Requires explicit --live, approved synthetic en-US fixture metadata with SHA256,
             PCM16LE 16000 Hz mono WAV <=30 seconds and >=1 second zero tail, Azure__SpeechRegion,
             Azure__SpeechResourceId, Azure__OpenAIEndpoint, Azure__ChatDeployment; optional Azure__SpeechEndpoint.
@@ -27,6 +28,7 @@ namespace VoiceAssistant.LiveProbe
             --diagnose-auth performs ONLY bounded AzurePowerShellCredential token acquisition and reports safe
             categories (AUTHENTICATED is NOT service acceptance). No tokens, accounts or raw exceptions are printed.
             --diagnose-default-auth checks the standard noninteractive DefaultAzureCredential chain instead.
+            --live --chat-only sends one fixed original generic English prompt to OpenAI, with no Speech/Search.
             """;
 
         public static Task<int> RunAsync(string[] args, TextWriter output, CancellationToken cancellation) =>
@@ -58,11 +60,13 @@ namespace VoiceAssistant.LiveProbe
             if (!args.Contains("--live")) return await Emit("BLOCKED", "live_opt_in_required");
             string? audioPath = null, metadataPath = null;
             var timeoutSeconds = 90;
+            var chatOnly = false;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             for (var i = 0; i < args.Length; i++)
             {
                 if (!seen.Add(args[i])) return await Emit("BLOCKED", "invalid_arguments");
                 if (args[i] == "--live") continue;
+                if (args[i] == "--chat-only") { chatOnly = true; continue; }
                 if (i + 1 >= args.Length) return await Emit("BLOCKED", "invalid_arguments");
                 switch (args[i])
                 {
@@ -92,11 +96,15 @@ namespace VoiceAssistant.LiveProbe
             };
             try { settings.ValidateAzureProvider(); }
             catch (InvalidOperationException) { return await Emit("BLOCKED", "configuration_unavailable"); }
-            if (audioPath is null || metadataPath is null) return await Emit("BLOCKED", "fixture_required");
-            AudioFixture fixture;
-            try { fixture = AudioFixture.Load(audioPath, metadataPath); }
-            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
-            { return await Emit("BLOCKED", "fixture_invalid"); }
+            AudioFixture? fixture = null;
+            if (!chatOnly)
+            {
+                if (audioPath is null || metadataPath is null) return await Emit("BLOCKED", "fixture_required");
+                try { fixture = AudioFixture.Load(audioPath, metadataPath); }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
+                { return await Emit("BLOCKED", "fixture_invalid"); }
+            }
+            else if (audioPath is not null || metadataPath is not null) return await Emit("BLOCKED", "invalid_arguments");
 
             using var stopped = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             ConsoleCancelEventHandler stopHandler = (_, e) => { e.Cancel = true; stopped.Cancel(); };
@@ -113,8 +121,10 @@ namespace VoiceAssistant.LiveProbe
                 }
                 catch (OperationCanceledException) when (stopped.IsCancellationRequested) { return await Emit("CANCELLED", "cancelled"); }
                 catch (Exception) { return await Emit("BLOCKED", "authentication_unavailable"); }
-                var result = await new ProbeRunner(new AzureMeetingProvider(settings, credential))
-                    .RunAsync(fixture, TimeSpan.FromSeconds(timeoutSeconds), stopped.Token);
+                var provider = new AzureMeetingProvider(settings, credential);
+                if (chatOnly) return await ChatDiagnostic.RunAsync(provider, TimeSpan.FromSeconds(timeoutSeconds), output, stopped.Token);
+                var result = await new ProbeRunner(provider)
+                    .RunAsync(fixture!, TimeSpan.FromSeconds(timeoutSeconds), stopped.Token);
                 await output.WriteLineAsync(result.ToJson());
                 return result.ExitCode;
             }

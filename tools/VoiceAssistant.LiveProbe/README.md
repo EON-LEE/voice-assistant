@@ -18,9 +18,13 @@ Required environment variables are `Azure__SpeechRegion`, `Azure__SpeechResource
 
 `Azure__ChatMaxOutputTokens` optionally sets the completion budget64..4096 (default2048). On reasoning models this budget also covers reasoning tokens; an exhausted budget yielding no text is an explicit failure, not success. Temperature is omitted because some reasoning deployments reject custom temperature values. The provider does not send unsupported/raw reasoning flags; response wording remains bounded by the system prompt and the8000-character stream limit.
 
+The pinned Azure.AI.OpenAI2.1 client otherwise rewrites `MaxOutputTokenCount` to legacy `max_tokens`, which GPT-5 rejects. The API explicitly enables `max_completion_tokens` via the documented `SetNewMaxCompletionTokensPropertyEnabled` extension. Because that pinned extension requires an initialized additional-property bag, options are created with the public SDK `ModelReaderWriter` before applying the extension. The regression test captures the actual Azure client's serialized request, not merely the C# property.
+
 Authentication uses the standard `DefaultAzureCredential` chain shared with the provider, including existing managed identity, Azure CLI, Azure PowerShell, and developer credentials. Interactive browser and broker are explicitly excluded. There is no custom token bridge, cached-token extraction, API key, interactive login retry, or check that assumes Azure CLI is the only credential. Local credential child processes have a20-second budget and overall authentication has a30-second timeout; failure produces **BLOCKED** without opening a Speech stream or calling OpenAI. Successful token acquisition is not evidence of resource permissions; subsequent Azure service failures are **FAILED**, not passed readiness.
 
 Flags are exactly `--live`, `--audio <path>`, `--metadata <path>`, `--timeout-seconds <1..180>` (default 90), or standalone `--help`. Unknown/duplicate flags are rejected. Ctrl+C requests cancellation. No `--source-revision` argument is accepted: caller-provided provenance would not attest to the binary.
+
+For a bounded model-only diagnosis, `--live --chat-only [--timeout-seconds 45]` sends one fixed original generic English request for a project-update sentence. It uses the same Azure configuration and standard credential preflight, but no WAV, Speech, Search, or corporate documents. Do not combine it with audio/metadata flags. Its JSON has `scope: "openai_only"` and `fullPipelineVerified:false`; a successful model-only diagnosis is **not** a full speech/model acceptance result.
 
 ### Windows PowerShell credential diagnosis
 
@@ -72,6 +76,8 @@ Stdout is one bounded JSON object with no tokens, identities, endpoints, input p
 Standalone `--help` exits0 but is not acceptance evidence. The orchestration gate must inspect both exit code and JSON status/provider. Offline injected test providers are always `provider: "TestDouble"` even if their pipeline succeeds. `provider: "Azure"` on **BLOCKED** identifies the requested provider, not a completed call; counts are zero and timings null.
 
 Schema1 fields: `status`, `reason` (fixed content-free code), `provider`, `startedAt` (UTC), `elapsedMs` (monotonic), `partialEvents`, `finalEvents`, `deltaEvents`, `timings`, `scope: "speech_openai_only"`, `speechEndBoundary`, `buildSourceRevision`, `provenance`, and `exitCode`. `buildSourceRevision` is the assembly's build-time informational source revision, or null; it does **not** attest to uncommitted files. Rebuild from a clean committed checkout and retain independent source/working-tree evidence for reproducibility.
+
+Optional `failure` reports fixed `stage` (`speech`/`openai`), numeric `httpStatus`, allowlisted service `code`, and allowlisted `parameter` (`max_tokens`, `max_completion_tokens`, `temperature`, `messages`, `messages[0].role`, `reasoning_effort`). Unrecognized values become `unknown`/null. Error bodies, freeform messages, endpoints and identities are never echoed. This distinguishes HTTP401/403 permission failures,429 throttling and400 parameter incompatibility without exposing content.
 
 `timings` contains:
 

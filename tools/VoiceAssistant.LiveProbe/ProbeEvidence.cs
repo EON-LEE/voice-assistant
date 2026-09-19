@@ -16,7 +16,7 @@ public sealed record ProbeTimings(
 public sealed record ProbeEvidence(
     string Status, string Reason, string Provider, DateTimeOffset StartedAt,
     double ElapsedMs = 0, int PartialEvents = 0, int FinalEvents = 0, int DeltaEvents = 0,
-    ProbeTimings? Timings = null)
+    ProbeTimings? Timings = null, ServiceFailure? Failure = null)
 {
     public int SchemaVersion => 1;
     public string Scope => "speech_openai_only";

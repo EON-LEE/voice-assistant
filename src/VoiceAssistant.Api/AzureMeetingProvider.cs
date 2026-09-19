@@ -1,7 +1,9 @@
 using System.Runtime.CompilerServices;
+using System.ClientModel.Primitives;
 using System.Text.Json;
 using Azure;
 using Azure.AI.OpenAI;
+using Azure.AI.OpenAI.Chat;
 using Azure.Core;
 using Azure.Identity;
 using Azure.Search.Documents;
@@ -140,8 +142,18 @@ public sealed class AzureMeetingProvider : IMeetingProvider
 
     }
 
-    internal static ChatCompletionOptions CreateChatOptions(ServiceSettings settings) =>
-        new() { MaxOutputTokenCount = settings.ChatMaxOutputTokens };
+    internal static ChatCompletionOptions CreateChatOptions(ServiceSettings settings)
+    {
+        // The 2.1 extension requires the additional-property bag initialized by the SDK model reader.
+        var options = ModelReaderWriter.Read<ChatCompletionOptions>(BinaryData.FromString("{}"))
+            ?? throw new InvalidOperationException("Could not initialize chat options.");
+        options.MaxOutputTokenCount = settings.ChatMaxOutputTokens;
+        // Azure.AI.OpenAI 2.1 otherwise rewrites this option to legacy max_tokens, rejected by GPT-5.
+#pragma warning disable AOAI001
+        options.SetNewMaxCompletionTokensPropertyEnabled();
+#pragma warning restore AOAI001
+        return options;
+    }
 
     private sealed class AzureSpeechStream : ISpeechStream
     {

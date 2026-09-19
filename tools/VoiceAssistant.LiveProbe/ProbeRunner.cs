@@ -23,6 +23,8 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
         var acceptingTranscript = true;
         var status = "FAILED";
         var reason = "provider_error";
+        var stage = "speech";
+        ServiceFailure? failure = null;
         ISpeechStream? stream = null;
         try
         {
@@ -64,6 +66,7 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
             if (finals != 1) throw new ProbeFailure("fixture_not_single_utterance");
             if (string.IsNullOrWhiteSpace(recognized.Text)) throw new ProbeFailure("empty_transcript");
             // The probe never retrieves corporate documents: only the approved synthetic utterance reaches OpenAI.
+            stage = "openai";
             var outputLength = 0;
             await foreach (var delta in provider.AnswerAsync([new(recognized.Text)], new("disabled", []), execution.Token)
                 .WithCancellation(execution.Token))
@@ -87,7 +90,11 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
             reason = cancellation.IsCancellationRequested ? "cancelled" : providerFailed ? "speech_error" : "deadline_exceeded";
         }
         catch (ProbeFailure exception) { reason = exception.Reason; }
-        catch (Exception) { reason = "provider_error"; }
+        catch (Exception exception)
+        {
+            failure = ServiceFailure.From(exception, stage);
+            reason = failure.HttpStatus.HasValue ? "service_error" : "provider_error";
+        }
         finally
         {
             lock (gate) acceptingTranscript = false;
@@ -108,7 +115,7 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
                 new(audioStart, speechEnd, finalStt,
                     speechEnd.HasValue && finalStt.HasValue ? finalStt - speechEnd : null,
                     firstDelta - finalStt, completed - finalStt, lateness,
-                    fixture.SpeechEndSample * 1000d / AudioFixture.SampleRate));
+                    fixture.SpeechEndSample * 1000d / AudioFixture.SampleRate), failure);
         }
     }
 
