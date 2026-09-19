@@ -14,6 +14,7 @@ internal static class ChatDiagnostic
         var reason = "empty_response";
         var deltas = 0;
         var characters = 0;
+        double? firstDeltaMs = null;
         ServiceFailure? failure = null;
         try
         {
@@ -22,7 +23,11 @@ internal static class ChatDiagnostic
                 new("disabled", []), timeout.Token))
             {
                 timeout.Token.ThrowIfCancellationRequested();
-                if (!string.IsNullOrEmpty(delta)) deltas++;
+                if (!string.IsNullOrEmpty(delta))
+                {
+                    firstDeltaMs ??= clock.ElapsedMs;
+                    deltas++;
+                }
                 characters += delta.Length;
                 if (characters > 8000) { reason = "response_limit"; break; }
             }
@@ -41,7 +46,8 @@ internal static class ChatDiagnostic
         await output.WriteLineAsync(JsonSerializer.Serialize(new
         {
             schemaVersion = 1, scope = "openai_only", provider = "Azure", status, reason,
-            deltaEvents = deltas, elapsedMs = clock.ElapsedMs, failure, fullPipelineVerified = false
+            deltaEvents = deltas, elapsedMs = clock.ElapsedMs, firstDeltaMs,
+            failure, fullPipelineVerified = false
         }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         return status == "SUCCESS" ? 0 : 1;
     }

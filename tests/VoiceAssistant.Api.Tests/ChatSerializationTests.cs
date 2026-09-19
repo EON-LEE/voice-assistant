@@ -26,6 +26,7 @@ public sealed class ChatSerializationTests
         Assert.Equal(2048, json.RootElement.GetProperty("max_completion_tokens").GetInt32());
         Assert.False(json.RootElement.TryGetProperty("max_tokens", out _));
         Assert.False(json.RootElement.TryGetProperty("temperature", out _));
+        Assert.False(json.RootElement.TryGetProperty("reasoning_effort", out _));
     }
 
     private sealed class CaptureHandler : HttpMessageHandler

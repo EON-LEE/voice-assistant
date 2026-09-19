@@ -26,6 +26,22 @@ Flags are exactly `--live`, `--audio <path>`, `--metadata <path>`, `--timeout-se
 
 For a bounded model-only diagnosis, `--live --chat-only [--timeout-seconds 45]` sends one fixed original generic English request for a project-update sentence. It uses the same Azure configuration and standard credential preflight, but no WAV, Speech, Search, or corporate documents. Do not combine it with audio/metadata flags. Its JSON has `scope: "openai_only"` and `fullPipelineVerified:false`; a successful model-only diagnosis is **not** a full speech/model acceptance result.
 
+`firstDeltaMs` measures entry into this model call to the first nonempty delta; `elapsedMs` measures completion. Both include any SDK-internal credential acquisition and connection setup after preflight. They are not pure model-generation latency. Reusing the API's singleton provider/client permits SDK token/connection caching; restarting this console for each measurement does not reproduce that warm-client behavior.
+
+### Bounded cold/warm observation (2026-09-19 UTC)
+
+Three sequential original-generic-prompt requests to the existing GPT-5.4-mini deployment, with **one reused AzureMeetingProvider/client**, omitted reasoning effort and the standard already-preflighted credential, produced:
+
+| Sample | First delta | Completion | SDK credential calls | Credential acquisition |
+| --- | ---: | ---: | ---: | ---: |
+| 1, cold client | 7297 ms | 7324 ms | 1 | 5308 ms |
+| 2, reused client | 864 ms | 917 ms | 0 | 0 ms |
+| 3, reused client | 1773 ms | 1805 ms | 0 | 0 ms |
+
+All three streamed12 deltas; no generated text or tokens were recorded. Credential time was measured by a pass-through wrapper around the standard DefaultAzureCredential, not by replacing authentication or exporting tokens. These n=3 development-host observations show cold developer-credential overhead, **not** a statistically established latency target, Azure-hosted managed-identity result, or complete meeting pipeline benchmark.
+
+The [official GPT-5.4-mini model page](https://developers.openai.com/api/docs/models/gpt-5.4-mini) lists `none` as the default reasoning effort; [Azure reasoning guidance](https://learn.microsoft.com/azure/foundry/openai/how-to/reasoning) says `minimal` is unsupported for GPT-5.1 and later. No reasoning-effort setting or SDK upgrade was added merely to repeat the existing default. Measure the deployed concurrent API with real STT/input-ground-truth boundaries before claiming a low-latency meeting target.
+
 ### Windows PowerShell credential diagnosis
 
 Standalone `--diagnose-auth` acquires a Cognitive Services token through the official `AzurePowerShellCredential`; `--diagnose-default-auth` checks the complete standard `DefaultAzureCredential` chain. These bounded30-second operations print only fixed error categories or `AUTHENTICATED`, scope `authentication_only`, and `serviceAcceptanceVerified:false`. They make **no Speech/OpenAI service calls**, and never print tokens, account IDs or raw SDK/process exceptions. Diagnostic success is not live acceptance.
