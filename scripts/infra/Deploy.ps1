@@ -2,6 +2,10 @@
 param(
     [Parameter(Mandatory)][string]$ParametersFile,
     [string]$BicepPath = 'bicep',
+    [string]$AzPath = 'az',
+    [string[]]$AzPrefix = @(),
+    [ValidateSet('AzureCli', 'AzPowerShell')][string]$AuthProvider = 'AzureCli',
+    [ValidateRange(1, 1800)][int]$CommandTimeoutSeconds = 900,
     [string]$SubscriptionId = 'b0af194e-77a5-4471-bb43-67e78295b5c8',
     [string]$ResourceGroup,
     [string]$DeploymentName = 'voice-assistant',
@@ -12,6 +16,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
+Set-AzureCli -AzPath $AzPath -AzPrefix $AzPrefix -TimeoutSeconds $CommandTimeoutSeconds -AuthProvider $AuthProvider
 if (@($Validate, $WhatIf, $Apply).Where({ $_ }).Count -gt 1) { throw 'Choose only one of -Validate, -WhatIf or -Apply.' }
 $templatePath = Join-Path $PSScriptRoot '..\..\infra\main.bicep'
 $compiledPath = [IO.Path]::GetTempFileName()

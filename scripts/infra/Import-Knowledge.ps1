@@ -10,6 +10,9 @@ param(
     [string]$OpenAIName,
     [string]$StorageAccountName,
     [string]$EmbeddingDeployment = 'meeting-embedding',
+    [string]$AzPath = 'az',
+    [string[]]$AzPrefix = @(),
+    [ValidateRange(1, 1800)][int]$CommandTimeoutSeconds = 30,
     [switch]$CreateIndex,
     [switch]$ConfirmExclusiveMaintenance,
     [switch]$Apply
@@ -31,6 +34,7 @@ if ($SearchName -cnotmatch '^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$' -or
     $OpenAIName -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9-]{1,62}[a-zA-Z0-9]$' -or
     $StorageAccountName -cnotmatch '^[a-z0-9]{3,24}$') { throw 'Invalid Azure public-cloud resource names.' }
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
+Set-AzureCli -AzPath $AzPath -AzPrefix $AzPrefix -TimeoutSeconds $CommandTimeoutSeconds
 Import-Module (Join-Path $PSScriptRoot 'KnowledgeSync.psm1') -Force
 $null = Assert-Subscription $SubscriptionId $TenantId
 $search = Invoke-AzJson @('search', 'service', 'show', '--name', $SearchName, '--resource-group', $ResourceGroup, '--subscription', $SubscriptionId)

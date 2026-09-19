@@ -51,12 +51,120 @@ operator-only archives, not browser-readable citation links.
 
 ## Prerequisites and deployment
 
+### Readiness and optional dedicated-project bootstrap
+
+`scripts\infra\Prepare-Azure.ps1` closes the resource-group/ACR prerequisite
+without adopting unrelated resources. It is locked to subscription
+`b0af194e-77a5-4471-bb43-67e78295b5c8`, tenant
+`2573db8c-dfe5-4805-9e28-a0859692e705`. Default **Plan** is offline; **Check**
+is bounded/read-only; **Apply** requires valid concrete configuration, a recent
+documented positive cost estimate, explicit `-CostApproved`, and an existing
+authorized identity. Never use synthetic fixture prices as a real cost review.
+
+Copy `bootstrap.example.json` to ignored `bootstrap.local.json`, then supply a
+dedicated resource group (for example `rg-voice-assistant-web`), approved region,
+globally unique registry name and SKU. `estimatedMonthlyCostUsd` covers the
+planned scope; `estimateDateUtc` must be UTC `yyyy-MM-dd` within 30 days and
+`pricingReference` must identify the actual cost review. These are review
+evidence, not an automated price quote, cap or resource budget.
+
+```powershell
+# Offline: produces BLOCKED identity/availability, never fake deployment readiness.
+.\scripts\infra\Prepare-Azure.ps1 -ConfigFile .\infra\bootstrap.local.json `
+  -ReportPath C:\reports\bootstrap-plan.json -Plan
+
+# Existing Az.Accounts identity, explicitly scoped; no interactive login.
+.\scripts\infra\Prepare-Azure.ps1 -ConfigFile .\infra\bootstrap.local.json `
+  -ReportPath C:\reports\bootstrap-check.json -AuthProvider AzPowerShell -Check
+
+# Creates only absent project RG + ACR; does not build images, create app registrations,
+# change another project's resources, register providers, or grant roles.
+.\scripts\infra\Prepare-Azure.ps1 -ConfigFile .\infra\bootstrap.local.json `
+  -ReportPath C:\reports\bootstrap-apply.json -AuthProvider AzPowerShell -Apply -CostApproved
+```
+
+The report directory must exist. The report is initialized before any mutation
+so a failed/interrupted run does not leave a previous success report in place.
+Groups/registries are tagged `managedBy=voice-assistant-bootstrap` and
+`projectId=ff8f97b4-5db4-458e-99de-0d63cfc96a4a`. Repeated runs reuse matching
+resources unchanged; unowned/untagged resources, location/SKU mismatches,
+admin-enabled registries and incompatible ABAC mode fail instead of being
+retagged or altered. Serialize bootstrap ownership with other operators; a
+concurrent creator can invalidate any read-before-create preview. No automatic
+cleanup/rollback/deletion occurs after partial failure.
+
+`-AuthProvider Auto` (default) checks the configured Azure CLI account metadata,
+installed azd check-status, and normal Az.Accounts context/token/ARM access.
+`AzPowerShell` uses the matching existing **AzureCloud** context explicitly via
+`-DefaultProfile` without changing the global context. Successful token
+acquisition alone is not enough: the exact subscription must be readable and
+enabled in the expected tenant. Tokens never enter reports, files or environment
+variables. No login, MFA bypass, credential enrollment or token-cache inspection
+is attempted. azd identity is discovery-only; provisioning uses Azure CLI or
+Az.Accounts. `AzureCli` explicitly selects CLI only; an absent CLI account does
+not block Auto when an existing Az.Accounts identity is verified.
+
+Portable CLI installations are supported by **Prepare**, **Deploy**, and
+**Import-Knowledge** without PATH/global configuration changes:
+
+```powershell
+$portable = @{
+  AzPath = 'C:\approved-tools\azure-cli\Scripts\python.exe'
+  AzPrefix = @('-m', 'azure.cli')
+}
+.\scripts\infra\Prepare-Azure.ps1 @portable -ReportPath C:\reports\readiness.json -Check
+```
+
+All CLI launches are noninteractive, bounded, argument-array-safe and suppress
+raw stdout/stderr on error. Timeouts kill only the launched PID tree; a timed-out
+Azure mutation may still complete server-side, so its outcome is **Unknown**
+and must be read back before retry. Automatic CLI extension installation is
+disabled per process. No credentials are bridged from Az.Accounts into CLI.
+Knowledge ingestion still uses its documented Azure CLI operator path; the
+Az.Accounts adapter in this follow-up covers bootstrap/application deployment.
+
+Once an image has been built/pushed and complete main parameters are prepared:
+
+```powershell
+.\scripts\infra\Prepare-Azure.ps1 -Stage Application -ConfigFile .\infra\bootstrap.local.json `
+  -ParametersFile .\infra\parameters.local.json -BicepPath C:\tools\bicep.exe `
+  -ReportPath C:\reports\application-check.json -AuthProvider AzPowerShell -Check
+
+# Only after the above and the deployment/role/cost review:
+.\scripts\infra\Prepare-Azure.ps1 -Stage Application -ConfigFile .\infra\bootstrap.local.json `
+  -ParametersFile .\infra\parameters.local.json -BicepPath C:\tools\bicep.exe `
+  -ReportPath C:\reports\application-apply.json -AuthProvider AzPowerShell -Apply -CostApproved
+```
+
+Application preparation binds tenant/registry/resource group to the bootstrap
+configuration, checks registered providers and the exact existing image digest,
+then runs ARM validation and what-if. The Az.Accounts adapter uses resource-scoped
+ARM requests, bounded asynchronous polling, and transient in-memory ACR OAuth
+exchange for manifest read (no registry credentials saved). It does not register
+Entra applications, build/push an image, approve quota, or automatically consent.
+The lower-level `Deploy.ps1` also supports `-AuthProvider AzPowerShell`.
+
+Reports have `schemaVersion: 1`, `mode`, `stage`, `target`,
+`selectedAuthProvider`, `overallStatus` (`PASS`, `FAIL`, `BLOCKED`), `execution`
+(`NotRequested`, `Blocked`, `Succeeded`, `Unknown`), `checks` containing only
+`id/category/status/code`, `identityAlternatives` and `plannedActions`.
+`liveApplicationVerified` is always **false**: stage-readiness or successful ARM
+deployment is not a browser/audio/data-plane test. Exit codes are **0** for a
+passed requested stage, **1** for failed configuration/operation, and **2** for
+blocked prerequisites. Input, identity, and cloud availability are separate
+categories. Reports contain no raw error bodies, parameter values, user account
+names, request URLs with tokens, or credentials.
+
+### Main application prerequisites
+
 1. Sign in separately with Azure CLI. Target subscription:
    `ME-M365CPI74210306-eonlee-1`
    (`b0af194e-77a5-4471-bb43-67e78295b5c8`). Scripts pass `--subscription`
    explicitly, check enabled state/tenant, and never call `az account set` or
-   change workstation defaults. No sign-in, resource group creation, provider
-   registration, registry creation, role application or upload is automatic.
+   change workstation defaults. Alternatively use the verified existing
+   Az.Accounts path above; no new login is needed if that identity is usable.
+   Resource group/registry creation is optional explicit bootstrap Apply only;
+   provider registration, role application or upload is never implicit.
 2. Create/approve two single-tenant Entra registrations: API and public SPA.
    The API must issue **v2 access tokens** and expose delegated `Meeting.Access`.
    Grant the SPA that API delegated permission and complete the required consent.
@@ -238,14 +346,18 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. **51 offline checks passed** on Windows PowerShell
-5.1, including the integrated backend Search contract:
+compiled without diagnostics. The original **51 offline checks**, plus **46
+readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
+the integrated backend Search contract:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\infra\tests\Test-Offline.ps1 `
   -BicepPath C:\tools\bicep.exe -BackendSchemaPath .\contracts\search-index.json
 ```
 
+`Test-Offline.ps1` invokes `Test-Readiness.ps1` automatically; the latter can also
+run independently. Its authentication/resource requests use isolated fixtures,
+including a synthetic Az.Accounts module; it never provisions cloud resources.
 The test suite requires no Azure account or real uploads. It checks compiled
 security/hosting settings, parameter rejection, mocked validation/what-if/apply
 subscription gates, offline defaults, ACLs, chunking, Unicode, index/vector
@@ -253,7 +365,13 @@ compatibility, mocked embeddings/uploads, stale versions, deletions, lease
 exclusion and partial-failure recovery. Omitting `BackendSchemaPath` skips the
 one cross-component schema comparison.
 
-**Not yet verified in Azure:** authenticated subscription/policy/provider checks,
+**Follow-up read-only Azure evidence:** an existing Az.Accounts identity acquired
+an ARM token and read the approved enabled subscription/tenant successfully.
+The new adapter's `account show` and dedicated group-existence requests were
+also verified read-only. This proves only ARM access, not deployment privileges,
+data-plane access, quota or application readiness.
+
+**Not yet verified by this slice in Azure:** deployment policy/provider checks,
 live ARM validate/what-if, regional model capacity/quota, container build/push/
 pull, RBAC propagation, Entra registration/consent/redirect, live Speech and model
 calls, real index ingestion and ACL isolation, and browser microphone/tab-audio

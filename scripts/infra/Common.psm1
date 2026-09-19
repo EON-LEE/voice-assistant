@@ -1,17 +1,30 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'AzureProcess.psm1')
+$script:azurePath = 'az'
+$script:azurePrefix = @()
+$script:azureTimeout = 120
+$script:authProvider = 'AzureCli'
+
+function Set-AzureCli {
+    param([string]$AzPath = 'az', [string[]]$AzPrefix = @(), [ValidateRange(1, 1800)][int]$TimeoutSeconds = 120,
+        [ValidateSet('AzureCli', 'AzPowerShell')][string]$AuthProvider = 'AzureCli')
+    $script:azurePath = $AzPath
+    $script:azurePrefix = $AzPrefix
+    $script:azureTimeout = $TimeoutSeconds
+    $script:authProvider = $AuthProvider
+}
 
 function Invoke-AzJson {
     param([Parameter(Mandatory)][string[]]$Arguments)
-    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
-        throw 'Azure CLI is required for online operations. Install it separately and sign in explicitly.'
+    $result = if ($script:authProvider -eq 'AzPowerShell') {
+        Invoke-AzPowerShellCommand -Arguments $Arguments -TimeoutSeconds $script:azureTimeout
+    } else {
+        Invoke-BoundedJsonCommand -Path $script:azurePath -Prefix $script:azurePrefix `
+            -Arguments ($Arguments + @('--only-show-errors', '--output', 'json')) -TimeoutSeconds $script:azureTimeout
     }
-    $result = & az @Arguments --only-show-errors --output json 2>$null
-    if ($LASTEXITCODE -ne 0) { throw 'Azure CLI operation failed. Check sign-in, subscription, permissions and resource readiness; no credential output is printed.' }
-    if ($result) {
-        try { return (($result -join "`n") | ConvertFrom-Json) }
-        catch { throw 'Azure CLI returned invalid JSON; response content is intentionally suppressed.' }
-    }
+    if (-not $result.Succeeded) { throw "Azure CLI operation failed ($($result.Code)). Check identity, explicit subscription and permissions. Responses are suppressed; a timed-out mutation may still be running in Azure." }
+    return $result.Data
 }
 
 function Assert-Subscription {
@@ -58,4 +71,4 @@ function Assert-DeploymentParameters {
     }
 }
 
-Export-ModuleMember -Function Invoke-AzJson, Assert-Subscription, Assert-DeploymentParameters
+Export-ModuleMember -Function Set-AzureCli, Invoke-AzJson, Assert-Subscription, Assert-DeploymentParameters

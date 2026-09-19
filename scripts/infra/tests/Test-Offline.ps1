@@ -153,6 +153,15 @@ try {
     Assert-True ($result -match 'No Azure request') 'Default deployment invocation is offline only'
     Assert-Throws { & (Join-Path $scriptsRoot 'Deploy.ps1') -BicepPath $BicepPath -ParametersFile $temporary[1] -Apply -WhatIf } 'only one' 'Conflicting deployment switches rejected before Azure access'
     $global:MockAzCalls = New-Object 'Collections.Generic.List[string]'
+    $processModule = Get-Module -All AzureProcess | Select-Object -First 1
+    $originalProcess = & $processModule { (Get-Command Invoke-BoundedJsonCommand).ScriptBlock }
+    & $processModule {
+        function script:Invoke-BoundedJsonCommand {
+            param($Path, $Prefix, $Arguments, $TimeoutSeconds)
+            $result = & az @Arguments
+            return [pscustomobject]@{ Succeeded = $true; Code = 'OK'; Data = ($result | ConvertFrom-Json) }
+        }
+    }
     function global:az {
         $global:LASTEXITCODE = 0
         $arguments = @($args)
@@ -179,6 +188,7 @@ try {
         Assert-True (@($global:MockAzCalls | Where-Object { $_ -notmatch '--subscription b0af194e-77a5-4471-bb43-67e78295b5c8' -or $_ -match 'account set' }).Count -eq 0) 'All online commands target explicit subscription without changing global defaults'
         Assert-Throws { Assert-Subscription 'b0af194e-77a5-4471-bb43-67e78295b5c8' '99999999-9999-4999-8999-999999999999' } 'tenant does not match' 'Wrong subscription tenant rejected'
     } finally {
+        & $processModule { param($Original) Set-Item Function:script:Invoke-BoundedJsonCommand $Original } $originalProcess
         Remove-Item Function:\az
         Remove-Variable MockAzCalls -Scope Global
     }
@@ -297,3 +307,4 @@ try {
 } finally {
     foreach ($file in $temporary) { Remove-Item -LiteralPath $file -Force }
 }
+& (Join-Path $PSScriptRoot 'Test-Readiness.ps1')
