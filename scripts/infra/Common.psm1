@@ -23,7 +23,11 @@ function Invoke-AzJson {
         Invoke-BoundedJsonCommand -Path $script:azurePath -Prefix $script:azurePrefix `
             -Arguments ($Arguments + @('--only-show-errors', '--output', 'json')) -TimeoutSeconds $script:azureTimeout
     }
-    if (-not $result.Succeeded) { throw "Azure CLI operation failed ($($result.Code)). Check identity, explicit subscription and permissions. Responses are suppressed; a timed-out mutation may still be running in Azure." }
+    if (-not $result.Succeeded) {
+        $exception = New-Object InvalidOperationException("Azure operation failed ($($result.Code)). Check identity, explicit subscription and permissions. Responses are suppressed; a timed-out mutation may still be running in Azure.")
+        $exception.Data['AzureOperationCode'] = $result.Code
+        throw $exception
+    }
     return $result.Data
 }
 

@@ -228,7 +228,7 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   location: location
   properties: {
     // No console/access/request diagnostics: WebSocket URLs contain one-use tickets.
-    appLogsConfiguration: { destination: 'none' }
+    appLogsConfiguration: {}
     workloadProfiles: [{ name: 'Consumption', workloadProfileType: 'Consumption' }]
   }
 }

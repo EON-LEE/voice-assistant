@@ -118,7 +118,8 @@ try {
     $storage = @($template.resources | Where-Object type -EQ 'Microsoft.Storage/storageAccounts')[0]
     Assert-True ($storage.properties.allowBlobPublicAccess -eq $false -and $storage.properties.allowSharedKeyAccess -eq $false) 'Private documents disallow anonymous and shared-key access'
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
-    Assert-True ($environment.properties.appLogsConfiguration.destination -eq 'none') 'No transcript/ticket-bearing console or access log collection'
+    Assert-True (-not $environment.properties.appLogsConfiguration.PSObject.Properties['destination'] -and
+        -not $environment.properties.appLogsConfiguration.PSObject.Properties['logAnalyticsConfiguration']) 'Log destination/workspace are unset; never send the unsupported literal none'
     $blobRoles = @($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
         $_.properties.roleDefinitionId -match 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' })
     Assert-True ($blobRoles.Count -eq 1 -and $blobRoles[0].properties.principalId -eq "[parameters('ingestionPrincipalId')]" -and

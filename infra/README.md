@@ -126,9 +126,15 @@ raw stdout/stderr on error. Timeouts kill only the launched PID tree; a timed-ou
 Azure mutation may still complete server-side, so its outcome is **Unknown**
 and must be read back before retry. Automatic CLI extension installation is
 disabled per process. No credentials are bridged from Az.Accounts into CLI.
-ACR name lookup allows 90 seconds for context/token initialization and ARM
-response. `REGISTRY_NAME_CHECK_TIMEOUT` means availability is **unknown**, not
-that the name is occupied; do not pick a different registry to conceal a timeout.
+All readiness Azure reads, Az identity verification, and ARM validation/what-if
+commands allow 90 seconds each for context/token initialization and ARM response.
+The azd discovery-only probe remains capped at 20 seconds. Timeout diagnostics
+preserve the operation, for example `REGISTRY_READ_TIMEOUT`,
+`IMAGE_DIGEST_READ_TIMEOUT` and `ARM_PREVIEW_TIMEOUT`, without printing raw
+provider errors. `REGISTRY_NAME_CHECK_TIMEOUT` means availability is **unknown**,
+not that the name is occupied; do not pick a different registry to conceal a
+timeout. Mutation budgets remain separate (group 120 seconds, ACR 300 seconds,
+application deployment 900 seconds); none are automatically retried.
 Knowledge ingestion still uses its documented Azure CLI operator path; the
 Az.Accounts adapter in this follow-up covers bootstrap/application deployment.
 
@@ -331,7 +337,9 @@ the version ledger.
 
 ## Content-safe operations, costs and readiness
 
-Container environment log collection is `none`; there is no Application
+Container environment log destination and workspace are **unset** (an empty
+`appLogsConfiguration`); the ARM API rejects the literal string `"none"`.
+There is no Application
 Insights request/body capture or diagnostic log export. ASP.NET request logs are
 suppressed. Do not later enable full URL/query logging at ingress, proxies or
 telemetry: WebSocket upgrade URLs carry one-use tickets. The metric alert checks
@@ -355,7 +363,7 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The original **51 offline checks**, plus **53
+compiled without diagnostics. The original **51 offline checks**, plus **61
 readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 

@@ -40,6 +40,7 @@ Assert-True ($result.Succeeded -and @($result.Data | Where-Object { $null -ne $_
 
 $processModule = Get-Module Readiness
 $originalProcess = & $processModule { (Get-Command Invoke-BoundedJsonCommand).ScriptBlock }
+$originalDeployment = & $processModule { (Get-Command Invoke-ReadinessDeployment).ScriptBlock }
 $temp = [IO.Path]::GetTempFileName()
 $invalid = [IO.Path]::GetTempFileName()
 $reportPath = [IO.Path]::GetTempFileName()
@@ -53,7 +54,8 @@ Save-Config
 $scenario = @{
     account = 'target'; provider = 'Registered'; group = $false; registry = $false; owned = $true; nameAvailable = $true
     registrySku = 'Basic'; location = 'eastus'; adminEnabled = $false; registryMode = 'LegacyRegistryPermissions'; failCommand = ''
-    failCode = 'COMMAND_FAILED'; nameTimeout = 0
+    failCode = 'COMMAND_FAILED'; nameTimeout = 0; previewFailure = ''; deployCalls = (New-Object 'Collections.Generic.List[object]')
+    budgets = (New-Object 'Collections.Generic.List[object]')
     powershellAuth = $false; calls = (New-Object 'Collections.Generic.List[string]'); createdGroup = 0; createdRegistry = 0
 }
 & $processModule {
@@ -67,6 +69,7 @@ $scenario = @{
         }
         $line = $Arguments -join ' '
         $state.calls.Add($line) > $null
+        $state.budgets.Add(@{ command = $line; seconds = $TimeoutSeconds }) > $null
         if ($line.StartsWith('acr check-name')) { $state.nameTimeout = $TimeoutSeconds }
         if ($state.failCommand -and $line.StartsWith($state.failCommand)) {
             return [pscustomobject]@{ Succeeded = $false; Code = $state.failCode; Data = 'PRIVATE_DIAGNOSTIC_SENTINEL' }
@@ -89,10 +92,21 @@ $scenario = @{
         elseif ($line.StartsWith('group show')) { $data = $group }
         elseif ($line.StartsWith('acr list')) { $data = @(); if ($state.registry) { $data = @($registry) } }
         elseif ($line.StartsWith('acr check-name')) { $data = @{ nameAvailable = $state.nameAvailable } }
+        elseif ($line.StartsWith('acr repository show')) { $data = 'sha256:' + ('a' * 64) }
         elseif ($line.StartsWith('group create')) { $state.group = $true; $state.createdGroup++; $data = $group }
         elseif ($line.StartsWith('acr create')) { $state.registry = $true; $state.createdRegistry++; $data = $registry }
         else { throw 'Unexpected command in isolated readiness fixture.' }
         return [pscustomobject]@{ Succeeded = $true; Code = 'OK'; Data = $data }
+    }
+    function script:Invoke-ReadinessDeployment {
+        param([hashtable]$Arguments)
+        $state = $script:readinessScenario
+        $state.deployCalls.Add($Arguments) > $null
+        if (($Arguments.ContainsKey('Validate') -or $Arguments.ContainsKey('WhatIf')) -and $state.previewFailure) {
+            $exception = New-Object InvalidOperationException('PRIVATE_DIAGNOSTIC_SENTINEL')
+            $exception.Data['AzureOperationCode'] = $state.previewFailure
+            throw $exception
+        }
     }
 } $scenario
 try {
@@ -186,8 +200,21 @@ try {
     $scenario.registryMode = 'LegacyRegistryPermissions'
     $scenario.failCommand = 'group exists'
     $report = Get-AzureReadiness @argsBase -Check
-    Assert-True ((Has-Check $report 'cloud.resourceGroup' 'BLOCKED' 'RESOURCE_GROUP_READ_FAILED') -and
+    Assert-True ((Has-Check $report 'cloud.resourceGroup' 'BLOCKED' 'RESOURCE_GROUP_READ_COMMAND_FAILED') -and
         ($report | ConvertTo-Json -Depth 12) -notmatch 'PRIVATE_DIAGNOSTIC_SENTINEL') 'Cloud authorization/connectivity failure is not treated as absent resource'
+    $scenario.failCode = 'TIMEOUT'
+    foreach ($test in @(
+        @{ command = 'provider show'; id = 'cloud.provider.Microsoft.ContainerRegistry'; code = 'PROVIDER_READ_TIMEOUT' },
+        @{ command = 'group exists'; id = 'cloud.resourceGroup'; code = 'RESOURCE_GROUP_READ_TIMEOUT' },
+        @{ command = 'group show'; id = 'cloud.resourceGroup'; code = 'RESOURCE_GROUP_READ_TIMEOUT' },
+        @{ command = 'acr list'; id = 'cloud.registry'; code = 'REGISTRY_READ_TIMEOUT' }
+    )) {
+        $scenario.failCommand = $test.command
+        $report = Get-AzureReadiness @argsBase -Apply -CostApproved
+        Assert-True ((Has-Check $report $test.id 'BLOCKED' $test.code) -and $report.execution -eq 'Blocked' -and
+            $scenario.createdGroup -eq 1 -and $scenario.createdRegistry -eq 1) "Readonly timeout preserves diagnostics and cannot mutate: $($test.command)"
+    }
+    $scenario.failCode = 'COMMAND_FAILED'
     $scenario.failCommand = ''
     $scenario.registry = $false
     $scenario.failCommand = 'acr create'
@@ -213,12 +240,37 @@ try {
     Save-Config
     $report = Get-AzureReadiness @argsBase -Plan
     Assert-True (Has-Check $report 'configuration.bootstrap' 'FAIL' 'INVALID_OR_PLACEHOLDER_CONFIGURATION') 'Unknown cost scope cannot silently fall back to bootstrap'
+    $config.costScope = 'Application'
+    Save-Config
+    $scenario.registry = $true
+    @{ parameters = @{
+        tenantId = @{ value = '2573db8c-dfe5-4805-9e28-a0859692e705' }
+        registryName = @{ value = $config.registryName }; registryResourceGroup = @{ value = $config.resourceGroup }
+        image = @{ value = $config.registryName + '.azurecr.io/fixture@sha256:' + ('a' * 64) }
+    } } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $invalid
+    $scenario.failCommand = 'acr repository show'
+    $scenario.failCode = 'TIMEOUT'
+    $report = Get-AzureReadiness @argsBase -Stage Application -ParametersFile $invalid -Apply -CostApproved
+    Assert-True ((Has-Check $report 'cloud.image' 'BLOCKED' 'IMAGE_DIGEST_READ_TIMEOUT') -and
+        $report.execution -eq 'Blocked' -and @($scenario.deployCalls | Where-Object { $_.ContainsKey('Apply') }).Count -eq 0) 'Image read timeout cannot reach application deployment'
+    $scenario.failCommand = ''
+    $scenario.previewFailure = 'TIMEOUT'
+    $report = Get-AzureReadiness @argsBase -Stage Application -ParametersFile $invalid -Apply -CostApproved
+    Assert-True ((Has-Check $report 'cloud.armPreview' 'BLOCKED' 'ARM_PREVIEW_TIMEOUT') -and
+        $report.execution -eq 'Blocked' -and ($report | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_DIAGNOSTIC_SENTINEL') 'Structured ARM preview timeout survives redaction without becoming generic failure'
+    $scenario.previewFailure = ''
+    $report = Get-AzureReadiness @argsBase -Stage Application -ParametersFile $invalid -Apply -CostApproved
+    Assert-True ($report.execution -eq 'Succeeded' -and
+        @($scenario.deployCalls | Where-Object { $_.ContainsKey('Apply') -and $_.CommandTimeoutSeconds -eq 900 }).Count -eq 1) 'Successful checks retain separate bounded mutation budget with no automatic retries'
+    Assert-True (@($scenario.budgets | Where-Object { $_.command -notmatch '^(group|acr) create ' -and $_.seconds -ne 90 }).Count -eq 0 -and
+        @($scenario.deployCalls | Where-Object { ($_.ContainsKey('Validate') -or $_.ContainsKey('WhatIf')) -and $_.CommandTimeoutSeconds -ne 90 }).Count -eq 0) 'All readiness ARM/registry/image reads and previews use centralized 90-second budget'
     '{"version":1,"private":"PRIVATE_DIAGNOSTIC_SENTINEL"' | Set-Content -LiteralPath $invalid
     $report = Get-AzureReadiness -ConfigFile $invalid
     Assert-True ((Has-Check $report 'configuration.bootstrap' 'FAIL' 'INVALID_CONFIGURATION_JSON') -and
         ($report | ConvertTo-Json -Depth 12) -notmatch 'PRIVATE_DIAGNOSTIC_SENTINEL') 'Malformed input diagnostics never echo configuration text'
 } finally {
     & $processModule { param($Original) Set-Item Function:script:Invoke-BoundedJsonCommand $Original } $originalProcess
+    & $processModule { param($Original) Set-Item Function:script:Invoke-ReadinessDeployment $Original } $originalDeployment
     foreach ($file in @($temp, $invalid, $reportPath)) { Remove-Item -LiteralPath $file -Force }
 }
 $modulePath = $env:PSModulePath

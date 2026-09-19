@@ -40,12 +40,29 @@ function Test-CostReview {
 }
 
 function Invoke-ReadinessAz {
-    param($Options, [string[]]$Arguments, [int]$TimeoutSeconds = 30)
+    param($Options, [string[]]$Arguments, [ValidateRange(1, 1800)][int]$TimeoutSeconds = 90)
     if ($Options.ContainsKey('SelectedAuthProvider') -and $Options.SelectedAuthProvider -eq 'AzPowerShell') {
         return Invoke-AzPowerShellCommand -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
     }
     return Invoke-BoundedJsonCommand -Path $Options.AzPath -Prefix $Options.AzPrefix `
         -Arguments ($Arguments + @('--only-show-errors', '--output', 'json')) -TimeoutSeconds $TimeoutSeconds
+}
+
+function Get-ReadinessOperationCode {
+    param($Exception)
+    for ($depth = 0; $null -ne $Exception -and $depth -lt 8; $depth++) {
+        $code = $Exception.Data['AzureOperationCode']
+        if ($code -in @('TIMEOUT', 'TIMEOUT_CLEANUP_UNCONFIRMED', 'COMMAND_FAILED', 'INVALID_JSON', 'TOOL_UNAVAILABLE', 'PROCESS_START_FAILED')) {
+            return $code
+        }
+        $Exception = $Exception.InnerException
+    }
+    return 'FAILED_REVIEW_REQUIRED'
+}
+
+function Invoke-ReadinessDeployment {
+    param([hashtable]$Arguments)
+    & (Join-Path $PSScriptRoot 'Deploy.ps1') @Arguments
 }
 
 function Get-ExistingIdentityChecks {
@@ -76,7 +93,7 @@ function Get-ExistingIdentityChecks {
     }
     $probe = Invoke-BoundedJsonCommand -Path (Get-Process -Id $PID).Path -Arguments @('-NoProfile', '-NonInteractive',
         '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'Probe-AzPowerShell.ps1'),
-        '-SubscriptionId', $Options.SubscriptionId, '-TenantId', $Options.TenantId) -TimeoutSeconds 45
+        '-SubscriptionId', $Options.SubscriptionId, '-TenantId', $Options.TenantId) -TimeoutSeconds 90
     $alternativeReady = $probe.Succeeded -and $probe.Data -and $probe.Data.armAuthorized -eq $true
     $Report.identityAlternatives.Add([pscustomobject]@{ tool = 'Az.Accounts'; status = $(if ($alternativeReady) { 'PASS' } else { 'BLOCKED' });
         code = $(if ($alternativeReady) { 'EXISTING_IDENTITY_ARM_VERIFIED' } elseif (-not $probe.Succeeded) { $probe.Code } else { $probe.Data.code }) }) > $null
@@ -172,7 +189,7 @@ function Get-AzureReadiness {
             Add-ReadinessCheck $report 'configuration.application' 'configuration' 'BLOCKED' 'APPLICATION_PARAMETERS_REQUIRED'
         } else {
             try {
-                $null = & (Join-Path $PSScriptRoot 'Deploy.ps1') -ParametersFile $ParametersFile -BicepPath $BicepPath
+                $null = Invoke-ReadinessDeployment @{ ParametersFile = $ParametersFile; BicepPath = $BicepPath }
                 $parameters = Get-Content -LiteralPath $ParametersFile -Raw | ConvertFrom-Json
                 if (-not $config -or $parameters.parameters.tenantId.value -ne $TenantId -or
                     $parameters.parameters.registryName.value -ne $config.registryName -or
@@ -204,27 +221,33 @@ function Get-AzureReadiness {
     }
     foreach ($provider in $providerNames) {
         $result = Invoke-ReadinessAz $options @('provider', 'show', '--namespace', $provider, '--subscription', $SubscriptionId, '--query', 'registrationState')
-        if (-not $result.Succeeded -or $result.Data -ne 'Registered') {
+        if (-not $result.Succeeded) {
+            Add-ReadinessCheck $report "cloud.provider.$provider" 'availability' 'BLOCKED' "PROVIDER_READ_$($result.Code)"
+        } elseif ($result.Data -ne 'Registered') {
             Add-ReadinessCheck $report "cloud.provider.$provider" 'availability' 'BLOCKED' 'PROVIDER_REGISTRATION_OR_ACCESS_REQUIRED'
         } else { Add-ReadinessCheck $report "cloud.provider.$provider" 'availability' 'PASS' 'REGISTERED' }
     }
     $exists = Invoke-ReadinessAz $options @('group', 'exists', '--name', $config.resourceGroup, '--subscription', $SubscriptionId)
     $groupMissing = $false
     $registryMissing = $true
-    if (-not $exists.Succeeded -or $exists.Data -isnot [bool]) {
-        Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'BLOCKED' 'RESOURCE_GROUP_READ_FAILED'
+    if (-not $exists.Succeeded) {
+        Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'BLOCKED' "RESOURCE_GROUP_READ_$($exists.Code)"
+    } elseif ($exists.Data -isnot [bool]) {
+        Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'BLOCKED' 'RESOURCE_GROUP_READ_INVALID_RESPONSE'
     } elseif (-not $exists.Data) {
         $groupMissing = $true
         Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' $(if ($Stage -eq 'Bootstrap') { 'PASS' } else { 'BLOCKED' }) 'BOOTSTRAP_CREATION_REQUIRED'
     } else {
         $group = Invoke-ReadinessAz $options @('group', 'show', '--name', $config.resourceGroup, '--subscription', $SubscriptionId)
-        if (-not $group.Succeeded -or -not (Test-OwnedResource $group.Data) -or $group.Data.location -ne $config.location) {
+        if (-not $group.Succeeded) {
+            Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'BLOCKED' "RESOURCE_GROUP_READ_$($group.Code)"
+        } elseif (-not (Test-OwnedResource $group.Data) -or $group.Data.location -ne $config.location) {
             Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'FAIL' 'EXISTING_GROUP_NOT_OWNED_OR_LOCATION_MISMATCH'
         } else {
             Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'PASS' 'OWNED_GROUP_REUSED_UNCHANGED'
             $registries = Invoke-ReadinessAz $options @('acr', 'list', '--resource-group', $config.resourceGroup, '--subscription', $SubscriptionId)
             if (-not $registries.Succeeded) {
-                Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' 'REGISTRY_READ_FAILED'
+                Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' "REGISTRY_READ_$($registries.Code)"
             } else {
                 $registry = @($registries.Data | Where-Object { $_ -and $_.name -eq $config.registryName })
                 if ($registry.Count -eq 1) {
@@ -239,8 +262,7 @@ function Get-AzureReadiness {
         }
     }
     if ($registryMissing -and -not @($report.checks | Where-Object { $_.status -ne 'PASS' }).Count) {
-        # Az context loading/token refresh plus ARM name lookup can exceed the usual 30-second read budget.
-        $name = Invoke-ReadinessAz $options @('acr', 'check-name', '--name', $config.registryName, '--subscription', $SubscriptionId) 90
+        $name = Invoke-ReadinessAz $options @('acr', 'check-name', '--name', $config.registryName, '--subscription', $SubscriptionId)
         if (-not $name.Succeeded) {
             Add-ReadinessCheck $report 'cloud.registry' 'availability' 'BLOCKED' "REGISTRY_NAME_CHECK_$($name.Code)"
         } elseif ($null -eq $name.Data -or
@@ -264,19 +286,20 @@ function Get-AzureReadiness {
         $imageName = $image.Substring($image.IndexOf('/') + 1)
         $metadata = Invoke-ReadinessAz $options @('acr', 'repository', 'show', '--name', $config.registryName, '--image', $imageName, '--subscription', $SubscriptionId, '--query', 'digest')
         if (-not $metadata.Succeeded -or $metadata.Data -ne $image.Substring($image.IndexOf('@') + 1)) {
-            Add-ReadinessCheck $report 'cloud.image' 'availability' 'BLOCKED' 'IMAGE_DIGEST_UNAVAILABLE_OR_UNAUTHORIZED'
+            $code = if (-not $metadata.Succeeded) { "IMAGE_DIGEST_READ_$($metadata.Code)" } else { 'IMAGE_DIGEST_MISMATCH' }
+            Add-ReadinessCheck $report 'cloud.image' 'availability' 'BLOCKED' $code
             if ($Apply) { $report.execution = 'Blocked' }
             return Complete-ReadinessReport $report
         }
         Add-ReadinessCheck $report 'cloud.image' 'availability' 'PASS' 'EXISTING_DIGEST_VERIFIED'
         $deploy = @{ ParametersFile = $ParametersFile; BicepPath = $BicepPath; AzPath = $AzPath; AzPrefix = $AzPrefix
-            SubscriptionId = $SubscriptionId; ResourceGroup = $config.resourceGroup; AuthProvider = $options.SelectedAuthProvider }
+            SubscriptionId = $SubscriptionId; ResourceGroup = $config.resourceGroup; AuthProvider = $options.SelectedAuthProvider; CommandTimeoutSeconds = 90 }
         try {
-            $null = & (Join-Path $PSScriptRoot 'Deploy.ps1') @deploy -Validate
-            $null = & (Join-Path $PSScriptRoot 'Deploy.ps1') @deploy -WhatIf
+            $null = Invoke-ReadinessDeployment ($deploy + @{ Validate = $true })
+            $null = Invoke-ReadinessDeployment ($deploy + @{ WhatIf = $true })
             Add-ReadinessCheck $report 'cloud.armPreview' 'availability' 'PASS' 'VALIDATE_AND_WHAT_IF_COMPLETED'
         } catch {
-            Add-ReadinessCheck $report 'cloud.armPreview' 'availability' 'BLOCKED' 'ARM_VALIDATION_OR_WHAT_IF_FAILED_REVIEW_REQUIRED'
+            Add-ReadinessCheck $report 'cloud.armPreview' 'availability' 'BLOCKED' ("ARM_PREVIEW_" + (Get-ReadinessOperationCode $_.Exception))
             if ($Apply) { $report.execution = 'Blocked' }
             return Complete-ReadinessReport $report
         }
@@ -302,10 +325,11 @@ function Get-AzureReadiness {
             }
         }
     } else {
-        try { $null = & (Join-Path $PSScriptRoot 'Deploy.ps1') @deploy -Apply }
+        $deploy.CommandTimeoutSeconds = 900
+        try { $null = Invoke-ReadinessDeployment ($deploy + @{ Apply = $true }) }
         catch {
             $report.execution = 'Unknown'
-            Add-ReadinessCheck $report 'execution.application' 'mutation' 'FAIL' 'APPLICATION_DEPLOYMENT_FAILED_OR_UNCONFIRMED_RECHECK_BEFORE_RETRY'
+            Add-ReadinessCheck $report 'execution.application' 'mutation' 'FAIL' ("APPLICATION_DEPLOYMENT_" + (Get-ReadinessOperationCode $_.Exception) + '_RECHECK_BEFORE_RETRY')
             return Complete-ReadinessReport $report
         }
     }
