@@ -65,7 +65,13 @@ Copy `bootstrap.example.json` to ignored `bootstrap.local.json`, then supply a
 dedicated resource group (for example `rg-voice-assistant-web`), approved region,
 globally unique registry name and SKU. `estimatedMonthlyCostUsd` covers the
 planned scope; `estimateDateUtc` must be UTC `yyyy-MM-dd` within 30 days and
-`pricingReference` must identify the actual cost review. These are review
+`pricingReference` must identify the actual cost review. Set `costScope` to
+`Bootstrap` for RG/ACR-only costs or `Application` for the full planned application
+including the registry. Legacy configurations omitting this field are treated
+as bootstrap-only. **Application checks/apply reject a bootstrap-only review**;
+update the amount, date and reference together with `costScope: "Application"`.
+This records the operator's reviewed scope; it does not independently verify the
+price calculation or turn a monthly estimate into a maximum. These are review
 evidence, not an automated price quote, cap or resource budget.
 
 ```powershell
@@ -349,7 +355,7 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The original **51 offline checks**, plus **48
+compiled without diagnostics. The original **51 offline checks**, plus **53
 readiness/bootstrap/adapter checks**, passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 

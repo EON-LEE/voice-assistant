@@ -18,8 +18,9 @@ function Complete-ReadinessReport {
 function Test-BootstrapConfiguration {
     param($Config)
     $names = @('version', 'resourceGroup', 'location', 'registryName', 'registrySku', 'estimatedMonthlyCostUsd', 'estimateDateUtc', 'pricingReference')
-    if ($null -eq $Config -or @($Config.PSObject.Properties).Count -ne $names.Count) { return $false }
+    if ($null -eq $Config -or @($Config.PSObject.Properties | Where-Object { $_.Name -notin ($names + @('costScope')) }).Count) { return $false }
     foreach ($name in $names) { if (-not $Config.PSObject.Properties[$name]) { return $false } }
+    if ($Config.PSObject.Properties['costScope'] -and $Config.costScope -cnotin @('Bootstrap', 'Application')) { return $false }
     if ($Config.version -ne 1 -or $Config.resourceGroup -cnotmatch '^[a-z][a-z0-9-]{2,63}$' -or
         $Config.location -cnotmatch '^[a-z][a-z0-9]{1,31}$' -or $Config.registryName -cnotmatch '^[a-z0-9]{5,50}$' -or
         $Config.registrySku -cnotin @('Basic', 'Standard', 'Premium')) { return $false }
@@ -152,6 +153,11 @@ function Get-AzureReadiness {
             if (Test-BootstrapConfiguration $config) {
                 Add-ReadinessCheck $report 'configuration.bootstrap' 'configuration' 'PASS' 'VALID'
                 Add-ReadinessCheck $report 'configuration.cost' 'configuration' $(if (Test-CostReview $config) { 'PASS' } else { 'BLOCKED' }) 'RECENT_DOCUMENTED_COST_REVIEW_REQUIRED'
+                if ($Stage -eq 'Application') {
+                    $applicationReview = $config.PSObject.Properties['costScope'] -and $config.costScope -ceq 'Application'
+                    Add-ReadinessCheck $report 'configuration.costScope' 'configuration' $(if ($applicationReview) { 'PASS' } else { 'BLOCKED' }) `
+                        $(if ($applicationReview) { 'APPLICATION_COST_SCOPE_DECLARED' } else { 'APPLICATION_COST_REVIEW_REQUIRED' })
+                }
                 $report.plannedActions = if ($Stage -eq 'Bootstrap') {
                     @('Create dedicated tagged resource group only if absent', 'Create tagged ACR only if absent; do not alter existing resources')
                 } else { @('Verify existing image digest and ARM validation/what-if', 'Incremental application deployment only with Apply and cost approval') }

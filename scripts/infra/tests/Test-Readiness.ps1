@@ -196,6 +196,23 @@ try {
     $scenario.failCommand = ''
     $report = Get-AzureReadiness @argsBase -Stage Application -Check
     Assert-True (Has-Check $report 'configuration.application' 'BLOCKED' 'APPLICATION_PARAMETERS_REQUIRED') 'Bootstrap success does not substitute missing API/SPA/image/model application configuration'
+    Assert-True (Has-Check $report 'configuration.costScope' 'BLOCKED' 'APPLICATION_COST_REVIEW_REQUIRED') 'Legacy registry-only cost review cannot authorize the Application stage'
+    $config.costScope = 'Bootstrap'
+    Save-Config
+    $report = Get-AzureReadiness @argsBase -Stage Application -Apply -CostApproved
+    Assert-True ((Has-Check $report 'configuration.costScope' 'BLOCKED' 'APPLICATION_COST_REVIEW_REQUIRED') -and
+        $report.execution -eq 'Blocked') 'Explicit bootstrap cost approval cannot approve full application costs'
+    $config.costScope = 'Application'
+    Save-Config
+    $report = Get-AzureReadiness @argsBase -Stage Application -Check
+    Assert-True ((Has-Check $report 'configuration.costScope' 'PASS' 'APPLICATION_COST_SCOPE_DECLARED') -and
+        (Has-Check $report 'configuration.application' 'BLOCKED' 'APPLICATION_PARAMETERS_REQUIRED')) 'Application-scope review passes only its cost gate, not missing deployment inputs'
+    $report = Get-AzureReadiness @argsBase -Stage Bootstrap -Check
+    Assert-True ($report.overallStatus -eq 'PASS') 'Full application cost review also covers the included bootstrap resources'
+    $config.costScope = 'Any'
+    Save-Config
+    $report = Get-AzureReadiness @argsBase -Plan
+    Assert-True (Has-Check $report 'configuration.bootstrap' 'FAIL' 'INVALID_OR_PLACEHOLDER_CONFIGURATION') 'Unknown cost scope cannot silently fall back to bootstrap'
     '{"version":1,"private":"PRIVATE_DIAGNOSTIC_SENTINEL"' | Set-Content -LiteralPath $invalid
     $report = Get-AzureReadiness -ConfigFile $invalid
     Assert-True ((Has-Check $report 'configuration.bootstrap' 'FAIL' 'INVALID_CONFIGURATION_JSON') -and

@@ -4,6 +4,7 @@
   "location": "REPLACE_APPROVED_REGION",
   "registryName": "REPLACE_UNIQUE_ACR_NAME",
   "registrySku": "Basic",
+  "costScope": "Bootstrap",
   "estimatedMonthlyCostUsd": 0,
   "estimateDateUtc": "REPLACE_YYYY-MM-DD",
   "pricingReference": "REPLACE_APPROVED_COST_REVIEW_REFERENCE"
