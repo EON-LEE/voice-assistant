@@ -84,7 +84,7 @@ Stdout is one bounded JSON object with no tokens, identities, endpoints, input p
 
 | Exit | JSON `status` | Meaning |
 | --- | --- | --- |
-| 0 | `SUCCESS` | Exactly one finalized synthetic utterance and at least one real model delta, with successful cleanup |
+| 0 | `SUCCESS` | Exactly one finalized synthetic utterance, counting callbacks through completed Speech shutdown, and at least one real model delta, with successful cleanup |
 | 1 | `FAILED` | Provider/runtime/fixture-utterance/deadline/cleanup failure after preflight |
 | 2 | `BLOCKED` | No explicit live opt-in, invalid config/arguments/approved fixture, or unavailable credentials |
 | 3 | `CANCELLED` | User/caller cancellation (cleanup failure instead returns FAILED) |

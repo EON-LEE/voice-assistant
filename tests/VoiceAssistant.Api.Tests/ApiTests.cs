@@ -248,6 +248,54 @@ public sealed class ApiTests
         Assert.Equal(0, completed.GetProperty("sources").GetArrayLength());
     }
 
+    [Theory]
+    [InlineData("no_matches", 0)]
+    [InlineData("disabled", 2)]
+    [InlineData("grounded", 2)]
+    public async Task ResponseMetricsExcludeDeterministicNoMatches(string grounding, int expectedMeasurements)
+    {
+        var measurements = new System.Collections.Concurrent.ConcurrentBag<string>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, owner) =>
+            {
+                if (instrument.Meter.Name == MeetingMetrics.MeterName &&
+                    instrument.Name.StartsWith("voiceassistant.stt_final_to_", StringComparison.Ordinal))
+                    owner.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((instrument, _, _, _) => measurements.Add(instrument.Name));
+        listener.Start();
+        await using var host = await Host.StartAsync(provider: new GroundingProvider(grounding));
+        using var socket = await host.ConnectAsync();
+        await Send(socket, Start);
+        await Receive(socket);
+        await socket.SendAsync(Enumerable.Repeat((byte)1, 640).ToArray(), WebSocketMessageType.Binary, true, CancellationToken.None);
+        var completion = await Until(socket, "response.completed");
+        Assert.Equal(grounding, completion.GetProperty("grounding").GetString());
+        await Send(socket, """{"type":"session.stop"}""");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var closed = await socket.ReceiveAsync(new byte[32768], timeout.Token);
+        Assert.Equal(WebSocketMessageType.Close, closed.MessageType);
+        Assert.Equal(expectedMeasurements, measurements.Count);
+        if (expectedMeasurements > 0)
+        {
+            Assert.Contains("voiceassistant.stt_final_to_first_delta", measurements);
+            Assert.Contains("voiceassistant.stt_final_to_completed", measurements);
+        }
+    }
+
+    private sealed class GroundingProvider(string status) : IMeetingProvider
+    {
+        private readonly FakeMeetingProvider fake = new();
+        public Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation) =>
+            fake.StartSpeechAsync(transcript, error, cancellation);
+        public Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation) =>
+            Task.FromResult(new Grounding(status, []));
+        public IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding, CancellationToken cancellation) =>
+            fake.AnswerAsync(conversation, grounding, cancellation);
+    }
+
     private static Task Send(ClientWebSocket socket, string text) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, CancellationToken.None);
     private static async Task<JsonElement> Receive(ClientWebSocket socket)

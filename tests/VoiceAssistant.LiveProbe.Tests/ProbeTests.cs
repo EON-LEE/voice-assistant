@@ -261,6 +261,35 @@ public sealed class ProbeTests
         }
     }
 
+    [Fact]
+    public async Task FinalDeliveredDuringShutdownIsCountedBeforeModelAcceptance()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "shutdown_final");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal("FAILED", result.Status);
+        Assert.Equal("fixture_not_single_utterance", result.Reason);
+        Assert.Equal(2, result.FinalEvents);
+        Assert.Equal(0, result.DeltaEvents);
+        Assert.True(provider.Disposed);
+        Assert.False(provider.AnswerCalled);
+        Assert.Null(result.Timings!.FinalSttToFirstDeltaMs);
+        Assert.Null(result.Timings.FinalSttToCompletedMs);
+    }
+
+    [Fact]
+    public async Task SpeechErrorDuringShutdownPreventsModelCall()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "shutdown_error");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal("FAILED", result.Status);
+        Assert.Equal("speech_error", result.Reason);
+        Assert.False(provider.AnswerCalled);
+    }
+
     private static byte[] Wave()
     {
         using var stream = new MemoryStream();
@@ -311,6 +340,8 @@ public sealed class ProbeTests
             }, () =>
             {
                 Disposed = true;
+                if (stage == "shutdown_final") transcript(new("second-turn", 1, "private-second-transcript", true));
+                if (stage == "shutdown_error") error(new("secret-token", "secret-token"));
                 if (stage == "cleanup") throw new InvalidOperationException("secret-token");
             });
         }

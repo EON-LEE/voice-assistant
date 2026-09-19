@@ -101,7 +101,7 @@ The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:
 | `voiceassistant.stt_final_to_completed` | Final STT callback to successfully sent model response completion |
 | `voiceassistant.retrieval_duration` | Retrieval call elapsed time, including disabled/no-match/error/cancellation paths |
 
-These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. Superseded/cancelled generation does not record subsequent delta/completion timings. Grounding-unavailable deterministic refusal is not recorded as a successful model completion.
+These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record only `disabled`/`grounded` model paths; `no_matches` deterministic clarification and grounding-unavailable deterministic refusal are excluded. Retrieval metrics still record these outcomes.
 
 Tags are bounded `provider=Azure|Fake|TestDouble`; response `trigger=automatic|manual`; retrieval `outcome=grounded|disabled|no_matches|unavailable|unknown|failed|cancelled`. No content, IDs, URLs or arbitrary error messages are metric tags. No exporter, persistence, or new WebSocket event is enabled; an approved operational `MeterListener`/OpenTelemetry configuration may subscribe. Never mix Fake/TestDouble observations with Azure measurements.
 

@@ -39,7 +39,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private bool responseActive;
     private int overflow;
     private readonly List<Task> retired = [];
-    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0);
+    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false);
     private sealed record AudioMessage(byte[] Bytes);
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
     private sealed record Completion(string Text, Source[] Sources, string Grounding);
@@ -105,7 +105,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                     case "fatal": throw (ProviderException)message.Value!;
                     case "delta" when message.Generation == generationNumber && responseActive:
                         await SendAsync(new { type = "response.delta", responseId, turnId = responseTurn, text = (string)message.Value! }, lifetime.Token);
-                        responseMeasurement?.FirstDeltaSent();
+                        if (message.ModelResponse) responseMeasurement?.FirstDeltaSent();
                         break;
                     case "complete" when message.Generation == generationNumber && responseActive:
                         var completion = (Completion)message.Value!;
@@ -118,7 +118,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             sources = completion.Sources,
                             grounding = completion.Grounding
                         }, lifetime.Token);
-                        responseMeasurement?.CompletedSent();
+                        if (message.ModelResponse) responseMeasurement?.CompletedSent();
                         responseActive = false;
                         break;
                     case "generation.error" when message.Generation == generationNumber && responseActive:
@@ -310,18 +310,20 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         try
         {
             var grounding = await MeetingMetrics.MeasureRetrievalAsync(provider, history[^1].Text, objectId, cancellation);
+            var modelResponse = grounding.Status is "disabled" or "grounded";
             var text = new StringBuilder();
             await foreach (var delta in provider.AnswerAsync(history, grounding, cancellation).WithCancellation(cancellation))
             {
                 cancellation.ThrowIfCancellationRequested();
                 if (text.Length + delta.Length > 8000) throw new ProviderException("response_limit", "Response exceeded its size limit.");
                 text.Append(delta);
-                await events.Writer.WriteAsync(new("delta", delta, number), cancellation);
+                await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse), cancellation);
             }
             cancellation.ThrowIfCancellationRequested();
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
             await events.Writer.WriteAsync(new("complete",
-                new Completion(text.ToString(), grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status), number), cancellation);
+                new Completion(text.ToString(), grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status), number,
+                ModelResponse: modelResponse), cancellation);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
