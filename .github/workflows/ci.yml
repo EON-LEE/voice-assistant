@@ -49,3 +49,34 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build non-root Linux web image
         run: docker build --file src/VoiceAssistant.Api/Dockerfile --tag voice-assistant:test .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: Install locked browser test dependencies
+        working-directory: tests/VoiceAssistant.Web.E2E
+        run: npm ci --no-audit --no-fund
+      - name: Run container and verify browser lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id=$(docker run --detach --rm \
+            --env ASPNETCORE_ENVIRONMENT=Development \
+            --env Provider__Mode=Fake voice-assistant:test)
+          trap 'docker stop "$container_id" >/dev/null' EXIT
+          version=$(node -p "require('./tests/VoiceAssistant.Web.E2E/node_modules/playwright/package.json').version")
+          docker run --rm --network "container:$container_id" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/work" \
+            --workdir /work/tests/VoiceAssistant.Web.E2E \
+            --env CI=true \
+            --env VOICE_ASSISTANT_WEB_URL=http://localhost:8080 \
+            --env VOICE_ASSISTANT_BACKEND_E2E=1 \
+            --env VOICE_ASSISTANT_API_EXTERNAL=1 \
+            "mcr.microsoft.com/playwright:v${version}-noble" \
+            node node_modules/@playwright/test/cli.js test
+      - name: Upload Linux browser test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-browser-test-report
+          path: tests/VoiceAssistant.Web.E2E/playwright-report/
+          if-no-files-found: ignore

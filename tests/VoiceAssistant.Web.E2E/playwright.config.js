@@ -33,6 +33,7 @@ if (!process.env.VOICE_ASSISTANT_WEB_URL) {
 }
 
 export default defineConfig({
+  globalSetup: './wait-for-api.js',
   testDir: './specs',
   timeout: 30_000,
   globalTimeout: 180_000,
