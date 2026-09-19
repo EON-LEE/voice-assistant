@@ -290,6 +290,22 @@ public sealed class ProbeTests
         Assert.False(provider.AnswerCalled);
     }
 
+    [Fact]
+    public async Task SpeechCancellationCallbackPreservesSafeSdkDiagnosis()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "speech_authentication");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal("FAILED", result.Status);
+        Assert.Equal("speech_error", result.Reason);
+        Assert.Equal("Error", result.Failure!.SpeechCancellationReason);
+        Assert.Equal("AuthenticationFailure", result.Failure.SpeechCancellationErrorCode);
+        Assert.Equal(0, result.FinalEvents);
+        Assert.False(provider.AnswerCalled);
+        Assert.DoesNotContain("secret-token", result.ToJson());
+    }
+
     private static byte[] Wave()
     {
         using var stream = new MemoryStream();
@@ -333,6 +349,15 @@ public sealed class ProbeTests
             var writes = 0;
             return new Stream(() =>
             {
+                if (stage == "speech_authentication")
+                {
+                    error(new("secret-token", "secret-token")
+                    {
+                        SpeechCancellation = new(Microsoft.CognitiveServices.Speech.CancellationReason.Error,
+                            Microsoft.CognitiveServices.Speech.CancellationErrorCode.AuthenticationFailure)
+                    });
+                    return;
+                }
                 if (stage == "speech") { error(new("secret-token", "secret-token")); return; }
                 if (++writes != 2 || stage == "no_final") return;
                 transcript(new("turn", 1, "private-transcript", false));

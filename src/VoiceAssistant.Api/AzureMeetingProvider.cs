@@ -192,7 +192,10 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             recognizer.Canceled += (_, args) =>
             {
                 if (!lifetime.IsCancellationRequested)
-                    error(new("speech_unavailable", "Speech recognition ended unexpectedly. Reconnect to continue."));
+                    error(new("speech_unavailable", "Speech recognition ended unexpectedly. Reconnect to continue.")
+                    {
+                        SpeechCancellation = new(args.Reason, args.ErrorCode)
+                    });
             };
             refresh = SpeechAuthorization.RefreshAsync(credential, resourceId,
                 token => recognizer.AuthorizationToken = token, error, lifetime.Token);

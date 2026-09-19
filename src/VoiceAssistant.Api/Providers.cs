@@ -5,9 +5,13 @@ public sealed record Source(string Title, string Url, DateTimeOffset? UpdatedAt)
 public sealed record Evidence(string Content, Source Source);
 public sealed record Grounding(string Status, IReadOnlyList<Evidence> Documents);
 public sealed record ConversationTurn(string Text);
+public sealed record SpeechCancellation(
+    Microsoft.CognitiveServices.Speech.CancellationReason Reason,
+    Microsoft.CognitiveServices.Speech.CancellationErrorCode ErrorCode);
 public sealed class ProviderException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;
+    public SpeechCancellation? SpeechCancellation { get; init; }
 }
 
 public interface ISpeechStream : IAsyncDisposable

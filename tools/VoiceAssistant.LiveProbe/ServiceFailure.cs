@@ -1,13 +1,18 @@
 using System.ClientModel;
 using System.Text.Json;
 using Azure;
+using VoiceAssistant.Api;
 
 namespace VoiceAssistant.LiveProbe;
 
-public sealed record ServiceFailure(string Stage, int? HttpStatus, string Code, string? Parameter)
+public sealed record ServiceFailure(string Stage, int? HttpStatus, string Code, string? Parameter,
+    string? SpeechCancellationReason = null, string? SpeechCancellationErrorCode = null)
 {
     internal static ServiceFailure From(Exception exception, string stage) => exception switch
     {
+        ProviderException { SpeechCancellation: { } speech } => new("speech", null, "speech_cancelled", null,
+            Enum.IsDefined(speech.Reason) ? speech.Reason.ToString() : "Unknown",
+            Enum.IsDefined(speech.ErrorCode) ? speech.ErrorCode.ToString() : "Unknown"),
         ClientResultException client => Parse(client.Status, client.GetRawResponse()?.Content, stage),
         RequestFailedException azure => new(stage, Status(azure.Status), AllowedCode(azure.ErrorCode), null),
         _ => new(stage, null, "unknown", null)

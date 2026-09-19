@@ -2,11 +2,35 @@ using System.ClientModel;
 using System.Text.Json;
 using VoiceAssistant.LiveProbe;
 using Xunit;
+using VoiceAssistant.Api;
+using Microsoft.CognitiveServices.Speech;
 
 namespace VoiceAssistant.LiveProbe.Tests;
 
 public sealed class ServiceFailureTests
 {
+    [Theory]
+    [InlineData(CancellationReason.Error, CancellationErrorCode.AuthenticationFailure, "Error", "AuthenticationFailure")]
+    [InlineData(CancellationReason.Error, CancellationErrorCode.Forbidden, "Error", "Forbidden")]
+    [InlineData(CancellationReason.EndOfStream, CancellationErrorCode.NoError, "EndOfStream", "NoError")]
+    [InlineData((CancellationReason)999, (CancellationErrorCode)999, "Unknown", "Unknown")]
+    public void SpeechCancellationExposesOnlyDefinedEnumNames(CancellationReason reason, CancellationErrorCode code,
+        string expectedReason, string expectedCode)
+    {
+        var exception = new ProviderException("secret-token", "private transcript https://private.example")
+        {
+            SpeechCancellation = new(reason, code)
+        };
+        var failure = ServiceFailure.From(exception, "speech");
+        Assert.Equal(expectedReason, failure.SpeechCancellationReason);
+        Assert.Equal(expectedCode, failure.SpeechCancellationErrorCode);
+        Assert.Null(failure.HttpStatus);
+        var json = JsonSerializer.Serialize(failure);
+        Assert.DoesNotContain("secret-token", json);
+        Assert.DoesNotContain("private", json);
+        Assert.Equal("speech_cancelled", failure.Code);
+    }
+
     [Fact]
     public void KnownCodeAndParameterArePreservedWithoutBodyContent()
     {

@@ -45,12 +45,13 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
                     }
                     else firstFinal.TrySetResult(transcript);
                 }
-            }, _ =>
+            }, error =>
             {
                 lock (gate)
                 {
                     if (!acceptingTranscript) return;
                     providerFailed = true;
+                    failure ??= ServiceFailure.From(error, "speech");
                     execution.Cancel();
                 }
             }, startup.Token).WaitAsync(startup.Token);

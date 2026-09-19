@@ -95,6 +95,8 @@ Schema1 fields: `status`, `reason` (fixed content-free code), `provider`, `start
 
 Optional `failure` reports fixed `stage` (`speech`/`openai`), numeric `httpStatus`, allowlisted service `code`, and allowlisted `parameter` (`max_tokens`, `max_completion_tokens`, `temperature`, `messages`, `messages[0].role`, `reasoning_effort`). Unrecognized values become `unknown`/null. Error bodies, freeform messages, endpoints and identities are never echoed. This distinguishes HTTP401/403 permission failures,429 throttling and400 parameter incompatibility without exposing content.
 
+Speech cancellation additionally reports `speechCancellationReason` and `speechCancellationErrorCode`: only defined SDK enum names (otherwise `Unknown`), never `ErrorDetails`. `httpStatus` stays null because an SDK cancellation enum does not establish an HTTP status. `AuthenticationFailure` warrants checking the selected identity's Speech data-plane role, resource/region and token validity; it alone does not prove which is wrong. `Forbidden` can also reflect quota restrictions. The diagnostic never changes permissions or retries with keys.
+
 `timings` contains:
 
 | Field | Origin |
