@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": { "value": "meeting" },
+    "location": { "value": "REPLACE_REGION" },
+    "speechLocation": { "value": "REPLACE_SPEECH_REGION" },
+    "openAILocation": { "value": "REPLACE_OPENAI_REGION" },
+    "searchLocation": { "value": "REPLACE_SEARCH_REGION" },
+    "registryName": { "value": "REPLACE_EXISTING_ACR" },
+    "registryResourceGroup": { "value": "REPLACE_ACR_RESOURCE_GROUP" },
+    "image": { "value": "REPLACE_ACR.azurecr.io/voice-assistant@sha256:REPLACE_DIGEST" },
+    "tenantId": { "value": "REPLACE_TENANT_GUID" },
+    "apiAudience": { "value": "REPLACE_API_CLIENT_GUID" },
+    "spaClientId": { "value": "REPLACE_SPA_CLIENT_GUID" },
+    "apiScope": { "value": "api://REPLACE_API_CLIENT_GUID/Meeting.Access" },
+    "chatModelName": { "value": "REPLACE_SUPPORTED_CHAT_MODEL" },
+    "chatModelVersion": { "value": "REPLACE_AVAILABLE_VERSION" },
+    "chatDeploymentSku": { "value": "REPLACE_AVAILABLE_SKU" },
+    "chatCapacity": { "value": 1 },
+    "embeddingModelName": { "value": "text-embedding-3-small" },
+    "embeddingModelVersion": { "value": "REPLACE_AVAILABLE_VERSION" },
+    "embeddingDeploymentSku": { "value": "REPLACE_AVAILABLE_SKU" },
+    "embeddingCapacity": { "value": 1 }
+  }
+}
