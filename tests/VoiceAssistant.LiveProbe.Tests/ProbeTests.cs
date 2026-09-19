@@ -111,6 +111,9 @@ public sealed class ProbeTests
         Assert.Equal(150, result.Timings.FinalSttToCompletedMs);
         Assert.True(provider.Disposed);
         Assert.True(provider.AnswerCalled);
+        Assert.True(result.RecognitionQuality!.QualityNotMeasured);
+        Assert.False(result.RecognitionQuality.ReferencePresent);
+        Assert.Null(result.RecognitionQuality.Passed);
         var json = result.ToJson();
         Assert.DoesNotContain("private-transcript", json);
         Assert.DoesNotContain("private-model-content", json);
@@ -304,6 +307,34 @@ public sealed class ProbeTests
         Assert.Equal(0, result.FinalEvents);
         Assert.False(provider.AnswerCalled);
         Assert.DoesNotContain("secret-token", result.ToJson());
+    }
+
+    [Theory]
+    [InlineData("private transcript", true)]
+    [InlineData("entirely different original sentence", false)]
+    public async Task ReferenceQualityGatesModelCallWithoutLeakingText(string reference, bool passed)
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock);
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null, reference), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal(passed ? "SUCCESS" : "FAILED", result.Status);
+        Assert.Equal(passed ? "completed" : "recognition_quality_failed", result.Reason);
+        Assert.Equal(passed, provider.AnswerCalled);
+        Assert.Equal(passed, result.RecognitionQuality!.Passed);
+        Assert.False(result.RecognitionQuality.QualityNotMeasured);
+        Assert.DoesNotContain(reference, result.ToJson());
+        Assert.DoesNotContain("private-transcript", result.ToJson());
+        if (!passed) Assert.Equal(0, result.DeltaEvents);
+    }
+
+    [Fact]
+    public void MetadataReferenceIsOptionalBoundedAndRetainedOnlyForInMemoryComparison()
+    {
+        var wav = Wave();
+        Assert.Null(AudioFixture.Parse(wav, Metadata(wav)).ReferenceText);
+        Assert.Equal("Original sentence.", AudioFixture.Parse(wav, Metadata(wav) with { Text = "Original sentence." }).ReferenceText);
+        Assert.Throws<InvalidDataException>(() => AudioFixture.Parse(wav, Metadata(wav) with { Text = new string('x', 2049) }));
     }
 
     private static byte[] Wave()

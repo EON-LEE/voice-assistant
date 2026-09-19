@@ -5,9 +5,9 @@ using System.Text.Json;
 namespace VoiceAssistant.LiveProbe;
 
 public sealed record FixtureMetadata(int SchemaVersion, bool Synthetic, bool ApprovedForLiveUse, string Language,
-    string Sha256, int? SpeechEndSample);
+    string Sha256, int? SpeechEndSample, string? Text = null);
 
-public sealed record AudioFixture(byte[] Pcm, int? SpeechEndSample)
+public sealed record AudioFixture(byte[] Pcm, int? SpeechEndSample, string? ReferenceText = null)
 {
     public const int SampleRate = 16000;
     public const int BytesPerSecond = SampleRate * 2;
@@ -33,6 +33,7 @@ public sealed record AudioFixture(byte[] Pcm, int? SpeechEndSample)
 
     public static AudioFixture Parse(byte[] wav, FixtureMetadata metadata)
     {
+        WordErrorRate.ValidateReference(metadata.Text);
         if (metadata.SchemaVersion != 1 || !metadata.Synthetic || !metadata.ApprovedForLiveUse ||
             metadata.Language != "en-US" || metadata.Sha256 is null || metadata.Sha256.Length != 64 ||
             !string.Equals(metadata.Sha256, Convert.ToHexString(SHA256.HashData(wav)), StringComparison.OrdinalIgnoreCase))
@@ -80,6 +81,6 @@ public sealed record AudioFixture(byte[] Pcm, int? SpeechEndSample)
             throw new InvalidDataException("requires_speech_and_one_second_zero_tail");
         if (metadata.SpeechEndSample is { } end && (end <= 0 || end > pcm.Length / 2))
             throw new InvalidDataException("invalid_speech_end_sample");
-        return new(pcm, metadata.SpeechEndSample);
+        return new(pcm, metadata.SpeechEndSample, metadata.Text);
     }
 }

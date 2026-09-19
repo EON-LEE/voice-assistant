@@ -78,13 +78,19 @@ The <=8192-byte JSON metadata must include:
 
 `speechEndSample`, if known from independently annotated/generated ground truth, is the **exclusive** sample index of speech end, not the end of the file, Speech SDK final time, VAD estimate, or synthesis API completion time. Null/omitted means unknown. For the local SAPI fixture, exact semantic speech-end ground truth is unavailable: keep it null. Extra `synthesisEndSample` metadata is informational and is deliberately **not** used as speech end. Boolean approval and SHA256 are an operator attestation/integrity check, not a content classifier or cryptographic proof of authorship.
 
+Optional metadata `text` is the original English reference utterance (maximum2048 characters). It is compared in memory with the single finalized transcript after Speech shutdown, never printed or added to evidence. Matching is case-insensitive; punctuation separates words, straight/curly apostrophes are ignored, and whitespace is collapsed. Standard Levenshtein word insertion/deletion/substitution distance divided by reference word count produces word error rate (WER), which can exceed1 for many insertions. Supplied empty/punctuation-only or oversized references are invalid rather than treated as verified.
+
+Evidence `recognitionQuality` contains only `referencePresent`, `qualityNotMeasured`, numeric `referenceWordCount`, `recognizedWordCount`, `wordEditCount`, `wordErrorRate`, fixed `maximumWordErrorRate:0.25`, and nullable `passed`. With a reference present, WER **greater than0.25** returns FAILED/`recognition_quality_failed` before OpenAI; exactly0.25 passes. Missing/null reference remains backward-compatible service-only acceptance with `qualityNotMeasured:true`, `passed:null` and null scores, never verified transcription quality. Failures before comparison likewise leave quality unmeasured. Preflight-blocked evidence may have `recognitionQuality:null` and must not be treated as measured. The included original-project metadata has a reference, so final cloud acceptance must additionally require `referencePresent:true`, `qualityNotMeasured:false`, and `passed:true`.
+
+WER measures word agreement for this bounded synthetic fixture only; it does not assess speaker intent, semantic response correctness, meeting-wide recognition quality, or real microphone accuracy. No LLM judge or transcript/reference logging is used.
+
 ## Evidence and meaning
 
 Stdout is one bounded JSON object with no tokens, identities, endpoints, input paths, raw audio, recognized text, response text, source documents, or raw exception messages. Exit status:
 
 | Exit | JSON `status` | Meaning |
 | --- | --- | --- |
-| 0 | `SUCCESS` | Exactly one finalized synthetic utterance, counting callbacks through completed Speech shutdown, and at least one real model delta, with successful cleanup |
+| 0 | `SUCCESS` | Exactly one finalized synthetic utterance through Speech shutdown, passing reference WER when supplied, and at least one real model delta, with successful cleanup; missing reference remains explicitly unmeasured |
 | 1 | `FAILED` | Provider/runtime/fixture-utterance/deadline/cleanup failure after preflight |
 | 2 | `BLOCKED` | No explicit live opt-in, invalid config/arguments/approved fixture, or unavailable credentials |
 | 3 | `CANCELLED` | User/caller cancellation (cleanup failure instead returns FAILED) |

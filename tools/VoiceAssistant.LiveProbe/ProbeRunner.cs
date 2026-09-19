@@ -25,6 +25,7 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
         var reason = "provider_error";
         var stage = "speech";
         ServiceFailure? failure = null;
+        var quality = new RecognitionQuality(fixture.ReferenceText is not null, true);
         ISpeechStream? stream = null;
         try
         {
@@ -70,6 +71,8 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
             }
             execution.Token.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(recognized.Text)) throw new ProbeFailure("empty_transcript");
+            quality = WordErrorRate.Measure(fixture.ReferenceText, recognized.Text);
+            if (quality.Passed == false) throw new ProbeFailure("recognition_quality_failed");
             // The probe never retrieves corporate documents: only the approved synthetic utterance reaches OpenAI.
             stage = "openai";
             var outputLength = 0;
@@ -120,7 +123,7 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
                 new(audioStart, speechEnd, finalStt,
                     speechEnd.HasValue && finalStt.HasValue ? finalStt - speechEnd : null,
                     firstDelta - finalStt, completed - finalStt, lateness,
-                    fixture.SpeechEndSample * 1000d / AudioFixture.SampleRate), failure);
+                    fixture.SpeechEndSample * 1000d / AudioFixture.SampleRate), failure, quality);
         }
     }
 
