@@ -246,6 +246,7 @@ As of September 20, 2026:
 | Post-ingestion state | Job maintenance/create-index flags reset to false; web restored to Running; Storage public networking remains Disabled |
 | Native Linux runtime identity | The bounded Speech/OpenAI acceptance job succeeded using the web runtime's managed identity; this does not establish interactive browser authorization |
 | Reference-recognition acceptance | Original 8-word fixture recognized as 8 words with 0 word edits (WER 0), verified from retained numeric evidence and the execution's immutable image digest |
+| External-video live acceptance | NASA public-domain Apollo clip, 00:07-00:18.2, played through native browser audio and the production worklet/session components into the genuinely authenticated deployed Azure API; 2 real final transcripts and a context-relevant streamed reply, not predefined text |
 | Actual video/Teams tab capture and end-to-end latency | Not verified; original WAV service tests and mocked capture tests do not establish this |
 
 The local preview uses explicit Fake/Demo behavior. The deployed Azure services
@@ -276,6 +277,23 @@ document**, not the user's real work knowledge. Ingestion is manual, private,
 and disarmed after completion. Importing actual work documents requires selecting
 approved sources and preserving their authorization; no Microsoft 365 crawler
 or Work IQ connector has been enabled.
+
+The external-video test used NASA's
+[KSC-04-S-00294 original video](https://images-assets.nasa.gov/video/ksc_080504_apollo/ksc_080504_apollo~mobile.mp4).
+Azure recognized the narration about July 20, 1969 and humans making history on
+the Moon, then generated a reply about that event. Captions were reference
+material only and were never supplied as transcription or model output.
+The test used a genuine delegated operator token and a real one-use server
+ticket, with temporary operator consent removed afterward. Test-only adapters
+replaced interactive sign-in and the OS screen-sharing picker with native audio
+from the playing video. No server, transcription, retrieval or model response
+was mocked. This proves the real-media processing path, not the YouTube sharing
+picker or the user's interactive tenant login.
+
+The test also exposed a retrieval limitation: the one fictional knowledge
+document was returned as a candidate for an unrelated video. Displayed search
+results are not proof that a source supports the answer. Relevance filtering and
+answer-to-source attribution need further evaluation with approved real sources.
 
 ## References
 
