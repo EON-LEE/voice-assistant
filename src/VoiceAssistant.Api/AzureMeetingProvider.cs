@@ -165,12 +165,14 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         private readonly SpeechRecognizer recognizer;
         private readonly CancellationTokenSource lifetime = new();
         private readonly Task refresh;
+        private readonly SpeechInputCompletion completion;
         private bool started;
 
         public AzureSpeechStream(SpeechConfig config, TokenCredential credential, string resourceId,
             Action<Transcript> transcript, Action<ProviderException> error)
         {
             input = AudioInputStream.CreatePushStream(format);
+            completion = new(input.Close);
             audio = AudioConfig.FromStreamInput(input);
             recognizer = new SpeechRecognizer(config, audio);
             var gate = new object();
@@ -193,12 +195,22 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             };
             recognizer.Canceled += (_, args) =>
             {
+                if (completion.IsExpectedEnd(args.Reason, args.ErrorCode))
+                {
+                    completion.Stopped();
+                    return;
+                }
                 if (!lifetime.IsCancellationRequested)
-                    error(new("speech_unavailable", "Speech recognition ended unexpectedly. Reconnect to continue.")
+                {
+                    var failure = new ProviderException("speech_unavailable", "Speech recognition ended unexpectedly. Reconnect to continue.")
                     {
                         SpeechCancellation = new(args.Reason, args.ErrorCode)
-                    });
+                    };
+                    error(failure);
+                    completion.Stopped(failure);
+                }
             };
+            recognizer.SessionStopped += (_, _) => completion.Stopped();
             refresh = SpeechAuthorization.RefreshAsync(credential, resourceId,
                 token => recognizer.AuthorizationToken = token, error, lifetime.Token);
         }
@@ -210,13 +222,19 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             started = true;
             await recognizer.StartContinuousRecognitionAsync().WaitAsync(cancellation);
         }
-        public void Write(byte[] buffer) => input.Write(buffer);
+        public void Write(byte[] buffer)
+        {
+            if (completion.InputEnded) throw new InvalidOperationException("Speech input is complete.");
+            input.Write(buffer);
+        }
+
+        public Task CompleteInputAsync(CancellationToken cancellation) => completion.CompleteAsync(cancellation);
 
         public async ValueTask DisposeAsync()
         {
             lifetime.Cancel();
             await refresh;
-            input.Close();
+            completion.CloseInput();
             try
             {
                 if (started) await recognizer.StopContinuousRecognitionAsync().WaitAsync(TimeSpan.FromSeconds(5));

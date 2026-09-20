@@ -26,12 +26,17 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
         var stage = "speech";
         ServiceFailure? failure = null;
         var quality = new RecognitionQuality(fixture.ReferenceText is not null, true);
-        ISpeechStream? stream = null;
+        ProbeSpeechInput? input = null;
+        Task<ISpeechStream>? startupOperation = null;
+        var phase = "speech_startup";
+        var framesSubmitted = 0;
+        var bytesSubmitted = 0;
+        var disposalAttempted = false;
         try
         {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(execution.Token);
             startup.CancelAfter(TimeSpan.FromSeconds(15));
-            stream = await provider.StartSpeechAsync(transcript =>
+            startupOperation = Task.Run(() => provider.StartSpeechAsync(transcript =>
             {
                 lock (gate)
                 {
@@ -55,26 +60,52 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
                     failure ??= ServiceFailure.From(error, "speech");
                     execution.Cancel();
                 }
-            }, startup.Token).WaitAsync(startup.Token);
-            await FramePacer.PlayAsync(fixture, stream.Write, clock,
-                start => audioStart = start, end => speechEnd = end,
-                late => lateness = Math.Max(lateness, late), execution.Token);
+            }, startup.Token), CancellationToken.None);
+            var stream = await startupOperation.WaitAsync(startup.Token);
+            input = new(stream);
+            phase = "audio_playback";
+            using (var playback = CancellationTokenSource.CreateLinkedTokenSource(execution.Token))
+            {
+                playback.CancelAfter(TimeSpan.FromMilliseconds(fixture.DurationMs + 10000));
+                await FramePacer.PlayAsync(fixture, async (bytes, token) =>
+                {
+                    await input.WriteAsync(bytes, token);
+                    framesSubmitted++;
+                    bytesSubmitted += bytes.Length;
+                }, clock, start => audioStart = start, end => speechEnd = end,
+                    late => lateness = Math.Max(lateness, late), playback.Token);
+            }
+            phase = "speech_drain";
+            using (var drain = CancellationTokenSource.CreateLinkedTokenSource(execution.Token))
+            {
+                drain.CancelAfter(TimeSpan.FromSeconds(15));
+                await input.CompleteAsync(drain.Token);
+            }
+            phase = "final_transcript";
             Transcript recognized;
             try { recognized = await firstFinal.Task.WaitAsync(TimeSpan.FromSeconds(15), execution.Token); }
             catch (TimeoutException) { throw new ProbeFailure("no_final_transcript"); }
-            await stream.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10), execution.Token);
-            stream = null;
+            phase = "speech_disposal";
+            disposalAttempted = true;
+            using (var disposal = CancellationTokenSource.CreateLinkedTokenSource(execution.Token))
+            {
+                disposal.CancelAfter(TimeSpan.FromSeconds(10));
+                await input.DisposeAsync(disposal.Token);
+            }
+            input = null;
             lock (gate)
             {
                 acceptingTranscript = false;
                 if (finals != 1) throw new ProbeFailure("fixture_not_single_utterance");
             }
             execution.Token.ThrowIfCancellationRequested();
+            phase = "recognition_quality";
             if (string.IsNullOrWhiteSpace(recognized.Text)) throw new ProbeFailure("empty_transcript");
             quality = WordErrorRate.Measure(fixture.ReferenceText, recognized.Text);
             if (quality.Passed == false) throw new ProbeFailure("recognition_quality_failed");
             // The probe never retrieves corporate documents: only the approved synthetic utterance reaches OpenAI.
             stage = "openai";
+            phase = "openai";
             var outputLength = 0;
             await foreach (var delta in provider.AnswerAsync([new(recognized.Text)], new("disabled", []), execution.Token)
                 .WithCancellation(execution.Token))
@@ -91,25 +122,41 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
             execution.Token.ThrowIfCancellationRequested();
             status = "SUCCESS";
             reason = "completed";
+            phase = "completed";
         }
         catch (OperationCanceledException)
         {
             status = cancellation.IsCancellationRequested ? "CANCELLED" : "FAILED";
-            reason = cancellation.IsCancellationRequested ? "cancelled" : providerFailed ? "speech_error" : "deadline_exceeded";
+            reason = cancellation.IsCancellationRequested ? "cancelled" : providerFailed ? "speech_error" :
+                timeout.IsCancellationRequested ? "deadline_exceeded" :
+                phase == "audio_playback" ? "audio_playback_timeout" :
+                phase == "speech_drain" ? "speech_completion_timeout" :
+                phase == "speech_disposal" ? "cleanup_failed" : "deadline_exceeded";
         }
         catch (ProbeFailure exception) { reason = exception.Reason; }
         catch (Exception exception)
         {
             failure = ServiceFailure.From(exception, stage);
-            reason = failure.HttpStatus.HasValue ? "service_error" : "provider_error";
+            reason = phase == "speech_disposal" ? "cleanup_failed" :
+                failure.HttpStatus.HasValue ? "service_error" : "provider_error";
         }
         finally
         {
             lock (gate) acceptingTranscript = false;
             execution.Cancel();
-            if (stream is not null)
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            if (input is null && startupOperation is not null && !disposalAttempted)
             {
-                try { await stream.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)); }
+                try { input = new(await startupOperation.WaitAsync(cleanup.Token)); }
+                catch (Exception) when (startupOperation.IsFaulted || startupOperation.IsCanceled)
+                {
+                    // Startup failure is already reported; no stream was returned to dispose.
+                }
+                catch (OperationCanceledException) { status = "FAILED"; reason = "cleanup_failed"; }
+            }
+            if (input is not null && !disposalAttempted)
+            {
+                try { await input.DisposeAsync(cleanup.Token); }
                 catch (Exception)
                 {
                     status = "FAILED";
@@ -123,7 +170,8 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
                 new(audioStart, speechEnd, finalStt,
                     speechEnd.HasValue && finalStt.HasValue ? finalStt - speechEnd : null,
                     firstDelta - finalStt, completed - finalStt, lateness,
-                    fixture.SpeechEndSample * 1000d / AudioFixture.SampleRate), failure, quality);
+                    fixture.SpeechEndSample * 1000d / AudioFixture.SampleRate), failure, quality,
+                new(phase, framesSubmitted, bytesSubmitted));
         }
     }
 

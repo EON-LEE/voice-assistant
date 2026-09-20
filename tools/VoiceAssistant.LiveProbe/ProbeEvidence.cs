@@ -13,10 +13,13 @@ public sealed record ProbeTimings(
     double MaxFrameLatenessMs = 0,
     double? SourceSpeechEndOffsetMs = null);
 
+public sealed record ProbeProgress(string Phase, int PcmFramesSubmitted, int PcmBytesSubmitted);
+
 public sealed record ProbeEvidence(
     string Status, string Reason, string Provider, DateTimeOffset StartedAt,
     double ElapsedMs = 0, int PartialEvents = 0, int FinalEvents = 0, int DeltaEvents = 0,
-    ProbeTimings? Timings = null, ServiceFailure? Failure = null, RecognitionQuality? RecognitionQuality = null)
+    ProbeTimings? Timings = null, ServiceFailure? Failure = null, RecognitionQuality? RecognitionQuality = null,
+    ProbeProgress? Progress = null)
 {
     public int SchemaVersion => 1;
     public string Scope => "speech_openai_only";

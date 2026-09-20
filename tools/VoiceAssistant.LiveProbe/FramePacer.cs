@@ -19,7 +19,12 @@ internal static class FramePacer
 {
     internal const int FrameBytes = 640;
 
-    internal static async Task PlayAsync(AudioFixture fixture, Action<byte[]> write, IProbeClock clock,
+    internal static Task PlayAsync(AudioFixture fixture, Action<byte[]> write, IProbeClock clock,
+        Action<double> started, Action<double> speechEndDelivered, Action<double> maximumLateness, CancellationToken cancellation) =>
+        PlayAsync(fixture, (bytes, _) => { write(bytes); return Task.CompletedTask; }, clock,
+            started, speechEndDelivered, maximumLateness, cancellation);
+
+    internal static async Task PlayAsync(AudioFixture fixture, Func<byte[], CancellationToken, Task> write, IProbeClock clock,
         Action<double> started, Action<double> speechEndDelivered, Action<double> maximumLateness, CancellationToken cancellation)
     {
         var start = clock.ElapsedMs;
@@ -37,9 +42,10 @@ internal static class FramePacer
             cancellation.ThrowIfCancellationRequested();
             latestWrite = clock.ElapsedMs;
             maximumLateness(latestWrite - (start + (offset + length) * 1000d / AudioFixture.BytesPerSecond));
+            await write(fixture.Pcm.AsSpan(offset, length).ToArray(), cancellation);
+            latestWrite = clock.ElapsedMs;
             if (fixture.SpeechEndSample is { } end && offset < end * 2 && offset + length >= end * 2)
                 speechEndDelivered(latestWrite);
-            write(fixture.Pcm.AsSpan(offset, length).ToArray());
         }
     }
 }

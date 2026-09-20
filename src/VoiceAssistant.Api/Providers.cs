@@ -17,6 +17,8 @@ public sealed class ProviderException(string code, string message) : Exception(m
 public interface ISpeechStream : IAsyncDisposable
 {
     void Write(byte[] audio);
+    // Finite input only: signal EOF and drain recognition callbacks. Live capture does not call this.
+    Task CompleteInputAsync(CancellationToken cancellation);
 }
 
 public interface IMeetingProvider
@@ -50,8 +52,10 @@ public sealed class FakeMeetingProvider : IMeetingProvider
         private int bytes;
         private int silence;
         private bool emitted;
+        private bool inputCompleted;
         public void Write(byte[] audio)
         {
+            if (inputCompleted) throw new InvalidOperationException("Speech input is complete.");
             var nonzero = audio.Any(value => value != 0);
             if (!nonzero)
             {
@@ -67,6 +71,12 @@ public sealed class FakeMeetingProvider : IMeetingProvider
             var turnId = Guid.NewGuid().ToString("N");
             transcript(new(turnId, 1, "Could you briefly explain", false));
             transcript(new(turnId, 2, TranscriptText, true));
+        }
+        public Task CompleteInputAsync(CancellationToken cancellation)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            inputCompleted = true;
+            return Task.CompletedTask;
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

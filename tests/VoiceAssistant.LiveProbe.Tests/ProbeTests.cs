@@ -337,6 +337,101 @@ public sealed class ProbeTests
         Assert.Throws<InvalidDataException>(() => AudioFixture.Parse(wav, Metadata(wav) with { Text = new string('x', 2049) }));
     }
 
+    [Fact]
+    public async Task FiniteInputFinalizesOnlyAfterExplicitEofBeforeDisposal()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "eof_final");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null, "private transcript"), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal("SUCCESS", result.Status);
+        Assert.Equal(1, provider.CompletionCalls);
+        Assert.True(provider.Disposed);
+        Assert.True(provider.AnswerCalled);
+        Assert.Equal(1, result.FinalEvents);
+        Assert.True(result.RecognitionQuality!.Passed);
+        Assert.Equal("completed", result.Progress!.Phase);
+        Assert.Equal(2, result.Progress.PcmFramesSubmitted);
+        Assert.Equal(1280, result.Progress.PcmBytesSubmitted);
+    }
+
+    [Fact]
+    public async Task EofDrainIncludesAdditionalFinalsBeforeQualityOrModelAcceptance()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "eof_second_final");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null, "private transcript"), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal("FAILED", result.Status);
+        Assert.Equal("fixture_not_single_utterance", result.Reason);
+        Assert.Equal(2, result.FinalEvents);
+        Assert.False(provider.AnswerCalled);
+        Assert.True(result.RecognitionQuality!.QualityNotMeasured);
+    }
+
+    [Fact]
+    public async Task EofProviderFailureIsVisibleAndNeverCallsModel()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "eof_error");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal("FAILED", result.Status);
+        Assert.Equal("speech_error", result.Reason);
+        Assert.False(provider.AnswerCalled);
+        Assert.True(provider.Disposed);
+        Assert.Equal("speech_drain", result.Progress!.Phase);
+        Assert.Equal(1280, result.Progress.PcmBytesSubmitted);
+    }
+
+    [Fact]
+    public async Task FailedWriteDoesNotIncrementSubmittedAudioCounters()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "write_failure");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null), TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Equal("FAILED", result.Status);
+        Assert.Equal("audio_playback", result.Progress!.Phase);
+        Assert.Equal(0, result.Progress.PcmFramesSubmitted);
+        Assert.Equal(0, result.Progress.PcmBytesSubmitted);
+        Assert.Equal(0, provider.CompletionCalls);
+        Assert.True(provider.Disposed);
+        Assert.False(provider.AnswerCalled);
+    }
+
+    [Fact]
+    public async Task LateStartupAfterDeadlineIsDisposedWithoutPlayingAudio()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "startup_late");
+        var result = await new ProbeRunner(provider, clock)
+            .RunAsync(new(new byte[1280], null), TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        Assert.Equal("FAILED", result.Status);
+        Assert.Equal("deadline_exceeded", result.Reason);
+        Assert.Equal("speech_startup", result.Progress!.Phase);
+        Assert.Equal(0, result.Progress.PcmFramesSubmitted);
+        Assert.False(provider.AnswerCalled);
+        Assert.True(provider.Disposed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EofDrainHonorsDeadlineAndExternalCancellation(bool external)
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock, "eof_wait");
+        using var cancellation = new CancellationTokenSource();
+        if (external) cancellation.CancelAfter(TimeSpan.FromMilliseconds(50));
+        var result = await new ProbeRunner(provider, clock).RunAsync(new(new byte[1280], null),
+            external ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(50), cancellation.Token);
+        Assert.Equal(external ? "CANCELLED" : "FAILED", result.Status);
+        Assert.Equal(external ? "cancelled" : "deadline_exceeded", result.Reason);
+        Assert.True(provider.Disposed);
+        Assert.False(provider.AnswerCalled);
+    }
+
     private static byte[] Wave()
     {
         using var stream = new MemoryStream();
@@ -372,14 +467,17 @@ public sealed class ProbeTests
     {
         public bool Disposed { get; private set; }
         public bool AnswerCalled { get; private set; }
+        public int CompletionCalls { get; private set; }
         public async Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation)
         {
             cancellation.ThrowIfCancellationRequested();
             if (stage == "startup") throw new InvalidOperationException("secret-token");
             if (stage == "startup_wait") await Task.Delay(Timeout.Infinite, cancellation);
+            if (stage == "startup_late") await Task.Delay(150, CancellationToken.None);
             var writes = 0;
             return new Stream(() =>
             {
+                if (stage == "write_failure") throw new InvalidOperationException("private-native-detail");
                 if (stage == "speech_authentication")
                 {
                     error(new("secret-token", "secret-token")
@@ -392,13 +490,26 @@ public sealed class ProbeTests
                 if (stage == "speech") { error(new("secret-token", "secret-token")); return; }
                 if (++writes != 2 || stage == "no_final") return;
                 transcript(new("turn", 1, "private-transcript", false));
-                transcript(new("turn", 2, "private-transcript", true));
+                if (stage != "eof_final") transcript(new("turn", 2, "private-transcript", true));
             }, () =>
             {
                 Disposed = true;
                 if (stage == "shutdown_final") transcript(new("second-turn", 1, "private-second-transcript", true));
                 if (stage == "shutdown_error") error(new("secret-token", "secret-token"));
                 if (stage == "cleanup") throw new InvalidOperationException("secret-token");
+            }, cancellation =>
+            {
+                cancellation.ThrowIfCancellationRequested();
+                CompletionCalls++;
+                if (stage == "eof_final")
+                {
+                    Assert.False(Disposed);
+                    transcript(new("turn", 2, "private-transcript", true));
+                }
+                if (stage == "eof_second_final") transcript(new("second-turn", 1, "private-second-transcript", true));
+                if (stage == "eof_error") error(new("secret-token", "secret-token"));
+                if (stage == "eof_wait") return Task.Delay(Timeout.Infinite, cancellation);
+                return Task.CompletedTask;
             });
         }
         public Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation) =>
@@ -414,9 +525,10 @@ public sealed class ProbeTests
             yield return "private-model-content";
             clock.Advance(50);
         }
-        private sealed class Stream(Action write, Action dispose) : ISpeechStream
+        private sealed class Stream(Action write, Action dispose, Func<CancellationToken, Task> complete) : ISpeechStream
         {
             public void Write(byte[] audio) => write();
+            public Task CompleteInputAsync(CancellationToken cancellation) => complete(cancellation);
             public ValueTask DisposeAsync() { dispose(); return ValueTask.CompletedTask; }
         }
     }

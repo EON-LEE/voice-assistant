@@ -107,6 +107,8 @@ Tags are bounded `provider=Azure|Fake|TestDouble`; response `trigger=automatic|m
 
 The [live-provider acceptance probe](../../tools/VoiceAssistant.LiveProbe/README.md) directly exercises this same provider with an explicit opt-in original synthetic WAV and standard noninteractive `DefaultAzureCredential`. It separately reports content-free real service evidence or **BLOCKED**, never fake Azure success.
 
+The speech-stream contract separately exposes `CompleteInputAsync` for finite recordings: signal push-stream EOF and drain terminal recognition callbacks before disposal. The WebSocket session does not call it during live capture; silence and new utterances keep using the same continuous stream. Expected `EndOfStream`/`NoError` is normal only after explicit input completion; service errors remain explicit.
+
 ### Speech endpoint verification
 
 Keep `Azure__SpeechEndpoint` as the HTTPS resource endpoint from the portal, for example `https://<custom-subdomain>.cognitiveservices.azure.com/`; do not append a guessed recognition WebSocket path. [Speech SDK release notes](https://learn.microsoft.com/azure/ai-services/speech-service/releasenotes) document portal-endpoint `FromEndpoint` support beginning1.43, before this project's pinned1.48.2. [Private endpoint guidance](https://learn.microsoft.com/azure/ai-services/speech-service/speech-services-private-link#construct-endpoint-url) states the SDK chooses the service URL path. A native SDK regression test checks that the HTTPS root, en-US language and segmentation configuration are preserved; actual Azure endpoint/RBAC reachability still requires the live probe.
