@@ -121,6 +121,11 @@ try {
     $search = @($template.resources | Where-Object type -EQ 'Microsoft.Search/searchServices')[0]
     Assert-True ($search.properties.disableLocalAuth -eq $true -and
         -not $search.properties.PSObject.Properties['authOptions']) 'Entra-only Search disables keys without conflicting aadOrApiKey authOptions'
+    Assert-True ($search.properties.semanticSearch -eq "[parameters('searchSemanticSearch')]" -and
+        $template.parameters.searchSemanticSearch.defaultValue -eq 'free' -and
+        ($template.parameters.searchSemanticSearch.allowedValues -join ',') -eq 'free,standard') 'Semantic ranker capability is explicit free or standard, default free'
+    Assert-True ((@($env | Where-Object name -EQ 'Azure__SearchSemanticConfiguration')[0].value -eq 'meeting-semantic') -and
+        (@($env | Where-Object name -EQ 'Azure__SearchMinimumRerankerScore')[0].value -eq '2.0')) 'Runtime semantic configuration and relevance threshold match API contract'
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
     Assert-True (-not $environment.properties.appLogsConfiguration.PSObject.Properties['destination'] -and
         -not $environment.properties.appLogsConfiguration.PSObject.Properties['logAnalyticsConfiguration']) 'Log destination/workspace are unset; never send the unsupported literal none'
@@ -258,6 +263,10 @@ try {
             }
         }
         Assert-True $true 'All backend Search fields/properties are preserved'
+        if ($backendSchema.PSObject.Properties['semantic']) {
+            Assert-True (($backendSchema.semantic | ConvertTo-Json -Depth 20 -Compress) -ceq
+                ($plan.schema.semantic | ConvertTo-Json -Depth 20 -Compress)) 'Backend semantic title/content priorities and default match infrastructure'
+        } else { throw 'Backend schema has no semantic configuration; integrate the coordinated API contract before release.' }
     }
     $result = & (Join-Path $scriptsRoot 'Import-Knowledge.ps1') -ManifestPath $manifestPath -ContentRoot $fixtures
     Assert-True ($result -match 'No authentication, embedding, upload, or deletion') 'Ingestion defaults to fully offline dry-run'
@@ -318,3 +327,4 @@ try {
 }
 & (Join-Path $PSScriptRoot 'Test-Readiness.ps1')
 & (Join-Path $PSScriptRoot 'Test-PrivateIngestion.ps1') -BicepPath $BicepPath
+& (Join-Path $PSScriptRoot 'Test-SemanticIndex.ps1')

@@ -23,7 +23,7 @@ function Get-KnowledgeSchema {
 }
 
 function Assert-KnowledgeSchema {
-    param($Schema, [string]$IndexName = 'meeting-knowledge')
+    param($Schema, [string]$IndexName = 'meeting-knowledge', [switch]$SkipSemanticValidation)
     $expected = Get-KnowledgeSchema $IndexName
     if ($Schema.name -cne $expected.name) { throw 'Search index name mismatch.' }
     foreach ($field in $expected.fields) {
@@ -40,6 +40,18 @@ function Assert-KnowledgeSchema {
     if ($profile.Count -ne 1 -or $profile[0].algorithm -cne 'meeting-hnsw' -or
         $algorithm.Count -ne 1 -or $algorithm[0].kind -cne 'hnsw' -or $algorithm[0].hnswParameters.metric -cne 'cosine') {
         throw 'Search vector profile/algorithm mismatch.'
+    }
+    if (-not $SkipSemanticValidation) {
+        if (-not $Schema.PSObject.Properties['semantic'] -or $null -eq $Schema.semantic -or
+            -not $Schema.semantic.PSObject.Properties['configurations']) { throw 'Missing Search semantic configuration.' }
+        $semantic = @($Schema.semantic.configurations | Where-Object name -CEQ 'meeting-semantic')
+        if ($semantic.Count -ne 1 -or -not $semantic[0].PSObject.Properties['prioritizedFields']) { throw 'Missing or duplicate meeting-semantic configuration.' }
+        $fields = $semantic[0].prioritizedFields
+        if (-not $fields.PSObject.Properties['titleField'] -or $null -eq $fields.titleField -or
+            $fields.titleField.fieldName -cne 'title' -or -not $fields.PSObject.Properties['prioritizedContentFields'] -or
+            @($fields.prioritizedContentFields).Count -ne 1 -or $fields.prioritizedContentFields[0].fieldName -cne 'content') {
+            throw 'Incompatible meeting-semantic title/content priorities.'
+        }
     }
 }
 

@@ -49,6 +49,9 @@ param searchIndexName string = 'meeting-knowledge'
   'standard2'
 ])
 param searchSku string = 'basic'
+@allowed(['free', 'standard'])
+@description('Semantic ranker billing mode. Availability, limits, costs and latency must be verified for the deployed service.')
+param searchSemanticSearch string = 'free'
 
 @description('Optional separate ingestion operator object ID. Empty creates no operator role assignments.')
 param ingestionPrincipalId string = ''
@@ -135,6 +138,7 @@ resource search 'Microsoft.Search/searchServices@2023-11-01' = {
     replicaCount: 1
     partitionCount: 1
     hostingMode: 'default'
+    semanticSearch: searchSemanticSearch
     disableLocalAuth: true
     publicNetworkAccess: 'enabled'
   }
@@ -275,6 +279,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'Azure__EmbeddingDeployment', value: embeddingDeploymentName }
           { name: 'Azure__SearchEndpoint', value: 'https://${search.name}.search.windows.net' }
           { name: 'Azure__SearchIndex', value: searchIndexName }
+          { name: 'Azure__SearchSemanticConfiguration', value: 'meeting-semantic' }
+          { name: 'Azure__SearchMinimumRerankerScore', value: '2.0' }
           { name: 'Logging__LogLevel__Microsoft.AspNetCore', value: 'Warning' }
           { name: 'Logging__LogLevel__Azure', value: 'Warning' }
         ]

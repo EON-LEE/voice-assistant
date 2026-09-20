@@ -7,6 +7,7 @@
     "speechLocation": { "value": "REPLACE_SPEECH_REGION" },
     "openAILocation": { "value": "REPLACE_OPENAI_REGION" },
     "searchLocation": { "value": "REPLACE_SEARCH_REGION" },
+    "searchSemanticSearch": { "value": "free" },
     "registryName": { "value": "REPLACE_EXISTING_ACR" },
     "registryResourceGroup": { "value": "REPLACE_ACR_RESOURCE_GROUP" },
     "image": { "value": "REPLACE_ACR.azurecr.io/voice-assistant@sha256:REPLACE_DIGEST" },

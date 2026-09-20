@@ -364,6 +364,65 @@ the version ledger.
 
 ## Content-safe operations, costs and readiness
 
+### Semantic relevance gate and existing-index migration
+
+Hybrid nearest-neighbor results alone are not proof that a document is relevant.
+The coordinated API uses semantic reranking with explicit
+`Azure__SearchSemanticConfiguration=meeting-semantic` and
+`Azure__SearchMinimumRerankerScore=2.0`; ACL prefiltering remains mandatory.
+The index's `meeting-semantic` configuration prioritizes `title` as title and
+`content` as content. The Bicep parameter `searchSemanticSearch` allows `free`
+or `standard`, default `free`. Confirm regional/service support and the selected
+billing mode before deployment. Free-mode capacity/quotas are not promised here;
+standard mode may charge for semantic requests. Measure end-to-end latency and
+representative relevant/irrelevant queries against the live service. A reranker
+threshold is not a calibrated probability or a guarantee of relevance.
+Semantic service errors, quota exhaustion, partial responses or missing scores
+must remain explicit failures; do not silently fall back to raw vector top-K.
+
+For an already populated index, **do not delete the index, reindex documents,
+restart private ingestion, weaken ACLs or change Blob networking**. Enable the
+service capability through reviewed IaC, then add the semantic metadata with
+the migration command:
+
+```powershell
+# Default is offline: review an approved index-metadata GET export including @odata.etag.
+.\scripts\infra\Update-SemanticIndex.ps1 -SchemaFile C:\approved-artifacts\search-index-metadata.json
+
+# Explicit, metadata-only apply against the owned Search service.
+.\scripts\infra\Update-SemanticIndex.ps1 -Apply -AuthProvider AzPowerShell `
+  -SubscriptionId b0af194e-77a5-4471-bb43-67e78295b5c8 `
+  -TenantId 2573db8c-dfe5-4805-9e28-a0859692e705 `
+  -ResourceGroup rg-voice-assistant-web -SearchName voice-search-2cmx22yjxadpg `
+  -IndexName meeting-knowledge
+```
+
+Apply ignores any offline snapshot and reads fresh metadata, checks existing
+fields/ACL/vector compatibility, adds only the missing named configuration,
+and sends the complete preserved definition with **If-Match: exact ETag**.
+Existing analyzers, scoring profiles, CORS, vector settings, other semantic
+configurations and their default configuration are retained. If no semantic
+default exists, `meeting-semantic` is selected; the API explicitly names it
+regardless. A conflicting same-name configuration is rejected for review rather
+than overwritten. Already-correct metadata is a no-op.
+
+HTTP 412 rejects a concurrent edit without retry; errors, missing capability,
+unavailable service or post-update drift are explicit blockers. A verification
+GET checks the semantic contract and preservation of existing settings before
+reporting success. Only index GET/conditional PUT/GET requests are used, never
+document queries/uploads/deletes, embedding generation or private Blob access.
+The operator needs Search Service Contributor plus the existing metadata-read
+and token permissions; this migration grants no roles. Metadata/token responses
+are not printed. Rebuild a future private-ingestion image to carry the updated
+strict schema before its next separately approved run; no current data changes
+are necessary.
+
+`Test-SemanticIndex.ps1` covers preservation, idempotency, exact ETags/conflicts,
+semantic field mismatches and offline defaults. `Test-Offline.ps1` invokes it
+and requires semantic parity with the coordinated `contracts/search-index.json`
+when `-BackendSchemaPath` is supplied. An old API contract intentionally fails
+that release check until the matching API change is integrated.
+
 Container environment log destination and workspace are **unset** (an empty
 `appLogsConfiguration`); the ARM API rejects the literal string `"none"`.
 There is no Application
@@ -390,8 +449,9 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The **54 infrastructure/ingestion checks**, **77
-readiness/bootstrap/adapter checks**, and **30 private-ingestion checks** passed on Windows PowerShell 5.1, including
+compiled without diagnostics. The **57 infrastructure/ingestion checks**, **77
+readiness/bootstrap/adapter checks**, **30 private-ingestion checks**, and **17
+semantic metadata migration checks** passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 
 ```powershell
