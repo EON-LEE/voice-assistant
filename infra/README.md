@@ -424,6 +424,9 @@ PUT 200/201 metadata responses remain supported; GET 204 or an empty/malformed
 GET response fails. If an older client reported an unexpected PUT response,
 inspect fresh metadata before retrying; an already-correct configuration is a
 read-only no-op rather than a repeated write.
+Capability checks recognize Azure CLI's top-level `semanticSearch` and the
+Az.Accounts ARM response's `properties.semanticSearch`. Conflicting dual shapes,
+missing metadata, disabled or unrecognized states fail before any index request.
 
 `Test-SemanticIndex.ps1` covers preservation, idempotency, exact ETags/conflicts,
 semantic field mismatches and offline defaults. `Test-Offline.ps1` invokes it
@@ -458,7 +461,7 @@ because a script's default is dry-run.
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
 compiled without diagnostics. The **57 infrastructure/ingestion checks**, **77
-readiness/bootstrap/adapter checks**, **30 private-ingestion checks**, and **24
+readiness/bootstrap/adapter checks**, **30 private-ingestion checks**, and **35
 semantic metadata migration checks** passed on Windows PowerShell 5.1, including
 the integrated backend Search contract:
 

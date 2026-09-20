@@ -21,6 +21,20 @@ function Assert-Throws {
     Assert-True $caught $Name
 }
 function Copy-Json($Value) { $Value | ConvertTo-Json -Depth 100 | ConvertFrom-Json }
+Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'fixture-search'; semanticSearch = 'free' }) 'fixture-search'
+Assert-True $true 'Azure CLI flattened semantic capability is recognized'
+Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'fixture-search'; properties = [pscustomobject]@{ semanticSearch = 'standard' } }) 'fixture-search'
+Assert-True $true 'Azure PowerShell nested ARM semantic capability is recognized'
+Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'fixture-search'; semanticSearch = 'free'; properties = [pscustomobject]@{ semanticSearch = 'free' } }) 'fixture-search'
+Assert-True $true 'Matching dual-shape capability metadata is accepted'
+Assert-Throws { Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'fixture-search'; semanticSearch = 'free';
+    properties = [pscustomobject]@{ semanticSearch = 'disabled' } }) 'fixture-search' } 'Conflicting' 'Conflicting provider shapes never fall back to enabled capability'
+Assert-Throws { Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'fixture-search' }) 'fixture-search' } 'explicitly enabled' 'Missing capability metadata fails cleanly under strict mode'
+Assert-Throws { Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'fixture-search'; properties = $null }) 'fixture-search' } 'explicitly enabled' 'Null ARM properties cannot imply semantic availability'
+foreach ($value in @('disabled', 'unknown', '', 'Free')) {
+    Assert-Throws { Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'fixture-search'; semanticSearch = $value }) 'fixture-search' } 'explicitly enabled' "Disabled or unrecognized semantic state is rejected: '$value'"
+}
+Assert-Throws { Assert-SearchSemanticCapability ([pscustomobject]@{ name = 'other-search'; semanticSearch = 'free' }) 'fixture-search' } 'identity' 'Provider-shape normalization cannot change the explicit target service'
 $schema = Get-KnowledgeSchema
 $schema | Add-Member -NotePropertyName '@odata.etag' -NotePropertyValue '"fixture-etag"'
 $schema.PSObject.Properties.Remove('semantic')

@@ -67,6 +67,25 @@ function Assert-SemanticSettingsPreserved {
     } elseif ($Expected -cne $Actual) { throw 'Index metadata changed unexpectedly; inspect before retry.' }
 }
 
+function Assert-SearchSemanticCapability {
+    param($Service, [string]$SearchName)
+    if ($null -eq $Service -or -not $Service.PSObject.Properties['name'] -or $Service.name -cne $SearchName) {
+        throw 'Search service identity does not match the explicit migration target.'
+    }
+    $top = $Service.PSObject.Properties['semanticSearch']
+    $nested = $null
+    if ($Service.PSObject.Properties['properties'] -and $null -ne $Service.properties) {
+        $nested = $Service.properties.PSObject.Properties['semanticSearch']
+    }
+    if ($top -and $nested -and $top.Value -cne $nested.Value) {
+        throw 'Conflicting Search semantic capability metadata; no index was changed.'
+    }
+    $value = if ($top) { $top.Value } elseif ($nested) { $nested.Value } else { $null }
+    if ($value -isnot [string] -or $value -cnotin @('free', 'standard')) {
+        throw 'Search semantic ranker must be explicitly enabled (free or standard) before migration. No index was changed.'
+    }
+}
+
 function ConvertFrom-SemanticIndexResponse {
     param([ValidateSet('GET', 'PUT')][string]$Method, $Response)
     $status = [int]$Response.StatusCode
@@ -84,4 +103,4 @@ function ConvertFrom-SemanticIndexResponse {
     } catch { throw 'Invalid index metadata response; content suppressed.' }
 }
 
-Export-ModuleMember -Function New-SemanticIndexUpdate, Invoke-SemanticIndexUpdate, ConvertFrom-SemanticIndexResponse
+Export-ModuleMember -Function New-SemanticIndexUpdate, Invoke-SemanticIndexUpdate, ConvertFrom-SemanticIndexResponse, Assert-SearchSemanticCapability

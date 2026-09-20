@@ -31,10 +31,7 @@ Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
 Set-AzureCli -AuthProvider $AuthProvider -AzPath $AzPath -AzPrefix $AzPrefix -TimeoutSeconds 90
 $null = Assert-Subscription $SubscriptionId $TenantId
 $service = Invoke-AzJson @('search', 'service', 'show', '--name', $SearchName, '--resource-group', $ResourceGroup, '--subscription', $SubscriptionId)
-if ($service.name -ne $SearchName -or -not $service.properties.PSObject.Properties['semanticSearch'] -or
-    $service.properties.semanticSearch -notin @('free', 'standard')) {
-    throw 'Search semantic ranker must be explicitly enabled (free or standard) before migration. No index was changed.'
-}
+Assert-SearchSemanticCapability -Service $service -SearchName $SearchName
 $token = Invoke-AzJson @('account', 'get-access-token', '--subscription', $SubscriptionId, '--tenant', $TenantId, '--resource', 'https://search.azure.com')
 $uri = "https://$SearchName.search.windows.net/indexes/$IndexName`?api-version=2024-07-01"
 $request = {
