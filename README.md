@@ -228,28 +228,38 @@ results cannot establish these targets.
 
 ## Verification status
 
-As of September 20, 2026 (the stricter reference-recognition probe is under investigation):
+As of September 20, 2026:
 
 | Verification | Result |
 | --- | --- |
-| API Release build and automated tests | 36 passed; includes actual Azure SDK request-serialization regressions |
-| Live-provider probe unit tests | 72 passed; service, timing, transcript-reference and redaction checks |
+| API Release build and automated tests | 42 passed; includes actual Azure SDK serialization and finite-input lifecycle regressions |
+| Live-provider probe unit tests | 83 passed; service, bounded cleanup, transcript-reference and redaction checks |
 | Browser production build and unit tests | 31 passed |
 | Chromium lifecycle and real local API transport | 18 passed on Windows, including 20 original-speech media restarts; published Linux image: 16 passed, 2 explicitly Vite-only tests skipped |
-| Infrastructure | Compiled and offline-tested; actual ARM validation, what-if and application deployment succeeded after fixing service-schema and polling-response mismatches |
-| Real Azure Speech and OpenAI | Original approved English WAV: 6 partial events, 1 final transcript, 35 streamed reply deltas; reviewed probe completed successfully |
+| Infrastructure | 54 core, 77 readiness and 30 private-ingestion checks passed; actual ARM validation, what-if and deployment succeeded |
+| Real Azure Speech and OpenAI | Final managed-identity Linux run submitted all 219 frames / 140160 PCM bytes; 6 partial events, 1 final transcript and 34 streamed reply deltas |
 | Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |
 | Browser sign-in | Entra account selection reached; Windows work account rejected by the separate subscription tenant; full owner-account sign-in not verified |
 | Authorized knowledge ingestion | Separate managed identity ingested one original fictional fixture through Blob Private Link; actual Search ACL filters returned 1 authorized chunk and 0 for an unlisted principal; 1536-dimensional vectors are non-retrievable |
 | Post-ingestion state | Job maintenance/create-index flags reset to false; web restored to Running; Storage public networking remains Disabled |
 | Native Linux runtime identity | The bounded Speech/OpenAI acceptance job succeeded using the web runtime's managed identity; this does not establish interactive browser authorization |
-| Stricter cloud reference-recognition probe | A separate reference-check run timed out with 1 partial and no final transcript; word accuracy was not measured and is not claimed as passed |
+| Reference-recognition acceptance | Original 8-word fixture recognized as 8 words with 0 word edits (WER 0), verified from retained numeric evidence and the execution's immutable image digest |
 | Actual video/Teams tab capture and end-to-end latency | Not verified; original WAV service tests and mocked capture tests do not establish this |
 
 The local preview uses explicit Fake/Demo behavior. The deployed Azure services
-and real-provider probe do not. Probe timing includes its WAV tail and Speech
-shutdown; the fixture has no aligned speech-end ground truth, so speech-end
-latency fields remain null rather than being guessed. Three bounded text-only
+and real-provider probe do not. An earlier cloud reference run timed out. A
+reproduced finite-input ordering defect was corrected: the probe now explicitly
+closes input and waits for terminal recognition instead of waiting for a final
+transcript before ever signaling end-of-input. Startup, playback, drain and
+cleanup have bounded waits; actual completed writes are counted. The subsequent
+reference-checked cloud run succeeded; no claim is made that every historical
+timeout had the same cause.
+
+The final cleanup-reviewed run took 5.876 seconds overall, with 2.155 seconds from final transcription
+to first model text, including probe drain/cleanup. Probe timing includes its
+WAV tail and Speech shutdown; the fixture has no aligned speech-end ground
+truth, so speech-end latency fields remain null rather than being guessed.
+Three bounded text-only
 calls on one client observed a cold first delta of 7.297 seconds (including
 5.308 seconds acquiring a credential), then warm first deltas of 0.864 and
 1.773 seconds. These are small-sample observations, not a meeting p50/p95 SLA.
