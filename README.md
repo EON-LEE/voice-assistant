@@ -228,18 +228,22 @@ results cannot establish these targets.
 
 ## Verification status
 
-As of September 20, 2026 (private knowledge initialization is still in progress):
+As of September 20, 2026 (the stricter reference-recognition probe is under investigation):
 
 | Verification | Result |
 | --- | --- |
-| API Release build and automated tests | Passing; includes actual Azure SDK request-serialization regressions |
+| API Release build and automated tests | 36 passed; includes actual Azure SDK request-serialization regressions |
+| Live-provider probe unit tests | 72 passed; service, timing, transcript-reference and redaction checks |
 | Browser production build and unit tests | 31 passed |
 | Chromium lifecycle and real local API transport | 18 passed on Windows, including 20 original-speech media restarts; published Linux image: 16 passed, 2 explicitly Vite-only tests skipped |
 | Infrastructure | Compiled and offline-tested; actual ARM validation, what-if and application deployment succeeded after fixing service-schema and polling-response mismatches |
 | Real Azure Speech and OpenAI | Original approved English WAV: 6 partial events, 1 final transcript, 35 streamed reply deltas; reviewed probe completed successfully |
 | Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |
 | Browser sign-in | Entra account selection reached; Windows work account rejected by the separate subscription tenant; full owner-account sign-in not verified |
-| Authorized knowledge ingestion | Storage public access is disabled by subscription governance; use a compliant private-network ingestion path, not a firewall exception |
+| Authorized knowledge ingestion | Separate managed identity ingested one original fictional fixture through Blob Private Link; actual Search ACL filters returned 1 authorized chunk and 0 for an unlisted principal; 1536-dimensional vectors are non-retrievable |
+| Post-ingestion state | Job maintenance/create-index flags reset to false; web restored to Running; Storage public networking remains Disabled |
+| Native Linux runtime identity | The bounded Speech/OpenAI acceptance job succeeded using the web runtime's managed identity; this does not establish interactive browser authorization |
+| Stricter cloud reference-recognition probe | A separate reference-check run timed out with 1 partial and no final transcript; word accuracy was not measured and is not claimed as passed |
 | Actual video/Teams tab capture and end-to-end latency | Not verified; original WAV service tests and mocked capture tests do not establish this |
 
 The local preview uses explicit Fake/Demo behavior. The deployed Azure services
@@ -254,6 +258,12 @@ Application users do not need a Windows installer. Interactive tenant sign-in,
 audio-sharing consent, approved knowledge sources, and measured meeting latency
 remain distinct acceptance gates. No company documents or actual meeting audio
 were used for the recorded automated tests.
+
+The deployed knowledge currently contains **only a visibly fictional acceptance
+document**, not the user's real work knowledge. Ingestion is manual, private,
+and disarmed after completion. Importing actual work documents requires selecting
+approved sources and preserving their authorization; no Microsoft 365 crawler
+or Work IQ connector has been enabled.
 
 ## References
 
