@@ -2,7 +2,8 @@ using VoiceAssistant.Api;
 
 namespace VoiceAssistant.LiveProbe;
 
-internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeClock = null)
+internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeClock = null,
+    Action? beforeSpeechDisposal = null)
 {
     internal async Task<ProbeEvidence> RunAsync(AudioFixture fixture, TimeSpan deadline, CancellationToken cancellation)
     {
@@ -87,6 +88,7 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
             catch (TimeoutException) { throw new ProbeFailure("no_final_transcript"); }
             phase = "speech_disposal";
             disposalAttempted = true;
+            beforeSpeechDisposal?.Invoke();
             using (var disposal = CancellationTokenSource.CreateLinkedTokenSource(execution.Token))
             {
                 disposal.CancelAfter(TimeSpan.FromSeconds(10));
@@ -154,7 +156,7 @@ internal sealed class ProbeRunner(IMeetingProvider provider, IProbeClock? probeC
                 }
                 catch (OperationCanceledException) { status = "FAILED"; reason = "cleanup_failed"; }
             }
-            if (input is not null && !disposalAttempted)
+            if (input is not null)
             {
                 try { await input.DisposeAsync(cleanup.Token); }
                 catch (Exception)

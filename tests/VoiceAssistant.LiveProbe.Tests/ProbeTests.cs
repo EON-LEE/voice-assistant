@@ -432,6 +432,22 @@ public sealed class ProbeTests
         Assert.False(provider.AnswerCalled);
     }
 
+    [Fact]
+    public async Task CancellationBetweenFinalAndDisposalStillDisposesExactlyOnce()
+    {
+        var clock = new Clock();
+        var provider = new Provider(clock);
+        using var cancellation = new CancellationTokenSource();
+        var result = await new ProbeRunner(provider, clock, cancellation.Cancel)
+            .RunAsync(new(new byte[1280], null), TimeSpan.FromSeconds(5), cancellation.Token);
+        Assert.Equal("CANCELLED", result.Status);
+        Assert.Equal("cancelled", result.Reason);
+        Assert.Equal("speech_disposal", result.Progress!.Phase);
+        Assert.Equal(1, result.FinalEvents);
+        Assert.Equal(1, provider.DisposeCalls);
+        Assert.False(provider.AnswerCalled);
+    }
+
     private static byte[] Wave()
     {
         using var stream = new MemoryStream();
@@ -468,6 +484,7 @@ public sealed class ProbeTests
         public bool Disposed { get; private set; }
         public bool AnswerCalled { get; private set; }
         public int CompletionCalls { get; private set; }
+        public int DisposeCalls { get; private set; }
         public async Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation)
         {
             cancellation.ThrowIfCancellationRequested();
@@ -494,6 +511,7 @@ public sealed class ProbeTests
             }, () =>
             {
                 Disposed = true;
+                DisposeCalls++;
                 if (stage == "shutdown_final") transcript(new("second-turn", 1, "private-second-transcript", true));
                 if (stage == "shutdown_error") error(new("secret-token", "secret-token"));
                 if (stage == "cleanup") throw new InvalidOperationException("secret-token");
