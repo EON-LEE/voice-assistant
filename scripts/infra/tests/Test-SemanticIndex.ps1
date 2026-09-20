@@ -83,6 +83,31 @@ $state.conflict = $false
 $state.drift = $true
 $state.schema = Copy-Json $schema
 Assert-Throws { Invoke-SemanticIndexUpdate -Request $request } 'metadata changed' 'Post-update verification detects unrelated setting drift'
+$emptyResponse = [pscustomobject]@{ StatusCode = 204 }
+Assert-True ($null -eq (ConvertFrom-SemanticIndexResponse 'PUT' $emptyResponse)) 'PUT 204 requires no Content property and does not attempt JSON parsing'
+Assert-Throws { ConvertFrom-SemanticIndexResponse 'GET' $emptyResponse } 'Unexpected' 'GET 204 is not accepted as index metadata'
+Assert-Throws { ConvertFrom-SemanticIndexResponse 'GET' ([pscustomobject]@{ StatusCode = 201; Content = '{}' }) } 'Unexpected' 'GET requires HTTP 200, never creation status'
+Assert-Throws { ConvertFrom-SemanticIndexResponse 'GET' ([pscustomobject]@{ StatusCode = 200; Content = '' }) } 'Invalid' 'Empty GET metadata fails explicitly'
+foreach ($status in @(200, 201)) {
+    $response = [pscustomobject]@{ StatusCode = $status; Content = [Text.Encoding]::UTF8.GetBytes(($schema | ConvertTo-Json -Depth 100)) }
+    Assert-True ((ConvertFrom-SemanticIndexResponse 'PUT' $response).name -eq 'meeting-knowledge') "PUT $status metadata JSON remains supported"
+}
+$state.schema = Copy-Json $schema
+$state.calls.Clear()
+$transportRequest = {
+    param($Method, $Body, $Headers)
+    $state.calls.Add(@{ method = $Method; headers = $Headers }) > $null
+    if ($Method -eq 'PUT') {
+        $state.schema = $Body | ConvertFrom-Json
+        $state.schema.'@odata.etag' = '"etag-after-204"'
+        return ConvertFrom-SemanticIndexResponse $Method ([pscustomobject]@{ StatusCode = 204 })
+    }
+    return ConvertFrom-SemanticIndexResponse $Method ([pscustomobject]@{
+        StatusCode = 200; Content = ($state.schema | ConvertTo-Json -Depth 100)
+    })
+}.GetNewClosure()
+$result = Invoke-SemanticIndexUpdate -Request $transportRequest
+Assert-True ($result.Verified -and $result.Changed -and ($state.calls.method -join ',') -eq 'GET,PUT,GET') 'Realistic PUT 204 is followed by mandatory JSON GET preservation verification'
 $file = [IO.Path]::GetTempFileName()
 try {
     $schema | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $file -Encoding UTF8

@@ -67,4 +67,21 @@ function Assert-SemanticSettingsPreserved {
     } elseif ($Expected -cne $Actual) { throw 'Index metadata changed unexpectedly; inspect before retry.' }
 }
 
-Export-ModuleMember -Function New-SemanticIndexUpdate, Invoke-SemanticIndexUpdate
+function ConvertFrom-SemanticIndexResponse {
+    param([ValidateSet('GET', 'PUT')][string]$Method, $Response)
+    $status = [int]$Response.StatusCode
+    if ($Method -eq 'PUT' -and $status -eq 204) { return $null }
+    if (($Method -eq 'GET' -and $status -ne 200) -or
+        ($Method -eq 'PUT' -and $status -notin @(200, 201))) {
+        throw 'Unexpected semantic index response; success is unverified.'
+    }
+    try {
+        $text = if ($Response.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($Response.Content) } else { [string]$Response.Content }
+        if ([string]::IsNullOrWhiteSpace($text)) { throw 'Expected metadata JSON.' }
+        $data = $text | ConvertFrom-Json
+        if ($null -eq $data -or $data -isnot [pscustomobject]) { throw 'Expected metadata object.' }
+        return $data
+    } catch { throw 'Invalid index metadata response; content suppressed.' }
+}
+
+Export-ModuleMember -Function New-SemanticIndexUpdate, Invoke-SemanticIndexUpdate, ConvertFrom-SemanticIndexResponse

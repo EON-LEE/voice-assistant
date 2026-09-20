@@ -50,11 +50,7 @@ $request = {
         if ($_.Exception.PSObject.Properties['Response'] -and $_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
         throw "Semantic index metadata request failed (HTTP $status). HTTP 412 means concurrent index change; no automatic retry. Inspect service permissions/availability; response and credentials suppressed."
     }
-    if ([int]$response.StatusCode -notin @(200, 201)) { throw 'Unexpected semantic index response; success is unverified.' }
-    try {
-        $text = if ($response.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($response.Content) } else { [string]$response.Content }
-        return ($text | ConvertFrom-Json)
-    } catch { throw 'Invalid index metadata response; content suppressed.' }
+    return ConvertFrom-SemanticIndexResponse -Method $Method -Response $response
 }.GetNewClosure()
 try {
     $result = Invoke-SemanticIndexUpdate -Request $request -IndexName $IndexName
