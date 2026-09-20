@@ -234,11 +234,11 @@ As of September 20, 2026:
 
 | Verification | Result |
 | --- | --- |
-| API Release build and automated tests | 42 passed; includes actual Azure SDK serialization and finite-input lifecycle regressions |
+| API Release build and automated tests | 71 passed; includes actual SDK serialization, finite-input lifecycle, semantic score and failure regressions |
 | Live-provider probe unit tests | 83 passed; service, bounded cleanup, transcript-reference and redaction checks |
 | Browser production build and unit tests | 37 passed, including audible-demo playback and stop/pause/error handling |
-| Chromium lifecycle and real local API transport | 20 passed on Windows, including one-click audible demo and 20 original-speech media restarts; 2 auth-module cases are explicitly Vite-only |
-| Infrastructure | 54 core, 77 readiness and 30 private-ingestion checks passed; actual ARM validation, what-if and deployment succeeded |
+| Chromium lifecycle and real local API transport | 21 passed on Windows; published Linux image: 19 passed, 2 auth-module cases explicitly Vite-only |
+| Infrastructure | Compiled and offline-tested, including semantic metadata migration; actual ARM deployment and ETag-guarded index readback succeeded |
 | Real Azure Speech and OpenAI | Final managed-identity Linux run submitted all 219 frames / 140160 PCM bytes; 6 partial events, 1 final transcript and 34 streamed reply deltas |
 | Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |
 | Browser sign-in | Entra account selection reached; Windows work account rejected by the separate subscription tenant; full owner-account sign-in not verified |
@@ -246,8 +246,8 @@ As of September 20, 2026:
 | Post-ingestion state | Job maintenance/create-index flags reset to false; web restored to Running; Storage public networking remains Disabled |
 | Native Linux runtime identity | The bounded Speech/OpenAI acceptance job succeeded using the web runtime's managed identity; this does not establish interactive browser authorization |
 | Reference-recognition acceptance | Original 8-word fixture recognized as 8 words with 0 word edits (WER 0), verified from retained numeric evidence and the execution's immutable image digest |
-| External-video live acceptance | NASA public-domain Apollo clip, 00:07-00:18.2, played through native browser audio and the production worklet/session components into the genuinely authenticated deployed Azure API; 2 real final transcripts and a context-relevant streamed reply, not predefined text |
-| Actual video/Teams tab capture and end-to-end latency | Not verified; original WAV service tests and mocked capture tests do not establish this |
+| External-video live acceptance | NASA public-domain Apollo clip, 00:07-00:18.2, shared with real `getDisplayMedia` tab audio and production worklet/session components into the genuinely authenticated deployed Azure API; 2 real final transcripts and a context-relevant streamed reply, with no unrelated sources |
+| Native tab capture versus manual interaction | Actual Chromium tab audio verified with automatic selection of only the isolated NASA test tab; manual sharing-picker clicks, YouTube-site specifics, interactive tenant login and meeting p50/p95 remain unverified |
 
 The local preview uses explicit Fake/Demo behavior. The deployed Azure services
 and real-provider probe do not. An earlier cloud reference run timed out. A
@@ -284,16 +284,25 @@ Azure recognized the narration about July 20, 1969 and humans making history on
 the Moon, then generated a reply about that event. Captions were reference
 material only and were never supplied as transcription or model output.
 The test used a genuine delegated operator token and a real one-use server
-ticket, with temporary operator consent removed afterward. Test-only adapters
-replaced interactive sign-in and the OS screen-sharing picker with native audio
-from the playing video. No server, transcription, retrieval or model response
-was mocked. This proves the real-media processing path, not the YouTube sharing
-picker or the user's interactive tenant login.
+ticket, with temporary operator consent removed afterward. An authentication
+adapter replaces only interactive sign-in. The final run invokes real
+`getDisplayMedia` in an isolated headed browser: Chromium automatically selects
+the named NASA test tab, and the returned stream has `displaySurface: browser`
+and one actual shared audio track. No media stream, server response,
+transcription, retrieval or model response is substituted. Manual picker clicks
+and the user's interactive tenant login are not covered.
 
-The test also exposed a retrieval limitation: the one fictional knowledge
-document was returned as a candidate for an unrelated video. Displayed search
-results are not proof that a source supports the answer. Relevance filtering and
-answer-to-source attribution need further evaluation with approved real sources.
+The first run exposed an unrelated knowledge candidate. Hybrid nearest-neighbor
+results are now semantically reranked and filtered before they enter the prompt
+or source list. Actual Azure scores in the bounded acceptance set were 2.983 for
+the fictional Lighthouse question, 0.904 for the Moon narration, and 1.351 for
+its date fragment. With the documented 2.0 threshold, the relevant document was
+retained and both unrelated candidates were rejected; an unlisted principal
+received zero candidates. Replaying the same video produced `no_matches`,
+`sources: []` and a genuine transcript-only model reply, not a fixed refusal.
+Ranker failure or missing scores never silently reuse unfiltered candidates.
+This threshold requires evaluation on approved real sources; a relevance score
+is not proof that every answer statement is supported by a returned document.
 
 ## References
 
