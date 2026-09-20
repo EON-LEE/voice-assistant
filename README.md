@@ -7,7 +7,9 @@ send Teams messages, or make commitments on the user's behalf.
 Deployed application: https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io
 
 The deployed API uses the real Azure provider; the UI deliberately starts in a
-labeled offline demo until **Live** is selected. Sign-in must use an account in
+labeled **Audio demo** until **Live** is selected. **Start demo** plays an original
+English recording and automatically displays a scripted transcript and reply,
+without sign-in or audio capture. It is not live AI. Sign-in must use an account in
 the subscription's configured Entra tenant. A Windows work account from another
 tenant is not automatically a member. Operator Azure PowerShell authentication
 and interactive browser authentication are separate checks; neither authorizes
@@ -234,8 +236,8 @@ As of September 20, 2026:
 | --- | --- |
 | API Release build and automated tests | 42 passed; includes actual Azure SDK serialization and finite-input lifecycle regressions |
 | Live-provider probe unit tests | 83 passed; service, bounded cleanup, transcript-reference and redaction checks |
-| Browser production build and unit tests | 31 passed |
-| Chromium lifecycle and real local API transport | 18 passed on Windows, including 20 original-speech media restarts; published Linux image: 16 passed, 2 explicitly Vite-only tests skipped |
+| Browser production build and unit tests | 37 passed, including audible-demo playback and stop/pause/error handling |
+| Chromium lifecycle and real local API transport | 20 passed on Windows, including one-click audible demo and 20 original-speech media restarts; 2 auth-module cases are explicitly Vite-only |
 | Infrastructure | 54 core, 77 readiness and 30 private-ingestion checks passed; actual ARM validation, what-if and deployment succeeded |
 | Real Azure Speech and OpenAI | Final managed-identity Linux run submitted all 219 frames / 140160 PCM bytes; 6 partial events, 1 final transcript and 34 streamed reply deltas |
 | Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |

@@ -113,16 +113,19 @@ test('offline demo never requests media, identity, or backend access', async ({ 
   await page.goto('/');
   await expect(page.getByTestId('mode')).toHaveValue('demo');
   await page.getByTestId('start').click();
-  await expect(page.getByTestId('suggest')).toBeEnabled();
-  const original = await page.getByTestId('reply').textContent();
-  await page.getByTestId('suggest').click();
-  await expect(page.getByTestId('reply')).not.toHaveText(original ?? '');
+  await expect.poll(() => page.locator('#demo-audio').evaluate(audio =>
+    audio.currentTime > 0 && !audio.paused && !audio.muted && audio.volume > 0
+  )).toBe(true);
+  await expect(page.getByTestId('transcript')).toContainText('Project Lumen', { timeout: 10_000 });
+  await expect(page.locator('#reply-status')).toHaveText('Complete', { timeout: 10_000 });
+  await expect(page.getByTestId('reply')).toContainText("before Friday's update");
   await expect(page.getByTestId('pin')).toBeEnabled();
   await page.getByTestId('pin').click();
   const pinned = await page.getByTestId('pinned-reply').textContent();
   await page.getByTestId('suggest').click();
   await expect(page.getByTestId('pinned-reply')).toHaveText(pinned ?? '');
   await page.getByTestId('stop').click();
+  await expect(page.locator('#demo-audio')).not.toHaveAttribute('src', /.+/);
   expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
   expect(await page.evaluate(() => window.__microphoneCalls)).toBe(0);
   expect(traffic).toEqual({ frames: 0, config: 0, tickets: 0, sockets: 0 });
@@ -139,6 +142,38 @@ test('denied audio sharing is visible and never falls back to microphone', async
   await expect(page.locator('#consent')).not.toBeChecked();
   await page.locator('#consent').check();
   await expect(page.getByTestId('start')).toBeEnabled();
+});
+
+test('stopping the audible demo prevents late replies and allows a clean replay', async ({ page }) => {
+  await mockCapture(page);
+  const traffic = await mockBackend(page);
+  await page.goto('/');
+  await page.getByTestId('start').click();
+  await expect.poll(() => page.locator('#demo-audio').evaluate(audio => audio.currentTime > 0)).toBe(true);
+  await page.getByTestId('pause').check();
+  await expect.poll(() => page.locator('#demo-audio').evaluate(audio => audio.paused)).toBe(true);
+  await page.getByTestId('pause').uncheck();
+  await expect.poll(() => page.locator('#demo-audio').evaluate(audio => !audio.paused)).toBe(true);
+  await page.getByTestId('stop').click();
+  await expect(page.getByTestId('status')).toContainText('Stopped');
+  await expect(page.locator('#demo-audio')).not.toHaveAttribute('src', /.+/);
+  await expect(page.locator('#reply-status')).not.toHaveText('Complete');
+  await page.getByTestId('start').click();
+  await expect(page.locator('#reply-status')).toHaveText('Complete', { timeout: 10_000 });
+  await page.getByTestId('stop').click();
+  expect(traffic).toEqual({ frames: 0, config: 0, tickets: 0, sockets: 0 });
+  expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
+});
+
+test('blocked demo playback reports an error without faking a completed answer', async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = async () => { throw new DOMException('Blocked', 'NotAllowedError'); };
+  });
+  await page.goto('/');
+  await page.getByTestId('start').click();
+  await expect(page.getByTestId('error')).toContainText('Demo audio could not play');
+  await expect(page.getByTestId('start')).toBeEnabled();
+  await expect(page.locator('#reply-status')).not.toHaveText('Complete');
 });
 
 test('live mode does not capture before explicit consent and start', async ({ page }) => {

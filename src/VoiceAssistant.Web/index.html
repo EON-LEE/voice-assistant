@@ -13,8 +13,12 @@
       <section aria-labelledby="session-title" class="card controls">
         <div class="section-heading"><h2 id="session-title">Your session</h2><span id="status" role="status">Stopped · no capture</span></div>
         <label for="mode">Connection mode</label>
-        <select id="mode"><option value="demo">Offline demo · no permissions</option><option value="live">Live · share meeting audio</option><option value="synthetic">Local fake backend · synthetic audio</option></select>
-        <p id="mode-help">Explore the interface with sample text. No microphone, screen sharing, sign-in, or network connection.</p>
+        <select id="mode"><option value="demo">Audio demo · no sign-in needed</option><option value="live">Live · share meeting audio</option><option value="synthetic">Local fake backend · developer test only</option></select>
+        <p id="mode-help">Play an English example and watch a scripted reply without signing in or sharing your audio.</p>
+        <div id="demo-options">
+          <p class="notice"><strong>Try it in one click.</strong> Start demo plays a short English recording, then automatically shows its sample transcript and reply. Turn on your speakers. This is a scripted preview, not live speech recognition or AI.</p>
+          <audio id="demo-audio" preload="none" aria-label="Prerecorded demo input"></audio>
+        </div>
         <div id="live-options" hidden>
           <p class="notice"><strong>Recommended: Teams in a browser tab.</strong> Choose that tab in the browser's Share prompt and enable <strong>Share tab audio</strong>. Sharing a window may provide no audio. System audio depends on your browser and OS; Teams desktop audio is not guaranteed.</p>
           <p>The browser requires video sharing to offer audio. Video stays in the browser: it is never displayed, uploaded, recorded, or retained by this app. System audio can include other apps. No microphone is requested.</p>

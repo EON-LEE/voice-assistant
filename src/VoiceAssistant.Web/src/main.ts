@@ -1,6 +1,8 @@
 import "./style.css";
 import workletUrl from "./audio.worklet.ts?worker&url";
+import demoAudioUrl from "./assets/demo-original.wav?url";
 import { BrowserAuth } from "./auth.js";
+import { DemoAudioSource } from "./demo.js";
 import { DisplayAudioSource, SyntheticSource } from "./capture.js";
 import { MeetingSession } from "./session.js";
 import { ReplyState, type Reply } from "./state.js";
@@ -29,7 +31,7 @@ let configGeneration = 0;
 for (const id of ["mode", "start", "stop", "suggest", "pause", "pin", "transcript", "reply", "status", "error", "consent", "signin"])
   element(id).dataset.testid = id;
 element("pinned").dataset.testid = "pinned-reply";
-if (!isLoopback(location.hostname)) mode.querySelector<HTMLOptionElement>('option[value="synthetic"]')!.disabled = true;
+if (!isLoopback(location.hostname)) mode.querySelector<HTMLOptionElement>('option[value="synthetic"]')!.remove();
 
 function error(message: string): void {
   element("error").textContent = message;
@@ -87,9 +89,10 @@ async function configureMode(): Promise<void> {
   error("");
   configReady = false;
   element("live-options").hidden = mode.value !== "live";
+  element("demo-options").hidden = mode.value !== "demo";
   start.textContent = mode.value === "demo" ? "Start demo" : mode.value === "synthetic" ? "Start synthetic test" : "Share meeting audio";
   element("mode-help").textContent = mode.value === "demo"
-    ? "OFFLINE DEMO — sample text only. No microphone, screen sharing, sign-in, or network connection."
+    ? "AUDIO DEMO — hear a prerecorded English sample, then see its scripted transcript and reply. No sign-in, capture, or Azure AI calls."
     : mode.value === "synthetic" ? "LOCAL FAKE SERVICE — synthetic silence through a real WebSocket. No media permission or cloud calls."
     : "LIVE — explicitly share a tab or screen with audio. No audio sharing starts until you click Share.";
   render();
@@ -125,12 +128,21 @@ start.addEventListener("click", () => {
       context: () => new AudioContext(),
       node: context => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
       workletUrl,
-    }) : new SyntheticSource();
+    }) : selectedMode === "demo"
+      ? new DemoAudioSource(element<HTMLAudioElement>("demo-audio"), demoAudioUrl)
+      : new SyntheticSource();
   const transport = selectedMode === "demo" ? new DemoTransport() : new SocketTransport(() => auth.endpoint(selectedMode === "synthetic"));
   session = new MeetingSession(source, transport,
-    e => { state.apply(e); if (state.error) error(state.error); render(); },
+    e => {
+      state.apply(e); if (state.error) error(state.error); render();
+      if (selectedMode === "demo" && e.type === "transcript.final" && canSuggest()) {
+        state.request(); session?.request(); render();
+      }
+    },
     status => {
-      element("status").textContent = (selectedMode === "demo" ? "DEMO · " : fake && selectedMode !== "demo" ? "LOCAL FAKE · " : "") + status;
+      element("status").textContent = selectedMode === "demo" && status.startsWith("Connected")
+        ? "DEMO · sample playback and scripted responses (not live AI)"
+        : (selectedMode === "demo" ? "DEMO · " : fake && selectedMode !== "demo" ? "LOCAL FAKE · " : "") + status;
       if (status.startsWith("Stopped")) { session = null; pause.checked = false; consent.checked = false; state.pause(true); }
       render();
     }, e => error(e.message));

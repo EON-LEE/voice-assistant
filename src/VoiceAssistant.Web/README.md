@@ -19,7 +19,14 @@ Vite serves `http://127.0.0.1:5173` and proxies `/api` (including WebSockets) to
 
 For isolated local integration runs set `VOICE_ASSISTANT_DEV_API=http://localhost:5084` before starting Vite; the default stays unchanged. `/health` is proxied to the same target for local E2E readiness checks. This is development-server configuration only, not production routing.
 
-The page starts stopped in clearly labelled **Offline demo**. Start demo uses canned streaming replies and synthetic PCM in memory: no authentication, backend call, screen picker, or audio device is used. Select **Live** explicitly to use the server. No failed live connection ever switches to Demo.
+The page starts stopped in clearly labelled **Audio demo**. One click on **Start demo** plays the bundled original English recording through the browser, then automatically displays its scripted transcript and streaming example reply. No sign-in, microphone, screen picker or backend AI call is used. Stop/pause control the recording too. Playback failure is explicit, never a pretend successful demo. Select **Live** explicitly to use Azure; no failed live connection ever switches to Demo.
+
+The sample says "Project Lumen needs a brief update by Friday." It is the original
+synthetic recording documented in `tests/VoiceAssistant.Web.E2E/fixtures`, bundled
+at `src/assets/demo-original.wav`. The demo transcript is predefined, not actual
+speech recognition; only the sample input is played, never the suggested answer.
+Static app/audio files are fetched normally, but no credentials or recorded
+audio are sent to a backend.
 
 ## Browser capture constraints and consent
 
@@ -64,7 +71,7 @@ Missing/malformed config, failed authorization, HTTP production, expired sign-in
 
 The API must run explicitly in `Development` with `Provider__Mode=Fake` and loopback binding/Origin/Host. Suggested backend address: `http://localhost:5080`. Its client config returns `mode: "Fake"` and the same `webSocketPath`; Entra fields are not required in Fake.
 
-Select **Local fake backend · synthetic audio** and Start synthetic test. This mode is restricted to exact loopback browser hostnames and rejects Azure config. It sends a 400ms synthetic 440Hz PCM burst followed by silence, never played through speakers, to trigger the fake backend transcript; click Suggest for its deterministic answer. This is distinct from the fully offline demo. Live sharing against local Fake is also possible explicitly, but is labelled **LOCAL FAKE** and requires capture consent.
+Select **Local fake backend · developer test only** and Start synthetic test. This developer-only option is shown only on exact loopback browser hostnames and rejects Azure config. It sends a 400ms synthetic 440Hz PCM burst followed by silence, never played through speakers, to trigger the fake backend transcript; click Suggest for its deterministic answer. On the deployed Azure site, use **Audio demo** instead to hear the recording without signing in. Live sharing against local Fake is also possible explicitly, but is labelled **LOCAL FAKE** and requires capture consent.
 
 ## Protocol and UI behavior
 

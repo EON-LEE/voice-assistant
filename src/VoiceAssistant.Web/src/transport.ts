@@ -1,4 +1,5 @@
 import { parseEvent, type ServerEvent } from "./protocol.js";
+import { demoReply, demoTranscript } from "./demo.js";
 
 export interface Transport {
   connect(onEvent: (event: ServerEvent) => void, onError: (error: Error) => void, signal: AbortSignal): Promise<void>;
@@ -79,7 +80,7 @@ export class DemoTransport implements Transport {
       this.cancel();
       const responseId = `demo-${++this.response}`;
       this.onEvent({ type: "response.started", turnId: "demo-turn", responseId });
-      const chunks = ["Yes, I can ", "share a short update ", "by Friday."];
+      const chunks = demoReply;
       let i = 0;
       this.timer = setInterval(() => {
         if (i < chunks.length) this.onEvent({ type: "response.delta", turnId: "demo-turn", responseId, text: chunks[i++]! });
@@ -90,8 +91,8 @@ export class DemoTransport implements Transport {
   audio(_buffer: ArrayBuffer): void {
     if (this.ready && !this.transcript) {
       this.transcript = true;
-      this.onEvent({ type: "transcript.partial", turnId: "demo-turn", revision: 1, text: "Can you share" });
-      this.onEvent({ type: "transcript.final", turnId: "demo-turn", revision: 2, text: "Can you share an update by Friday?" });
+      this.onEvent({ type: "transcript.partial", turnId: "demo-turn", revision: 1, text: "Project Lumen needs" });
+      this.onEvent({ type: "transcript.final", turnId: "demo-turn", revision: 2, text: demoTranscript });
     }
   }
   private cancel(): void { clearInterval(this.timer); this.timer = undefined; }
