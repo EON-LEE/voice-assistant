@@ -49,6 +49,8 @@ Environment variables (`__` maps to `:`):
 | `Azure__ChatMaxOutputTokens` | Optional completion token budget64..4096, default2048 (reasoning models share it with reasoning tokens); temperature is omitted for compatibility |
 | `Azure__SearchEndpoint` | Optional HTTPS Search endpoint |
 | `Azure__SearchIndex` | Required with Search endpoint |
+| `Azure__SearchSemanticConfiguration` | Semantic configuration name, default `meeting-semantic` (title + content) |
+| `Azure__SearchMinimumRerankerScore` | Finite semantic reranker cutoff0..4, invariant decimal; default2.0 |
 | `Azure__EmbeddingDeployment` | Required with Search; `text-embedding-3-small`, 1536 dimensions |
 | `ASPNETCORE_HTTP_PORTS` | `8080` in container |
 
@@ -61,6 +63,16 @@ Assign the runtime identity **Cognitive Services Speech User**, **Cognitive Serv
 Entra API registration must issue v2 tokens and expose delegated `Meeting.Access`; SPA registration uses code+PKCE and redirect URI equal to the browser origin. JWT issuer, signing key, expiry, API audience, delegated scope and GUID `oid` are validated before issuing tickets. TLS terminates at trusted Azure ingress. Origin validation uses the configured allowlist, not forwarded-host headers. **Keep one replica/process** until ticket storage is distributed or reliable ticket-to-WebSocket affinity is implemented.
 
 `GET /health/live` indicates the process is running. `GET /health/ready` indicates validated configuration and a running HTTP pipeline, not external Azure dependency availability; neither endpoint performs billable calls or exposes credentials. Operational monitoring must separately check resource/RBAC availability.
+
+## Semantic relevance and no-match responses
+
+Nearest neighbors/RRF ranking always produce candidates when the index has documents; a candidate alone is **not** relevant grounding. Search now requests Azure-native semantic reranking over the ACL-prefiltered hybrid query: vector `k=50`, response candidate pool50, `queryType=semantic`, named semantic configuration, and `semanticErrorHandling=fail`. The index must enable semantic configuration `meeting-semantic` with `title` and `content` prioritized, and the Search service must have semantic ranking enabled. See [semantic ranking](https://learn.microsoft.com/azure/search/semantic-search-overview) and [query setup](https://learn.microsoft.com/azure/search/semantic-how-to-query-request).
+
+Every returned candidate must have a finite `@search.rerankerScore` in0..4; the API never substitutes BM25/RRF/vector scores. Only candidates at or above `Azure__SearchMinimumRerankerScore` enter model evidence, capped at5 sources/chunks. Missing/invalid scores, partial semantic response metadata, HTTP206, incomplete paginated candidate sets, disabled/misconfigured semantic ranking and service errors all fail explicitly as `grounding_unavailable`, not a retrieval fallback. Documents below the threshold are neither supplied to the model nor emitted as sources.
+
+Default2.0 means **somewhat relevant** per Azure's scale, not a universal truth/quality guarantee. Calibrate with representative authorized queries and document content; ranking model changes can move score distributions. Compare a positive original query such as `What is the fictional Project Lighthouse plan?` with unrelated NASA/video transcripts using actual Azure reranker scores. Unit tests inject numeric scores to verify policy and wire behavior; they do not claim Azure has assigned those values to real queries. No query rewrite, secondary classifier or prefetch is added.
+
+When semantic retrieval succeeds but no candidate passes the gate (including an empty authorized result set), `grounding:no_matches`, `sources:[]` is returned with a **real streamed model reply based only on the meeting transcript**. Instructions prohibit company-knowledge claims, invented details and document citations; general conversational phrasing or clarification is allowed. This intentionally replaces the earlier protocol description's fixed no-match clarification. UI should label it as transcript-only/not document-grounded. Missing Search configuration remains `disabled`; actual Search failure remains a visible error and deterministic unavailable completion without a model call. These are distinct states and no-match model failures must not be reported as successful fallback output.
 
 ## Container
 
@@ -101,7 +113,7 @@ The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:
 | `voiceassistant.stt_final_to_completed` | Final STT callback to successfully sent model response completion |
 | `voiceassistant.retrieval_duration` | Retrieval call elapsed time, including disabled/no-match/error/cancellation paths |
 
-These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record only `disabled`/`grounded` model paths; `no_matches` deterministic clarification and grounding-unavailable deterministic refusal are excluded. Retrieval metrics still record these outcomes.
+These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record `disabled`/`grounded`/`no_matches` model paths; `no_matches` now invokes the model using transcript-only context rather than returning a fixed clarification. Grounding-unavailable deterministic refusal remains excluded. Retrieval metrics still record all outcomes.
 
 Tags are bounded `provider=Azure|Fake|TestDouble`; response `trigger=automatic|manual`; retrieval `outcome=grounded|disabled|no_matches|unavailable|unknown|failed|cancelled`. No content, IDs, URLs or arbitrary error messages are metric tags. No exporter, persistence, or new WebSocket event is enabled; an approved operational `MeterListener`/OpenTelemetry configuration may subscribe. Never mix Fake/TestDouble observations with Azure measurements.
 

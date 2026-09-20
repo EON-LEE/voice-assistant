@@ -249,10 +249,10 @@ public sealed class ApiTests
     }
 
     [Theory]
-    [InlineData("no_matches", 0)]
+    [InlineData("no_matches", 2)]
     [InlineData("disabled", 2)]
     [InlineData("grounded", 2)]
-    public async Task ResponseMetricsExcludeDeterministicNoMatches(string grounding, int expectedMeasurements)
+    public async Task ResponseMetricsIncludeTranscriptOnlyNoMatchesModel(string grounding, int expectedMeasurements)
     {
         var measurements = new System.Collections.Concurrent.ConcurrentBag<string>();
         using var listener = new MeterListener

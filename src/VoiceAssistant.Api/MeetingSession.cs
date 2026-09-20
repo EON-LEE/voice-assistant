@@ -310,7 +310,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         try
         {
             var grounding = await MeetingMetrics.MeasureRetrievalAsync(provider, history[^1].Text, objectId, cancellation);
-            var modelResponse = grounding.Status is "disabled" or "grounded";
+            var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches";
             var text = new StringBuilder();
             await foreach (var delta in provider.AnswerAsync(history, grounding, cancellation).WithCancellation(cancellation))
             {

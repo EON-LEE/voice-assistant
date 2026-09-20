@@ -9,6 +9,18 @@
     { "name": "allowedPrincipalIds", "type": "Collection(Edm.String)", "filterable": true, "retrievable": false },
     { "name": "contentVector", "type": "Collection(Edm.Single)", "searchable": true, "retrievable": false, "dimensions": 1536, "vectorSearchProfile": "meeting-vector-profile" }
   ],
+  "semantic": {
+    "defaultConfiguration": "meeting-semantic",
+    "configurations": [
+      {
+        "name": "meeting-semantic",
+        "prioritizedFields": {
+          "titleField": { "fieldName": "title" },
+          "prioritizedContentFields": [{ "fieldName": "content" }]
+        }
+      }
+    ]
+  },
   "vectorSearch": {
     "algorithms": [
       { "name": "meeting-hnsw", "kind": "hnsw", "hnswParameters": { "metric": "cosine" } }

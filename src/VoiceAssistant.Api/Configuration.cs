@@ -16,6 +16,8 @@ public sealed class ServiceSettings
     public string EmbeddingDeployment { get; init; } = "";
     public string SearchEndpoint { get; init; } = "";
     public string SearchIndex { get; init; } = "";
+    public string SearchSemanticConfiguration { get; init; } = "meeting-semantic";
+    public double SearchMinimumRerankerScore { get; init; } = 2.0;
     public string[] AllowedOrigins { get; init; } = [];
     public bool Fake => Mode == "Fake";
     public bool SearchEnabled => !string.IsNullOrEmpty(SearchEndpoint);
@@ -39,6 +41,8 @@ public sealed class ServiceSettings
             EmbeddingDeployment = Get("Azure:EmbeddingDeployment"),
             SearchEndpoint = Get("Azure:SearchEndpoint"),
             SearchIndex = Get("Azure:SearchIndex"),
+            SearchSemanticConfiguration = config["Azure:SearchSemanticConfiguration"] ?? "meeting-semantic",
+            SearchMinimumRerankerScore = ReadMinimumRerankerScore(config),
             AllowedOrigins = config.GetSection("Security:AllowedOrigins").Get<string[]>() ?? []
         };
         if (settings.Mode is not ("Azure" or "Fake") || (settings.Fake && !environment.IsDevelopment()))
@@ -50,6 +54,7 @@ public sealed class ServiceSettings
                 settings.AllowedOrigins.Length == 0 || settings.AllowedOrigins.Any(origin => !OriginPolicy.IsCanonicalHttpsOrigin(origin)))
                 throw new InvalidOperationException("Azure mode requires valid Authentication, Speech, OpenAI and Security:AllowedOrigins configuration.");
             settings.ValidateAzureProvider();
+            settings.ValidateSearchRelevance();
             if ((settings.SearchEnabled || settings.SearchIndex.Length > 0) &&
                 (!Https(settings.SearchEndpoint) || settings.SearchIndex.Length == 0 || settings.EmbeddingDeployment.Length == 0))
                 throw new InvalidOperationException("Search requires endpoint, index and embedding deployment together.");
@@ -74,6 +79,22 @@ public sealed class ServiceSettings
         if (value is null) return 2048;
         if (int.TryParse(value, out var limit) && limit is >= 64 and <= 4096) return limit;
         throw new InvalidOperationException("Azure:ChatMaxOutputTokens must be an integer from 64 to 4096.");
+    }
+
+    public void ValidateSearchRelevance()
+    {
+        if (string.IsNullOrWhiteSpace(SearchSemanticConfiguration) ||
+            !double.IsFinite(SearchMinimumRerankerScore) || SearchMinimumRerankerScore is < 0 or > 4)
+            throw new InvalidOperationException("Search requires a semantic configuration and a finite minimum reranker score from 0 to 4.");
+    }
+
+    public static double ReadMinimumRerankerScore(IConfiguration config)
+    {
+        var value = config["Azure:SearchMinimumRerankerScore"];
+        if (value is null) return 2.0;
+        if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture,
+            out var score) && double.IsFinite(score) && score is >= 0 and <= 4) return score;
+        throw new InvalidOperationException("Azure:SearchMinimumRerankerScore must be a finite number from 0 to 4.");
     }
 
     private static bool Https(string value) =>
