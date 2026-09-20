@@ -45,8 +45,9 @@ function sourceList(id: string, reply: Reply | null): void {
   list.replaceChildren();
   if (reply?.complete) {
     const line = document.createElement("li");
-    const grounding = { grounded: "References available", disabled: "Reference search disabled",
-      unavailable: "Reference search unavailable", no_matches: "No matching references found" };
+    const grounding = { grounded: "Relevant reference candidates - verify support before relying on them",
+      disabled: "Reference search disabled - reply uses the transcript only",
+      unavailable: "Reference search unavailable", no_matches: "No relevant references - reply uses the transcript only" };
     line.textContent = reply.grounding ? grounding[reply.grounding] : "Reference status not supplied";
     list.append(line);
   }

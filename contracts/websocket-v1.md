@@ -48,13 +48,13 @@ Server events:
 | `response.cancelled` | `responseId`, `turnId` |
 | `error` | `code: string`, `message: string` (safe user-facing detail), `retryable: boolean` |
 
-`updatedAt` is an ISO timestamp or null if source metadata does not provide it. `grounding` is `disabled`, `grounded`, `no_matches`, or `unavailable`. Sources are retrieved evidence, not a guarantee that every generated statement is supported. Render as text, validate http(s) URLs, and show grounding status. Search failure emits `error` with `grounding_unavailable` followed by a deterministic refusal-like completion (`unavailable`, empty sources); the language model is **not** called. No authorized results produce a clarification rather than invented facts.
+`updatedAt` is an ISO timestamp or null if source metadata does not provide it. `grounding` is `disabled`, `grounded`, `no_matches`, or `unavailable`. Sources are relevance-filtered reference candidates, not verified citations or a guarantee that every generated statement is supported. Render as text, validate http(s) URLs, and show grounding status. Search failure emits `error` with `grounding_unavailable` followed by a deterministic refusal-like completion (`unavailable`, empty sources); the language model is **not** called. When a successful search yields no authorized relevant results, the real model can provide general conversational phrasing from the transcript alone (`no_matches`, empty sources), but must not invent company-specific knowledge or claim to have consulted supporting documents.
 
 Fake: >=640 nonzero audio bytes emit deterministic partial+final once per utterance. Further nonzero audio is ignored until >=16000 consecutive zero bytes (500 ms silence). All-zero audio never fabricates speech. Transcript: `Could you briefly explain the next steps?` Answer: `Let's confirm the goal, agree on the next action, and assign an owner.` Response uses three timed deltas. Fake is synthetic test behavior, not recognition.
 
 ## Grounding
 
-`search-index.json` is the minimum index schema. Optional additional fields are allowed. Populate `contentVector` with the same deployment/model as query embeddings: `text-embedding-3-small`, 1536 dimensions. The API performs hybrid text + vector retrieval (5 neighbors/results), prefiltered by:
+`search-index.json` is the minimum index schema, including the `meeting-semantic` title/content configuration. Optional additional fields are allowed. Populate `contentVector` with the same deployment/model as query embeddings: `text-embedding-3-small`, 1536 dimensions. The API performs hybrid text + vector retrieval over up to 50 candidates, semantically reranks them, and passes at most 5 accepted results to the model. The configurable minimum reranker score defaults to 2.0 on the service's 0-4 scale; it needs corpus-specific evaluation and is not a correctness guarantee. Missing/invalid scores, partial semantic results, or ranker failures produce `grounding_unavailable`, never an unfiltered fallback. Candidates remain prefiltered by:
 
 ```text
 allowedPrincipalIds/any(p: p eq '<validated-oid-GUID>')

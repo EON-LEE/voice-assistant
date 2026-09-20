@@ -271,6 +271,33 @@ test('mobile-width layout does not require horizontal scrolling', async ({ page 
   await expect(page.getByTestId('start')).toBeVisible();
 });
 
+test('no relevant references is distinct from a grounded or failed search', async ({ page }) => {
+  await mockCapture(page);
+  await mockBackend(page);
+  await page.routeWebSocket('**/api/meeting*', socket => {
+    socket.onMessage(message => {
+      if (typeof message !== 'string') return;
+      const command = JSON.parse(message);
+      if (command.type === 'session.start') {
+        socket.send(JSON.stringify({ type: 'session.ready' }));
+        socket.send(JSON.stringify({ type: 'transcript.final', turnId: 'moon', revision: 1, text: 'Humans made history on the moon.' }));
+        socket.send(JSON.stringify({ type: 'response.started', responseId: 'moon-reply', turnId: 'moon' }));
+        socket.send(JSON.stringify({
+          type: 'response.completed', responseId: 'moon-reply', turnId: 'moon',
+          text: 'That was an important moment.', sources: [], grounding: 'no_matches'
+        }));
+      }
+    });
+  });
+  await prepareLive(page);
+  await page.getByTestId('start').click();
+  await expect(page.locator('#sources')).toContainText('No relevant references');
+  await expect(page.locator('#sources')).toContainText('transcript only');
+  await expect(page.locator('#sources li')).toHaveCount(1);
+  await expect(page.getByTestId('error')).toBeHidden();
+  await page.getByTestId('stop').click();
+});
+
 test('explicit synthetic mode connects to the actual local API', async ({ page }) => {
   test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires the explicit local Fake API.');
   await mockCapture(page);
