@@ -97,6 +97,14 @@ The multi-stage build runs frontend `npm ci` + `npm run build`, publishes the AP
 
 ## Data handling and limits
 
+Captured meeting speech is other participants' input, not a verified profile
+of the app user. The response policy must not invent the user's employer,
+project, personal history, availability, or commitments, including when a
+moderator asks for introductions. With missing personal details it should ask
+for clarification or offer a neutral response, not assign another speaker's
+experience to the user. Prompt-contract tests alone are not proof of model
+compliance; actual conversation acceptance runs also inspect this behavior.
+
 Audio exists only in bounded transient buffers and the live Speech SDK push stream; transcript/answer context is memory-only and cleared when the session ends. No application transcript/audio/query/body/credential logging or persistence is configured. Azure services still process submitted content under their service data policies: configure retention, network access and diagnostics to organizational requirements. Disable full request URL/query capture in Azure ingress, access logs, telemetry and reverse proxies because the upgrade URL carries a short-lived ticket.
 
 Errors are explicit safe messages; raw SDK exception details are suppressed. Startup, idle, response, write and session deadlines bound resource usage; 100 total sessions and one per identity, bounded queues, message/audio rates and bounded history prevent unbounded accumulation. A slow peer or overloaded recognizer is disconnected rather than silently dropping transcript/audio. New turns and manual cancellation invalidate stale generation before sending subsequent output.

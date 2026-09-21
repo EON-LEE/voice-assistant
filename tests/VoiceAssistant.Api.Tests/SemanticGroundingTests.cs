@@ -111,6 +111,24 @@ public sealed class SemanticGroundingTests
     }
 
     [Fact]
+    public async Task IntroductionDoesNotTreatAnInterviewQuestionAsVerifiedPersonalExperience()
+    {
+        using var handler = new FixtureTransport("""{"value":[]}""");
+        using var http = new HttpClient(handler);
+        const string question = "Introduce yourself and the project you work on. How did you first encounter JMAP?";
+        await foreach (var _ in Provider(http).AnswerAsync([new(question)], new("no_matches", []), CancellationToken.None)) { }
+        using var body = JsonDocument.Parse(handler.ChatBody!);
+        var messages = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        var policy = messages[0].GetProperty("content").GetString()!;
+        Assert.Contains("other participants' speech, not a verified profile", policy);
+        Assert.Contains("Never invent the user's name, employer, role, current project, experience", policy);
+        Assert.Contains("another speaker's first-person statements", policy);
+        Assert.Contains("With missing personal details, ask a brief", policy);
+        Assert.Contains(question, messages.Select(message => message.GetProperty("content").GetString()));
+        Assert.Equal(1, handler.ChatCalls);
+    }
+
+    [Fact]
     public async Task CapsAcceptedSourcesAtFiveButRejectsMissingScoresEvenBeyondCap()
     {
         using var handler = new FixtureTransport(SearchResponse(3, count: 8));

@@ -1,3 +1,5 @@
+import { audioBufferCount, audioFrameBytes } from "./audio-limits.js";
+
 export interface AudioSource {
   prepare(signal: AbortSignal): Promise<void>;
   start(onAudio: (buffer: ArrayBuffer) => void, onError: (error: Error) => void): void;
@@ -47,8 +49,8 @@ export class DisplayAudioSource implements AudioSource {
       if (this.stopped) throw new Error("Sharing stopped during setup.");
       this.node = this.deps.node(this.context);
       this.node.onprocessorerror = () => { void this.stop(); this.onError(new Error("Audio processing failed. Start a new session.")); };
-      for (let i = 0; i < 8; i++) {
-        const buffer = new ArrayBuffer(640);
+      for (let i = 0; i < audioBufferCount; i++) {
+        const buffer = new ArrayBuffer(audioFrameBytes);
         this.node.port.postMessage({ type: "buffer", buffer }, [buffer]);
       }
       this.input = this.context.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));

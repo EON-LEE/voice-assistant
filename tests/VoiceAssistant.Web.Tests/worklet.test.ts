@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PcmConverter } from "../../src/VoiceAssistant.Web/src/pcm.js";
+import { audioBufferCount, audioFrameBytes } from "../../src/VoiceAssistant.Web/src/audio-limits.js";
 
 interface Frame { type: string; buffer?: ArrayBuffer; epoch?: number; message?: string }
 class Port {
@@ -17,7 +18,7 @@ Reflect.set(globalThis, "AudioWorkletProcessor", class { readonly port = new Por
 Reflect.set(globalThis, "registerProcessor", (_name: string, processor: new () => Processor) => { ProcessorClass = processor; });
 await import("../../src/VoiceAssistant.Web/src/audio.worklet.js");
 
-function processor(credits = 8): Processor {
+function processor(credits = audioBufferCount): Processor {
   const instance = new ProcessorClass();
   for (let i = 0; i < credits; i++) instance.port.onmessage!({ data: { type: "buffer", buffer: new ArrayBuffer(640) } });
   instance.port.onmessage!({ data: { type: "pause", paused: false, epoch: 1 } });
@@ -30,9 +31,30 @@ function render(instance: Processor, blocks: number, channels = 1, value = .5): 
 test("Worklet exhausts bounded credits once then fails explicitly without further messages", () => {
   const instance = processor();
   render(instance, 2000);
-  assert.equal(instance.port.sent.filter(m => m.type === "audio").length, 8);
+  assert.equal(instance.port.sent.filter(m => m.type === "audio").length, audioBufferCount);
   assert.equal(instance.port.sent.filter(m => m.type === "error").length, 1);
   assert.match(instance.port.sent.at(-1)!.message!, /cannot keep up/);
+});
+test("A 300 ms main-thread stall retains every PCM frame and resumes without loss", () => {
+  const instance = processor();
+  render(instance, 113); // 301.3 ms at 48 kHz: longer than the old eight-frame/160 ms pool.
+  const initial = instance.port.sent.filter(m => m.type === "audio");
+  assert.ok(initial.length >= 14 && initial.length <= 16);
+  assert.equal(instance.port.sent.filter(m => m.type === "error").length, 0);
+  for (const message of initial) {
+    assert.equal(message.buffer!.byteLength, audioFrameBytes);
+    instance.port.onmessage!({ data: { type: "buffer", buffer: message.buffer } });
+  }
+  const before = initial.length;
+  render(instance, 113);
+  assert.ok(instance.port.sent.filter(m => m.type === "audio").length >= before + 14);
+  assert.equal(instance.port.sent.filter(m => m.type === "error").length, 0);
+});
+test("Excess credits never grow the native pool beyond one second", () => {
+  const instance = processor(audioBufferCount + 10);
+  render(instance, 2000);
+  assert.equal(instance.port.sent.filter(m => m.type === "audio").length, audioBufferCount);
+  assert.equal(instance.port.sent.filter(m => m.type === "error").length, 1);
 });
 for (const channels of [1, 2, 6, 32]) {
   test(`Native worklet algorithm emits PCM16LE with ${channels} input channels`, () => {

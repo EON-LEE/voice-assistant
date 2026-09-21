@@ -241,6 +241,23 @@ test('ending screen sharing cleans up the session and remaining audio track', as
   await expect(page.getByTestId('start')).toBeEnabled();
 });
 
+test('real audio worklet survives a short main-thread stall without discarding the session', async ({ page }) => {
+  await mockCapture(page);
+  const traffic = await mockBackend(page);
+  await prepareLive(page);
+  await page.getByTestId('start').click();
+  await expect(page.getByTestId('transcript')).toContainText('Friday');
+  const before = traffic.frames;
+  await page.evaluate(() => {
+    const until = performance.now() + 350;
+    while (performance.now() < until) { /* Intentionally simulate a busy meeting UI thread. */ }
+  });
+  await expect.poll(() => traffic.frames).toBeGreaterThan(before + 12);
+  await expect(page.getByTestId('stop')).toBeEnabled();
+  await expect(page.getByTestId('error')).toBeHidden();
+  await page.getByTestId('stop').click();
+});
+
 test('backend disconnect stops capture and never claims a successful reply', async ({ page }) => {
   await mockCapture(page);
   await mockBackend(page);
