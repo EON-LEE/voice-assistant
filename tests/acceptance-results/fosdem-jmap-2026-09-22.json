@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "recordedOn": "2026-09-22",
+  "sourceRevision": "9ffb919",
+  "deployedImageDigest": "sha256:4ad0ece0f58f6ac8164c1d2d13550e87fb98c1bba10c353b1427236b9fb7933e",
+  "source": {
+    "title": "Panel discussion: 5 years of JMAP - experiences and outlook",
+    "event": "FOSDEM 2025",
+    "url": "https://fosdem.org/2025/schedule/event/fosdem-2025-6822-panel-discussion-5-years-of-jmap-experiences-and-outlook/",
+    "recording": "https://video.fosdem.org/2025/k4601/fosdem-2025-6822-panel-discussion-5-years-of-jmap-experiences-and-outlook.av1.webm",
+    "recordingSha256": "3ddcf8418e7f1672068a01ce2f5e7c6fa455dbd96ca59e8041056abc1aeabb97",
+    "attribution": [
+      "FOSDEM",
+      "TELLIER Benoit",
+      "Hans-Jorg Happel",
+      "Ben Bucksch",
+      "Mauro De Gennaro",
+      "Zhivko Vasilev"
+    ],
+    "license": "Creative Commons Attribution 2.0 Belgium",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0/be/deed.en",
+    "preparation": "Original excerpts re-encoded to 640px H.264/AAC for reliable decoding; 3 seconds of trailing silence added. No generated or replaced speech."
+  },
+  "method": {
+    "browser": "Isolated Linux Chromium via Playwright 1.61.1",
+    "capture": "Native getDisplayMedia tab audio; automatically selects only the named test video tab",
+    "provider": "Actual deployed Azure Speech, Azure AI Search and Azure OpenAI",
+    "authentication": "Genuine delegated operator token and actual one-use API tickets; temporary grants removed",
+    "responsesMocked": false,
+    "transcriptInjected": false,
+    "microphoneRequested": false,
+    "interactiveSignInVerified": false,
+    "manualSharePickerVerified": false,
+    "qualityAssessment": "Manual review of actual transcript and generated replies; not an automated semantic-quality score"
+  },
+  "timingDefinition": {
+    "firstReply": "Receipt of last final transcript to receipt of first nonempty delta for its completed response",
+    "notAcousticEndLatency": true,
+    "p95OrSlaEstablished": false
+  },
+  "cases": [
+    {
+      "id": "meeting-introduction",
+      "originalIntervalSeconds": [54, 70],
+      "transport": "PASS",
+      "firstReplyMs": 1502.564,
+      "completedReplyMs": 1568.422,
+      "finalTranscriptEvents": 1,
+      "sources": [],
+      "actualReply": "Which details would be most useful for this discussion?",
+      "review": "The introduction request was recognized. The corrected policy asked for clarification instead of fabricating the user's project or personal experience. A personalized introduction still requires verified user facts."
+    },
+    {
+      "id": "technical-question",
+      "originalIntervalSeconds": [331, 360],
+      "transport": "PASS",
+      "firstReplyMs": 1304.206,
+      "completedReplyMs": 1356.366,
+      "finalTranscriptEvents": 2,
+      "cancelledResponses": 1,
+      "sources": [],
+      "actualReply": "Could you clarify whether you want the main theoretical benefits of JMAP, or a comparison with other mail protocols?",
+      "review": "The JMAP adoption-benefit question was recognized, but the final response was more cautious than needed: it asked for clarification rather than directly answering. A noncritical phrase was mistranscribed as 'trust round'."
+    },
+    {
+      "id": "multi-speaker-followup",
+      "originalIntervalSeconds": [355, 398],
+      "transport": "PASS",
+      "firstReplyMs": 1270.3,
+      "completedReplyMs": 1311.57,
+      "finalTranscriptEvents": 5,
+      "cancelledResponses": 2,
+      "sources": [],
+      "actualReply": "The main benefit is faster, simpler sync, because you can get all the information in fewer calls and batch email retrieval. If you want, I can also explain the benefit in a more general way.",
+      "review": "Context survived a real speaker change and the reply reflected faster synchronization and fewer calls. Some specialized protocol names were garbled; no numerical word-error rate is claimed."
+    }
+  ],
+  "priorFailuresRetained": [
+    "Windows automation crashed or stalled; these attempts were not counted as passes.",
+    "The initial 160ms audio worklet pool stopped under short UI stalls. It was replaced by a bounded one-second pool with explicit overflow and regression tests.",
+    "A later Windows run exceeded the separate one-second network upload bound during a long stall. The final isolated Linux run does not prove that every Windows/environment stall is resolved.",
+    "Earlier introduction responses invented a project and personal history. Policy changes were tested against real Azure responses and the same recorded question."
+  ],
+  "limitations": [
+    "Three selected excerpts totaling 88 seconds are not a long-meeting soak test.",
+    "No human-aligned ground-truth transcript was available; published automatic captions contain errors and were not treated as authoritative.",
+    "No live Teams call, interactive tenant login or manual chooser clicking was verified.",
+    "Technical-term transcription and directly useful answers still require broader evaluation.",
+    "No private work knowledge was uploaded; irrelevant synthetic knowledge returned no accepted sources."
+  ]
+}

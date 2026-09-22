@@ -230,14 +230,14 @@ results cannot establish these targets.
 
 ## Verification status
 
-As of September 20, 2026:
+As of September 22, 2026:
 
 | Verification | Result |
 | --- | --- |
-| API Release build and automated tests | 71 passed; includes actual SDK serialization, finite-input lifecycle, semantic score and failure regressions |
+| API Release build and automated tests | 72 passed; includes actual SDK serialization, finite-input lifecycle, semantic score and personal-context policy regressions |
 | Live-provider probe unit tests | 83 passed; service, bounded cleanup, transcript-reference and redaction checks |
-| Browser production build and unit tests | 37 passed, including audible-demo playback and stop/pause/error handling |
-| Chromium lifecycle and real local API transport | 21 passed on Windows; published Linux image: 19 passed, 2 auth-module cases explicitly Vite-only |
+| Browser production build and unit tests | 39 passed, including audible-demo and bounded main-thread-stall handling |
+| Chromium lifecycle and real local API transport | 22 local browser tests passed, including a 350ms main-thread stall without dropping the session |
 | Infrastructure | Compiled and offline-tested, including semantic metadata migration; actual ARM deployment and ETag-guarded index readback succeeded |
 | Real Azure Speech and OpenAI | Final managed-identity Linux run submitted all 219 frames / 140160 PCM bytes; 6 partial events, 1 final transcript and 34 streamed reply deltas |
 | Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |
@@ -303,6 +303,35 @@ received zero candidates. Replaying the same video produced `no_matches`,
 Ranker failure or missing scores never silently reuse unfiltered candidates.
 This threshold requires evaluation on approved real sources; a relevance score
 is not proof that every answer statement is supported by a returned document.
+
+## Real English meeting replay
+
+The [FOSDEM 2025 JMAP panel](https://fosdem.org/2025/schedule/event/fosdem-2025-6822-panel-discussion-5-years-of-jmap-experiences-and-outlook/)
+provided authentic questions, accented English and a speaker change, rather than
+NASA narration or synthesized conversation. The source recording is licensed
+CC BY 2.0 Belgium; speaker attribution, exact intervals, preparation and results
+are preserved in [the acceptance record](tests/acceptance-results/fosdem-jmap-2026-09-22.json).
+
+| Segment | Actual result | Final transcription to first reply |
+| --- | --- | --- |
+| 00:54-01:10, introductions | Recognized the request; asked for clarification without inventing the user's background | 1.50 s |
+| 05:31-06:00, adoption benefits | Recognized the technical question; reply was overly cautious and asked for clarification | 1.30 s |
+| 05:55-06:38, moderator to participant | Preserved faster-sync/fewer-calls context and produced a relevant English response | 1.27 s |
+
+All three final runs used real tab audio, actual Azure services, and no injected
+transcript or canned model response. They ran in an isolated Linux browser after
+Windows automation instability; this is not evidence that all Windows/network
+stalls are solved. The source was re-encoded for reliable playback, with silence
+appended, not replaced with synthesized speech. An operator-only authentication
+adapter and automatic selection of the named tab replace interactive login and
+manual picker clicks only; temporary grants were removed afterward.
+
+Earlier runs exposed two defects: the 160ms worklet pool was too small for short
+UI stalls, and the model invented personal project history when asked to
+introduce the user. Both were addressed and the same scenarios rerun. Remaining
+limitations are explicit: some protocol names are mistranscribed, the technical
+answer can be unnecessarily tentative, and these three excerpts do not establish
+long-meeting reliability, acoustic-end latency, or p95 performance.
 
 ## References
 
