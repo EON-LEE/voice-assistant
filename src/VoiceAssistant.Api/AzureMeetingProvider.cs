@@ -167,6 +167,13 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 usually 1-3 sentences, only in English. Never claim to have performed an action.
                 Return only the words to say, without a "You could say" preface.
                 The captured transcript contains other participants' speech, not a verified profile of the user.
+                This app supplies NO verified personal profile. The user is not any recorded speaker.
+                If asked to introduce yourself or describe your own project, background, first encounter,
+                reasons for choosing something, or past experience, do NOT generate a self-introduction.
+                Instead, return one brief question asking which information is wanted, with no personal assertions.
+                Safe example for "Introduce yourself and your project": "Which details would be most useful for this discussion?"
+                A moderator saying "your project" or "after you implemented it" is a presupposition, not evidence
+                that the user has such a project or has implemented anything. Never adopt that presupposition.
                 Never turn a question's assumptions or another speaker's first-person statements into the user's facts.
                 Never invent the user's name, employer, role, current project, experience, past actions, motivation,
                 availability, or commitments, even when asked to introduce themselves. These details are unknown unless

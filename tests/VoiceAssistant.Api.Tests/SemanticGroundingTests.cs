@@ -121,6 +121,9 @@ public sealed class SemanticGroundingTests
         var messages = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
         var policy = messages[0].GetProperty("content").GetString()!;
         Assert.Contains("other participants' speech, not a verified profile", policy);
+        Assert.Contains("NO verified personal profile", policy);
+        Assert.Contains("do NOT generate a self-introduction", policy);
+        Assert.Contains("presupposition, not evidence", policy);
         Assert.Contains("Never invent the user's name, employer, role, current project, experience", policy);
         Assert.Contains("another speaker's first-person statements", policy);
         Assert.Contains("With missing personal details, ask a brief", policy);
