@@ -321,8 +321,12 @@ are preserved in [the acceptance record](tests/acceptance-results/fosdem-jmap-20
 All three final runs used real tab audio, actual Azure services, and no injected
 transcript or canned model response. They ran in an isolated Linux browser after
 Windows automation instability; this is not evidence that all Windows/network
-stalls are solved. The source was re-encoded for reliable playback, with silence
-appended, not replaced with synthesized speech. An operator-only authentication
+stalls are solved. A subsequent audit found that the claimed appended silence
+was actually a continuation of the source recording. These historical clip
+intervals are therefore nominal, and the timings must not be treated as
+question-end latency or compared directly with corrected clips. The original
+run values and the correction are preserved together in the acceptance record.
+No speech was synthesized. An operator-only authentication
 adapter and automatic selection of the named tab replace interactive login and
 manual picker clicks only; temporary grants were removed afterward.
 

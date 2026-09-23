@@ -19,7 +19,7 @@
     ],
     "license": "Creative Commons Attribution 2.0 Belgium",
     "licenseUrl": "https://creativecommons.org/licenses/by/2.0/be/deed.en",
-    "preparation": "Original excerpts re-encoded to 640px H.264/AAC for reliable decoding; 3 seconds of trailing silence added. No generated or replaced speech."
+    "preparation": "Historical run re-encoded the original recording to 640px H.264/AAC. The claimed 3-second silent tail was incorrect: the extra tail continued the original recording. Preserve this run as historical evidence, not as a correctly bounded latency benchmark."
   },
   "method": {
     "browser": "Isolated Linux Chromium via Playwright 1.61.1",
@@ -37,6 +37,13 @@
     "firstReply": "Receipt of last final transcript to receipt of first nonempty delta for its completed response",
     "notAcousticEndLatency": true,
     "p95OrSlaEstablished": false
+  },
+  "boundaryReview": {
+    "reviewedOn": "2026-09-23",
+    "claimedSilenceInvalidated": true,
+    "method": "Decode 2.5 seconds after each nominal cut and compare against the corresponding original recording audio",
+    "tailCorrelationWithOriginalContinuation": [0.99926, 0.99873, 0.99897],
+    "effect": "Reported intervals are nominal, not exact tested speech boundaries. firstReplyMs remains the historical last-final-event to delta observation, not question-end latency. Do not compare these numbers to corrected-input measurements."
   },
   "cases": [
     {
