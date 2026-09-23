@@ -52,7 +52,7 @@ test("Rejects malformed choices instead of silently selecting defaults", () => {
   assert.equal(validateOptions({ ...defaultOptions(), endSilenceMs: 1500 }).endSilenceMs, 1500);
 });
 test("Maximum Unicode and escaped context fit the explicit32KiB startup contract", () => {
-  for (const character of ["한", "\u0001"]) {
+  for (const character of ["한", "\\"]) {
     const options = { ...defaultOptions(), profileConfirmed: true,
       profile: { name: character.repeat(100), role: character.repeat(160), project: character.repeat(300) },
       topic: character.repeat(300), phrases: Array.from({ length: 32 }, () => character.repeat(64)) };
@@ -62,6 +62,14 @@ test("Maximum Unicode and escaped context fit the explicit32KiB startup contract
     assert.equal(JSON.parse(payload).options.profile.name, options.profile.name);
   }
   assert.equal("options" in createStartMessage(), false);
+});
+test("Control characters are rejected before capture rather than failing the server handshake", () => {
+  for (const character of ["\u0001", "\u007f", "\u0085", "\n", "\t"]) {
+    assert.throws(() => validateOptions({ ...defaultOptions(), topic: `topic${character}text` }), /control characters/);
+    assert.throws(() => validateOptions({ ...defaultOptions(), phrases: [`term${character}text`] }), /control characters/);
+    assert.throws(() => validateOptions({ ...defaultOptions(), profileConfirmed: true,
+      profile: { name: `name${character}text`, role: "", project: "" } }), /control characters/);
+  }
 });
 test("Start validates before capture and sends a stable snapshot of supplied options", async () => {
   let prepared = 0;

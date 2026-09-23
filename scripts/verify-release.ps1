@@ -2,6 +2,7 @@
 param(
     [string] $Dotnet = 'dotnet',
     [string] $Npm = 'npm.cmd',
+    [string] $Python = 'python',
     [Parameter(Mandatory = $true)]
     [string] $BicepPath,
     [Parameter(Mandatory = $true)]
@@ -88,6 +89,10 @@ try {
     Invoke-Verification 'infrastructure-offline-tests' {
         & (Join-Path $PSScriptRoot 'infra\tests\Test-Offline.ps1') `
             -BicepPath $BicepPath -BackendSchemaPath (Join-Path $root 'contracts\search-index.json')
+    }
+    Invoke-Verification 'meeting-benchmark-tests' {
+        & $Python -m unittest discover -s (Join-Path $root 'tools\MeetingBenchmark') -p 'test_*.py' -v
+        if ($LASTEXITCODE -ne 0) { throw 'Meeting boundary and latency-analysis tests failed.' }
     }
     Invoke-Verification 'live-probe-job-template' {
         $compiled = [IO.Path]::GetTempFileName()

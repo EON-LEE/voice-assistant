@@ -20,6 +20,8 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     if (typeof value !== "string") throw new Error(`${name} must be text.`);
     const trimmed = value.trim();
     if (trimmed.length > limit) throw new Error(`${name} must be at most ${limit} characters.`);
+    if (/[\u0000-\u001f\u007f-\u009f]/u.test(trimmed))
+      throw new Error(`${name} must not contain control characters or line breaks.`);
     return trimmed;
   };
   if (!input.profile || typeof input.profileConfirmed !== "boolean") throw new Error("Invalid profile confirmation.");

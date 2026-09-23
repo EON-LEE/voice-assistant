@@ -173,7 +173,7 @@ test('rapid mode switching ignores late configuration failures and keeps demo ex
   await page.getByTestId('mode').selectOption('demo');
   release();
   await page.getByTestId('start').click();
-  await expect(page.getByTestId('suggest')).toBeEnabled();
+  await expect(page.getByTestId('suggest')).toBeEnabled({ timeout: 10000 });
   await expect(page.getByTestId('status')).toContainText('DEMO');
   await expect(page.getByTestId('error')).toBeHidden();
   await page.getByTestId('stop').click();

@@ -64,13 +64,15 @@ function sourceList(id: string, reply: Reply | null): void {
     const line = document.createElement("li");
     const grounding = { grounded: "Relevant reference candidates - verify support before relying on them",
       disabled: reply.responseRoute ? "Reference search disabled" : "Reference search disabled - reply uses the transcript only",
-      unavailable: "Reference search unavailable", no_matches: reply.responseRoute ? "No relevant references" : "No relevant references - reply uses the transcript only" };
+      unavailable: "Reference search unavailable", no_matches: "No relevant references - reply uses the transcript only" };
     line.textContent = reply.grounding ? grounding[reply.grounding] : "Reference status not supplied";
     list.append(line);
     if (reply.responseRoute) {
       const route = document.createElement("li");
-      route.textContent = { transcript: "Reply context: meeting transcript", profile: "Reply context: confirmed profile",
-        knowledge: "Reply context: knowledge retrieval" }[reply.responseRoute];
+      route.textContent = reply.responseRoute === "knowledge" && reply.grounding === "no_matches"
+        ? "Knowledge lookup completed without supporting reference candidates"
+        : { transcript: "Reply context: meeting transcript", profile: "Reply context: confirmed profile",
+          knowledge: "Reply context: knowledge retrieval" }[reply.responseRoute];
       list.append(route);
     }
     if (reply.retrievalPrefetched !== undefined) {
