@@ -84,12 +84,40 @@ pin actions remain immediate. These changes do not add a fixed audio delay.
 Existing clients without `session.start.options` keep the original grounded
 mode and 700ms segmentation setting.
 
+Confirmed introductions are composed from the supplied fields without calling
+the model or Search. This prevents the model adding a fictional first encounter
+or employment history; the UI labels that route as not model-generated. Use
+concise English wording in the profile. General technical questions still use
+the model, interpreting short continuations together with the preceding question.
+
 Use [MeetingBenchmark](tools/MeetingBenchmark/README.md) for reproducible
 before/after measurements. Its media tool trims before padding, verifies the
 entire silent tail and hashes the final input. Its analyzer separates first
 text, first complete sentence, clip-cut observation and human-annotated speech
 end; missing acoustic annotations and insufficient percentile samples stay
 unknown. Do not compare the invalid historical clips with corrected inputs.
+
+### Measured first release
+
+The [September 23 comparison](tests/acceptance-results/latency-improvements-2026-09-23.json)
+uses the same corrected clips and empty context on the actual Azure deployment.
+The metric below starts at the observed **clip cut**, not a human-annotated
+speech end, and ends at receipt of a complete sentence, not browser paint.
+
+| Clip | Previous always-knowledge/700ms | Conversation only/500ms |
+| --- | --- | --- |
+| Introduction request, no profile | 3.09 s | 2.09 s |
+| General technical question | 2.16 s | 1.69 s |
+| Multi-speaker explanation | 2.45 s | 1.71 s |
+
+These are one observation per clip and variant, not p50/p95 or an SLA. The fast
+mode intentionally skips document lookup; it is not appropriate for asserting
+unverified project/customer facts. Balanced-mode results were mixed, and no
+final response reused a prefetch in these clips, so a real prefetch speedup is
+not claimed. The revised general-question prompt answered directly in the
+final replay. A separate fictional-profile test produced only the three
+confirmed facts, with no invented personal history. Voice Live comparison and
+a larger real-meeting sample remain future validation, not completed work.
 
 ## Build and test
 
@@ -256,8 +284,12 @@ the final transcription event. Initial targets, not measured guarantees:
 
 | Metric | p50 target | p95 target |
 | --- | --- | --- |
-| First reply text | 1.5 seconds | 3 seconds |
-| First complete readable sentence | 2 seconds | 4 seconds |
+| General conversation: first useful complete sentence | 1 second | 2.5 seconds |
+
+Grounded/private-fact questions are a separate workload and must not be mixed
+with the no-retrieval fast path to manufacture a better percentile. The current
+small clip-cut comparison has no reviewed acoustic-end annotations and does
+not establish either target.
 
 Report cold/warm connection behavior, region, retrieval mode, model deployment,
 sample size, cancellations, and failures alongside latency. Offline fake-provider
@@ -265,14 +297,15 @@ results cannot establish these targets.
 
 ## Verification status
 
-As of September 22, 2026:
+As of September 23, 2026:
 
 | Verification | Result |
 | --- | --- |
-| API Release build and automated tests | 72 passed; includes actual SDK serialization, finite-input lifecycle, semantic score and personal-context policy regressions |
+| API Release build and automated tests | 373 passed; includes routing, exact prefetch reuse/retry, session context, semantic relevance and personal-fact safeguards |
 | Live-provider probe unit tests | 83 passed; service, bounded cleanup, transcript-reference and redaction checks |
-| Browser production build and unit tests | 39 passed, including audible-demo and bounded main-thread-stall handling |
-| Chromium lifecycle and real local API transport | 22 local browser tests passed, including a 350ms main-thread stall without dropping the session |
+| Browser production build and unit tests | 61 passed, including confirmed session context and bounded coalesced rendering |
+| Chromium lifecycle and real local API transport | 27 Windows browser tests passed; final published Linux image: 25 passed, 2 explicitly Vite-only auth tests skipped |
+| Measurement tooling | 129 deterministic/boundary tests passed, including real FFmpeg padding verification; not 129 live meeting samples |
 | Infrastructure | Compiled and offline-tested, including semantic metadata migration; actual ARM deployment and ETag-guarded index readback succeeded |
 | Real Azure Speech and OpenAI | Final managed-identity Linux run submitted all 219 frames / 140160 PCM bytes; 6 partial events, 1 final transcript and 34 streamed reply deltas |
 | Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |

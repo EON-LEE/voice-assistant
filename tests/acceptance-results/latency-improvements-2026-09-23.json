@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "recordedOn": "2026-09-23",
+  "status": "IMPLEMENTED_AND_MEASURED_SMALL_SAMPLE",
+  "baselineRevision": "935430b7a8ba241a31e3cc7b0cc2ba32efc565c2",
+  "optimizedRevision": "c2b5c61",
+  "optimizedImageDigest": "sha256:e436e1aad26761a928d8b0eb75468b78ee1dafcb76a26052864792c850665bf5",
+  "source": {
+    "manifest": "tools/MeetingBenchmark/manifest.fosdem.json",
+    "event": "FOSDEM 2025, Panel discussion: 5 years of JMAP - experiences and outlook",
+    "url": "https://video.fosdem.org/2025/k4601/fosdem-2025-6822-panel-discussion-5-years-of-jmap-experiences-and-outlook.av1.webm",
+    "license": "CC-BY-2.0-BE",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0/be/deed.en",
+    "attribution": ["FOSDEM 2025", "TELLIER Benoit", "Hans-Jorg Happel", "Ben Bucksch", "Mauro De Gennaro", "Zhivko Vasilev"],
+    "correction": "Source audio is trimmed before exactly 48000 silent PCM samples are appended. Final H264/FLAC MP4 decoded audio equals the canonical WAV; all tail samples are zero."
+  },
+  "comparison": {
+    "baseline": "Legacy always-knowledge retrieval, 700ms segmentation silence",
+    "optimized": "Explicit Conversation only (no knowledge retrieval), 500ms segmentation silence, short-answer policy and coalesced UI",
+    "profileTopicAndPhrases": "Empty and identical in both variants",
+    "capture": "Actual native tab audio in an isolated Linux Chromium browser; real deployed Azure services and genuine operator tickets",
+    "clock": "One app-window performance.now clock for response events and the bridged clip-boundary observation",
+    "metric": "Observed exact content-cut boundary to receipt of the first complete readable response sentence",
+    "notAcousticSpeechEnd": true,
+    "notScreenPaintLatency": true,
+    "warmState": "unknown",
+    "samplesPerQuestionPerVariant": 1,
+    "p50": null,
+    "p95": null,
+    "sloAchieved": null
+  },
+  "observations": [
+    {
+      "questionId": "meeting-introduction",
+      "inputSha256": "b06fd0b5a90f6017d038afeb769bab629fe42997b823307a1490c35668caf35f",
+      "baselineFirstReadableSentenceMs": 3090.1,
+      "optimizedFirstReadableSentenceMs": 2087.0,
+      "optimizedFinalTranscriptToFirstTextMs": 1066.8,
+      "quality": "Without confirmed profile facts, the model still asks for personal details. Faster clarification is not a personalized introduction."
+    },
+    {
+      "questionId": "technical-question",
+      "inputSha256": "08209bc6fb3c221a447754773fa80c23120a3e5a33ec63dd1c1ffbe6bab89ce5",
+      "baselineFirstReadableSentenceMs": 2164.9,
+      "optimizedFirstReadableSentenceMs": 1692.1,
+      "optimizedFinalTranscriptToFirstTextMs": 859.8,
+      "quality": "The final optimized model directly explained simpler APIs and fewer round trips instead of asking an unnecessary clarification."
+    },
+    {
+      "questionId": "multi-speaker-followup",
+      "inputSha256": "4537442e37ca822f02addb4552868d4846fae0d18961f3fcd81cfb81fe813047",
+      "baselineFirstReadableSentenceMs": 2454.4,
+      "optimizedFirstReadableSentenceMs": 1713.7,
+      "optimizedFinalTranscriptToFirstTextMs": 850.3,
+      "quality": "The reply preserved the faster-sync and batched-call explanation. Technical-term transcription errors remain."
+    }
+  ],
+  "balancedExploration": {
+    "revision": "71ed88e",
+    "note": "Three same-input observations were mixed: all selected knowledge routing and no final response reused a prefetch.",
+    "firstReadableSentenceMs": [2612.5, 2410.2, 1916.6],
+    "fasterThanBaselineEveryCase": false,
+    "observedPrefetchHits": 0,
+    "prefetchLatencyBenefitEstablished": false
+  },
+  "confirmedProfileCheck": {
+    "separateFromLatencyCohort": true,
+    "profileIsFictionalTestData": true,
+    "suppliedFacts": {"name": "Mina", "role": "Software engineer", "project": "Evaluating email client interoperability"},
+    "observedReply": "My name is Mina; my role is Software engineer. My current project is Evaluating email client interoperability.",
+    "responseRoute": "profile",
+    "modelGenerated": false,
+    "unknownHistoryAdded": false,
+    "knowledgeRetrieved": false
+  },
+  "limitations": [
+    "This is a bounded before/after observation, not the proposed 100-question real-meeting acceptance corpus.",
+    "No human-annotated acoustic end or gold transcript is available; neither p95 nor recognition accuracy is claimed.",
+    "Conversation mode deliberately trades document grounding for avoiding retrieval latency; use knowledge mode when evidence is required.",
+    "The conservative prefetch implementation is regression-tested but had zero measured final-response hits in these clips.",
+    "Profile composition uses only user-confirmed fields and is clearly labelled as not model-generated.",
+    "One baseline exporter exited nonzero on PowerShell's default text decoding after the raw browser run completed; UTF-8 evidence was recovered and independently analyzed. The exporter was corrected.",
+    "A Windows Playwright 1.63 run stalled; pinned 1.61.1 subsequently completed all 27 browser cases. This is not a guarantee against all OS/network stalls.",
+    "Voice Live comparison and a WebSocket-worker rewrite are not included in this release."
+  ]
+}

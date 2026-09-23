@@ -37,7 +37,7 @@ export default defineConfig({
   globalSetup: './wait-for-api.js',
   testDir: './specs',
   timeout: 30_000,
-  globalTimeout: 180_000,
+  globalTimeout: 300_000,
   workers: 1,
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
