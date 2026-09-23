@@ -7,6 +7,8 @@ import { DisplayAudioSource, SyntheticSource } from "./capture.js";
 import { MeetingSession } from "./session.js";
 import { ReplyState, type Reply } from "./state.js";
 import { DemoTransport, SocketTransport, asError, isLoopback } from "./transport.js";
+import { createStartMessage, parsePhrases, validateOptions, type SessionOptions } from "./options.js";
+import { RenderScheduler } from "./render-scheduler.js";
 
 function element<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -28,6 +30,10 @@ let session: MeetingSession | null = null;
 let configReady = false;
 let fake = false;
 let configGeneration = 0;
+let transcriptDirty = true;
+let renderedReply: Reply | null | undefined;
+let renderedPinned: Reply | null | undefined;
+const scheduler = new RenderScheduler(renderContent);
 for (const id of ["mode", "start", "stop", "suggest", "pause", "pin", "transcript", "reply", "status", "error", "consent", "signin"])
   element(id).dataset.testid = id;
 element("pinned").dataset.testid = "pinned-reply";
@@ -40,16 +46,38 @@ function error(message: string): void {
 function canSuggest(): boolean {
   return !!session?.isReady && !pause.checked && state.turns.at(-1)?.final === true;
 }
+function readOptions(): SessionOptions {
+  return validateOptions({
+    responseMode: element<HTMLSelectElement>("response-mode").value as SessionOptions["responseMode"],
+    profile: { name: element<HTMLInputElement>("profile-name").value, role: element<HTMLInputElement>("profile-role").value,
+      project: element<HTMLTextAreaElement>("profile-project").value },
+    profileConfirmed: element<HTMLInputElement>("profile-confirmed").checked,
+    topic: element<HTMLTextAreaElement>("meeting-topic").value,
+    phrases: parsePhrases(element<HTMLTextAreaElement>("meeting-phrases").value),
+    endSilenceMs: Number(element<HTMLSelectElement>("end-silence").value),
+  });
+}
 function sourceList(id: string, reply: Reply | null): void {
   const list = element(id);
   list.replaceChildren();
   if (reply?.complete) {
     const line = document.createElement("li");
     const grounding = { grounded: "Relevant reference candidates - verify support before relying on them",
-      disabled: "Reference search disabled - reply uses the transcript only",
-      unavailable: "Reference search unavailable", no_matches: "No relevant references - reply uses the transcript only" };
+      disabled: reply.responseRoute ? "Reference search disabled" : "Reference search disabled - reply uses the transcript only",
+      unavailable: "Reference search unavailable", no_matches: reply.responseRoute ? "No relevant references" : "No relevant references - reply uses the transcript only" };
     line.textContent = reply.grounding ? grounding[reply.grounding] : "Reference status not supplied";
     list.append(line);
+    if (reply.responseRoute) {
+      const route = document.createElement("li");
+      route.textContent = { transcript: "Reply context: meeting transcript", profile: "Reply context: confirmed profile",
+        knowledge: "Reply context: knowledge retrieval" }[reply.responseRoute];
+      list.append(route);
+    }
+    if (reply.retrievalPrefetched !== undefined) {
+      const prefetch = document.createElement("li");
+      prefetch.textContent = reply.retrievalPrefetched ? "Retrieval was prefetched" : "Retrieval was not prefetched";
+      list.append(prefetch);
+    }
   }
   for (const source of reply?.sources ?? []) {
     const item = document.createElement("li");
@@ -57,21 +85,34 @@ function sourceList(id: string, reply: Reply | null): void {
     list.append(item);
   }
 }
-function render(): void {
-  const transcript = element("transcript");
-  transcript.replaceChildren();
-  if (!state.turns.length) {
-    const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = "The conversation will appear here after you start."; transcript.append(empty);
+function renderContent(): void {
+  if (transcriptDirty) {
+    transcriptDirty = false;
+    const transcript = element("transcript");
+    const fragment = document.createDocumentFragment();
+    if (!state.turns.length) {
+      const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = "The conversation will appear here after you start."; fragment.append(empty);
+    }
+    for (const turn of state.turns) {
+      const item = document.createElement("p");
+      const label = document.createElement("span"); label.className = "turn-label"; label.textContent = turn.final ? "FINAL" : "PARTIAL";
+      item.append(label, document.createTextNode(turn.text)); fragment.append(item);
+    }
+    transcript.replaceChildren(fragment);
   }
-  for (const turn of state.turns) {
-    const item = document.createElement("p");
-    const label = document.createElement("span"); label.className = "turn-label"; label.textContent = turn.final ? "FINAL" : "PARTIAL";
-    item.append(label, document.createTextNode(turn.text)); transcript.append(item);
+  if (renderedReply !== state.current) {
+    element("reply").textContent = state.current?.text || "Ask for a suggestion after a final transcript arrives.";
+    element("reply-status").textContent = state.current ? state.current.complete ? "Complete" : "Streaming…" : "Ready when you are";
+    if (state.current?.complete || renderedReply?.complete || !state.current) sourceList("sources", state.current);
+    renderedReply = state.current;
   }
-  element("reply").textContent = state.current?.text || "Ask for a suggestion after a final transcript arrives.";
-  element("reply-status").textContent = state.current ? state.current.complete ? "Complete" : "Streaming…" : "Ready when you are";
-  element("pinned").textContent = state.pinned?.text || "Keep a useful answer here. New suggestions will not replace it.";
-  sourceList("sources", state.current); sourceList("pinned-sources", state.pinned);
+  if (renderedPinned !== state.pinned) {
+    element("pinned").textContent = state.pinned?.text || "Keep a useful answer here. New suggestions will not replace it.";
+    sourceList("pinned-sources", state.pinned);
+    renderedPinned = state.pinned;
+  }
+}
+function renderControls(): void {
   suggest.disabled = !canSuggest();
   cancel.disabled = !session?.isReady;
   pause.disabled = !session?.isReady;
@@ -82,15 +123,18 @@ function render(): void {
   mode.disabled = !!session;
   consent.disabled = !!session;
   signin.disabled = !!session || !configReady || fake;
+  element<HTMLFieldSetElement>("meeting-fields").disabled = !!session;
   if (configReady && !fake && !auth.signedIn)
     element("auth-status").textContent = "Sign in first, then click Share meeting audio.";
 }
+function render(): void { renderControls(); scheduler.flush(); }
 async function configureMode(): Promise<void> {
   const generation = ++configGeneration;
   error("");
   configReady = false;
   element("live-options").hidden = mode.value !== "live";
   element("demo-options").hidden = mode.value !== "demo";
+  element("meeting-options").hidden = mode.value === "demo";
   start.textContent = mode.value === "demo" ? "Start demo" : mode.value === "synthetic" ? "Start synthetic test" : "Share meeting audio";
   element("mode-help").textContent = mode.value === "demo"
     ? "AUDIO DEMO — hear a prerecorded English sample, then see its scripted transcript and reply. No sign-in, capture, or Azure AI calls."
@@ -111,6 +155,8 @@ async function configureMode(): Promise<void> {
 }
 mode.addEventListener("change", () => { consent.checked = false; void configureMode(); });
 consent.addEventListener("change", render);
+for (const id of ["profile-name", "profile-role", "profile-project"])
+  element(id).addEventListener("input", () => { element<HTMLInputElement>("profile-confirmed").checked = false; });
 signin.addEventListener("click", () => {
   signin.disabled = true; error("");
   void auth.signIn().then(() => { element("auth-status").textContent = "Signed in. You may now share meeting audio."; })
@@ -118,8 +164,13 @@ signin.addEventListener("click", () => {
 });
 start.addEventListener("click", () => {
   if (session || start.disabled) return;
-  error(""); state.reset(); pause.checked = false;
   const selectedMode = mode.value;
+  let options: SessionOptions | undefined;
+  if (selectedMode !== "demo") {
+    try { options = readOptions(); createStartMessage(options); }
+    catch (e) { error(asError(e).message); return; }
+  }
+  error(""); scheduler.cancel(); state.reset(); transcriptDirty = true; pause.checked = false;
   const source = selectedMode === "live"
     ? new DisplayAudioSource({
       getDisplayMedia: () => {
@@ -135,7 +186,12 @@ start.addEventListener("click", () => {
   const transport = selectedMode === "demo" ? new DemoTransport() : new SocketTransport(() => auth.endpoint(selectedMode === "synthetic"));
   session = new MeetingSession(source, transport,
     e => {
-      state.apply(e); if (state.error) error(state.error); render();
+      state.apply(e);
+      if (e.type === "transcript.partial" || e.type === "transcript.final") transcriptDirty = true;
+      if (state.error) error(state.error);
+      renderControls();
+      if (e.type === "transcript.partial" || e.type === "response.delta") scheduler.schedule();
+      else scheduler.flush();
       if (selectedMode === "demo" && e.type === "transcript.final" && canSuggest()) {
         state.request(); session?.request(); render();
       }
@@ -146,12 +202,12 @@ start.addEventListener("click", () => {
         : (selectedMode === "demo" ? "DEMO · " : fake && selectedMode !== "demo" ? "LOCAL FAKE · " : "") + status;
       if (status.startsWith("Stopped")) { session = null; pause.checked = false; consent.checked = false; state.pause(true); }
       render();
-    }, e => error(e.message));
+    }, e => error(e.message), options);
   // No await before this call: getDisplayMedia and AudioContext.resume need this gesture.
   void session.start();
   render();
 });
-stop.addEventListener("click", () => { void session?.stop(); });
+stop.addEventListener("click", () => { scheduler.flush(); void session?.stop(); render(); });
 pause.addEventListener("change", () => { state.pause(pause.checked); session?.pause(pause.checked); render(); });
 suggest.addEventListener("click", () => {
   if (!canSuggest()) return;
@@ -160,5 +216,5 @@ suggest.addEventListener("click", () => {
 cancel.addEventListener("click", () => { state.cancel(); session?.cancel(); render(); });
 pin.addEventListener("click", () => { state.pin(); render(); });
 element("unpin").addEventListener("click", () => { state.pinned = null; render(); });
-window.addEventListener("pagehide", () => { void session?.stop(); });
+window.addEventListener("pagehide", () => { scheduler.cancel(); void session?.stop(); });
 void configureMode();

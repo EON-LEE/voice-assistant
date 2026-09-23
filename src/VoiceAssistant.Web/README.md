@@ -28,6 +28,41 @@ speech recognition; only the sample input is played, never the suggested answer.
 Static app/audio files are fetched normally, but no credentials or recorded
 audio are sent to a backend.
 
+## Optional meeting context and answer modes
+
+Live and local synthetic modes expose **Meeting context and answer settings**. No personal value is prepopulated or inferred from sign-in, WorkIQ, or directory data. All values stay in page/session memory (no localStorage/sessionStorage); they are sent in `session.start.options` only when Start succeeds. Reload clears them. The demo ignores these fields and retains its one-click audible, zero-API/auth/capture behavior.
+
+| Setting | Behavior and bounds |
+| --- | --- |
+| Answer mode | `balanced` (new UI default): context first, knowledge when needed; `grounded`: always search approved knowledge; `conversation`: conversation/context only, no Search |
+| Profile | Optional `name` up to 100, `role` up to 160, `project` up to 300 characters |
+| Profile confirmation | Required for any nonempty profile; editing any profile field unchecks confirmation. No details are treated as confirmed until the user checks it again |
+| Meeting topic | Optional, up to 300 characters; not a verified personal fact |
+| Recognition terms | One per line; up to 40 nonempty terms, 64 characters each, 2048 combined characters after trimming; not confirmed facts |
+| End-of-turn silence | 450, 500 (new UI default), 700, or 1000 ms; shorter values may split natural pauses, longer values tolerate pauses but finalize later |
+
+Input is trimmed, validated without silently truncating, and copied before capture setup. The complete JSON startup payload is checked against the API's 32 KiB UTF-8 limit before capture; maximum Korean/escaped-string context is tested without truncation. Invalid/unconfirmed inputs show an error before any capture/socket connection. The fieldset is disabled while a session starts/runs; Stop makes it editable for the next session. Settings do not promise a particular response latency or fabricate available knowledge/profile integrations.
+
+New web sessions explicitly send:
+
+```json
+{
+  "type": "session.start",
+  "protocolVersion": 1,
+  "audio": { "encoding": "pcm_s16le", "sampleRate": 16000, "channels": 1 },
+  "options": {
+    "responseMode": "balanced",
+    "profile": { "name": "", "role": "", "project": "" },
+    "profileConfirmed": false,
+    "topic": "",
+    "phrases": [],
+    "endSilenceMs": 500
+  }
+}
+```
+
+The shared API accepts integer silence 350..1500; the UI deliberately offers the four presets above. Clients omitting `options` retain the server's legacy grounded/700 behavior. The explicit demo has no options-dependent behavior and no backend connection.
+
 ## Browser capture constraints and consent
 
 Use **Teams in a browser tab** where possible. After selecting Live, sign in (Azure only), check participant permission, then click **Share meeting audio**. Select the Teams tab and enable **Share tab audio** in the browser/OS prompt. The application invokes `getDisplayMedia({ video: true, audio: true })` only from that click, and creates/resumes `AudioContext` in the same gesture.
@@ -81,9 +116,13 @@ Server events: `session.ready`; `transcript.partial/final` (`turnId`, nonnegativ
 
 Agreed additive completed `grounding` values `disabled`, `grounded`, `unavailable`, `no_matches` are displayed explicitly, including on pinned snapshots. Omission is accepted for older v1 services and displayed as not supplied. Sources are plain text, not auto-opened links.
 
+Optional completion `responseRoute` (`transcript`, `profile`, `knowledge`) and boolean `retrievalPrefetched` are strictly validated and displayed as plain text, including immutable pinned snapshots. Omission is accepted for older services. These are server-reported routing diagnostics, not evidence that a claim is correct; all four existing grounding states remain separate.
+
 Transcript revisions cannot regress. Final text cannot be overwritten by partials. New turns invalidate old suggestions; only the active response ID receives deltas/completion. Cancel/pause suppress late answers; Pin creates an immutable text/source snapshot separate from new suggestions and survives session restarts until Unpin/reload. IDs are opaque; causal new-turn ordering relies on ordered WebSocket delivery. There is no client request ID in v1, so the server must preserve response-start ordering around cancellation/new requests.
 
 State is bounded: 64 transcript turns, 256 remembered response IDs, 32,768 characters per transcript/reply, 20 sources, 64KiB incoming text messages. Nonretryable errors stop; retryable errors stay visible. No reconnect/replay is automatic. All meeting text is page-memory only.
+
+Streaming partial/delta content updates coalesce behind **one pending 50ms render** rather than rebuilding the transcript for every reply token. Controls always reflect current state immediately; completion/final transcript, errors, pin, pause, stop, and other controls flush pending content synchronously. Reply-only deltas do not replace transcript nodes; unchanged pinned/source content is not rebuilt. Stop/unload cancel or flush pending renders so stale callbacks cannot revive cancelled text. This is bounded UI scheduling, **not** an artificial audio/network delay or a claimed service-latency improvement. The existing one-second worklet/WS capacity and immediate PCM sends are unchanged; there is no WebSocket worker rewrite.
 
 ## Validation
 
@@ -100,5 +139,7 @@ To run follow-up browser cases, start Vite and the local Fake API, set `VOICE_AS
 Suggest is enabled and its command handler permits sending only when the **latest displayed turn is final**. An older final turn cannot enable generation while a newer partial turn is arriving; otherwise the backend could generate for the old turn and the stale-response filter would correctly discard that answer.
 
 Stable automation selectors are `data-testid="mode|start|stop|suggest|pause|pin|transcript|reply|pinned-reply|status|error|consent|signin"`. Mode values are `demo`, `live`, `synthetic`. Live requires ready config and consent; Fake bypasses only Entra, never capture permission. Azure sign-in, real Teams audio support, OS permissions, throttling, and speech/AI quality require consented manual verification.
+
+Settings selectors: `#response-mode`, `#profile-name`, `#profile-role`, `#profile-project`, `#profile-confirmed`, `#meeting-topic`, `#meeting-phrases`, `#end-silence`, under `details#meeting-options` / `fieldset#meeting-fields`. New `session-options.spec.js` covers default/personal-fact-free payloads, confirmation invalidation, session locking/reload clearing, all mode/preset payloads, invalid-term blocking with unchanged demo access, and a 200-delta rendering flood with transcript-node preservation and immediate final/pin/pause/stop behavior. Unit tests cover exact bounds, cloned start options before capture, routing metadata, and 10,000 render requests remaining one pending callback.
 
 References: [getDisplayMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia), [MSAL initialization](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/initialization), [MSAL caching](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/caching).

@@ -1,9 +1,12 @@
 export interface Source { title: string; url: string; updatedAt?: string | null }
 export type Grounding = "disabled" | "grounded" | "unavailable" | "no_matches";
+export type ResponseRoute = "transcript" | "profile" | "knowledge";
 export interface ServerEvent {
   type: string; turnId?: string; revision?: number; text?: string; responseId?: string;
   sources?: Source[]; code?: string; message?: string; retryable?: boolean;
   grounding?: Grounding;
+  responseRoute?: ResponseRoute;
+  retrievalPrefetched?: boolean;
 }
 export const startMessage = {
   type: "session.start", protocolVersion: 1,
@@ -46,7 +49,12 @@ export function parseEvent(data: unknown): ServerEvent {
     });
     if (e.grounding !== undefined && !["disabled", "grounded", "unavailable", "no_matches"].includes(e.grounding as string))
       throw new Error("Invalid grounding status.");
-    return { type, turnId, responseId, text: text("text"), sources, grounding: e.grounding as Grounding | undefined };
+    if (e.responseRoute !== undefined && !["transcript", "profile", "knowledge"].includes(e.responseRoute as string))
+      throw new Error("Invalid response route.");
+    if (e.retrievalPrefetched !== undefined && typeof e.retrievalPrefetched !== "boolean")
+      throw new Error("Invalid retrieval prefetch flag.");
+    return { type, turnId, responseId, text: text("text"), sources, grounding: e.grounding as Grounding | undefined,
+      responseRoute: e.responseRoute as ResponseRoute | undefined, retrievalPrefetched: e.retrievalPrefetched as boolean | undefined };
   }
   throw new Error(`Unsupported server event: ${type}`);
 }

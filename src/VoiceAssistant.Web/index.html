@@ -25,6 +25,31 @@
           <label class="check"><input id="consent" type="checkbox"> I have permission from the participants to capture and send this meeting audio.</label>
           <button id="signin" type="button" class="secondary">Sign in securely</button><span id="auth-status" role="status">Sign-in required before sharing.</span>
         </div>
+        <details id="meeting-options" hidden>
+          <summary>Meeting context and answer settings (optional)</summary>
+          <fieldset id="meeting-fields">
+            <legend>For this session only</legend>
+            <p class="fine">Only details you enter and confirm are used. Nothing is inferred from your account or WorkIQ. These fields stay in this page's memory and are sent to the meeting service when you start; they are never saved in browser storage.</p>
+            <label for="response-mode">Answer mode</label>
+            <select id="response-mode">
+              <option value="balanced">Balanced — context first, knowledge when needed</option>
+              <option value="grounded">Always knowledge — search approved references</option>
+              <option value="conversation">Conversation only — no Search</option>
+            </select>
+            <div class="context-grid">
+              <div><label for="profile-name">Your name (optional, 100 characters)</label><input id="profile-name" type="text" maxlength="100" autocomplete="off"></div>
+              <div><label for="profile-role">Your role (optional, 160 characters)</label><input id="profile-role" type="text" maxlength="160" autocomplete="off"></div>
+            </div>
+            <label for="profile-project">Your project (optional, 300 characters)</label><textarea id="profile-project" maxlength="300" rows="2" autocomplete="off"></textarea>
+            <label class="check"><input id="profile-confirmed" type="checkbox"> I confirm these profile details are accurate and may be used in suggested replies.</label>
+            <label for="meeting-topic">Meeting topic (optional, 300 characters)</label><textarea id="meeting-topic" maxlength="300" rows="2" autocomplete="off"></textarea>
+            <label for="meeting-phrases">Names and terms to recognize (optional)</label><textarea id="meeting-phrases" rows="3" autocomplete="off" aria-describedby="terms-help"></textarea>
+            <p id="terms-help" class="fine">One term per line. At most 40 terms, 64 characters each, 2048 characters total. Terms help recognition; they are not confirmed facts.</p>
+            <label for="end-silence">End-of-turn silence</label>
+            <select id="end-silence"><option value="450">450 ms — quicker, may split natural pauses</option><option value="500" selected>500 ms — quick default</option><option value="700">700 ms — more room to pause</option><option value="1000">1000 ms — longest pause tolerance</option></select>
+            <p class="fine">Shorter silence can finalize speech sooner but split unfinished sentences. This is a speech-service setting, not a promised reply time. Settings cannot change during an active session.</p>
+          </fieldset>
+        </details>
         <div class="actions"><button id="start" type="button">Start demo</button><button id="stop" type="button" class="secondary" disabled>Stop session</button><label class="check"><input id="pause" type="checkbox" disabled> Pause while speaking</label></div>
         <p id="error" role="alert" class="error" hidden></p>
       </section>

@@ -1,6 +1,7 @@
 import type { AudioSource } from "./capture.js";
-import { startMessage, type ServerEvent } from "./protocol.js";
+import type { ServerEvent } from "./protocol.js";
 import { asError, type Transport } from "./transport.js";
+import { createStartMessage, type SessionOptions } from "./options.js";
 
 export class MeetingSession {
   private readonly lifetime = new AbortController();
@@ -11,11 +12,13 @@ export class MeetingSession {
   private stopTask: Promise<void> | undefined;
   constructor(private readonly source: AudioSource, private readonly transport: Transport,
     private readonly event: (event: ServerEvent) => void,
-    private readonly status: (text: string) => void, private readonly error: (error: Error) => void) {}
+    private readonly status: (text: string) => void, private readonly error: (error: Error) => void,
+    private readonly options?: SessionOptions) {}
   get isReady(): boolean { return this.ready && !this.stopped; }
   async start(): Promise<void> {
     this.status("Preparing session…");
     try {
+      const message = createStartMessage(this.options);
       // prepare is invoked synchronously from Start to preserve browser user activation.
       await this.source.prepare(this.lifetime.signal);
       if (this.stopped) return;
@@ -23,7 +26,7 @@ export class MeetingSession {
       await this.transport.connect(e => this.receive(e), error => this.fail(error), this.lifetime.signal);
       if (this.stopped) return;
       this.handshake = setTimeout(() => this.fail(new Error("Server did not become ready within 15 seconds.")), 15000);
-      this.transport.send(startMessage);
+      this.transport.send(message);
     } catch (error) { if (!this.stopped) this.fail(asError(error)); }
   }
   private receive(e: ServerEvent): void {

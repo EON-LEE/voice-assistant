@@ -1,7 +1,7 @@
-import type { ServerEvent, Source, Grounding } from "./protocol.js";
+import type { ServerEvent, Source, Grounding, ResponseRoute } from "./protocol.js";
 
 export interface Turn { id: string; revision: number; text: string; final: boolean }
-export interface Reply { id: string; turnId: string; text: string; complete: boolean; sources: Source[]; grounding?: Grounding }
+export interface Reply { id: string; turnId: string; text: string; complete: boolean; sources: Source[]; grounding?: Grounding; responseRoute?: ResponseRoute; retrievalPrefetched?: boolean }
 
 export class ReplyState {
   turns: Turn[] = [];
@@ -35,7 +35,9 @@ export class ReplyState {
       this.current = { id: e.responseId!, turnId: e.turnId!, text: "", complete: false, sources: [] };
     } else if (this.current && this.current.id === e.responseId && !this.current.complete) {
       if (e.type === "response.delta") this.current = { ...this.current, text: bounded(this.current.text + e.text) };
-      if (e.type === "response.completed") this.current = { ...this.current, text: bounded(e.text!), complete: true, sources: structuredClone(e.sources ?? []), grounding: e.grounding };
+      if (e.type === "response.completed") this.current = { ...this.current, text: bounded(e.text!), complete: true,
+        sources: structuredClone(e.sources ?? []), grounding: e.grounding,
+        responseRoute: e.responseRoute, retrievalPrefetched: e.retrievalPrefetched };
       if (e.type === "response.cancelled") this.current = null;
     }
   }
