@@ -38,7 +38,7 @@ public sealed partial class ApiTests
         {
             Assert.Null(provider.AnswerOptions);
             Assert.Equal(0, provider.Answers);
-            Assert.Equal("Name: Mina; Role: Software engineer. Project: Evaluating email client interoperability.",
+            Assert.Equal("My name is Mina; my role is Software engineer. My current project is Evaluating email client interoperability.",
                 completion.GetProperty("text").GetString());
         }
         else
@@ -239,7 +239,7 @@ public sealed partial class ApiTests
         provider.Emit(new("turn", 1,
             "And I would like everybody to maybe shortly introduce himself and the project and first touchpoint with the technology.", true));
         var result = await Until(socket, "response.completed");
-        Assert.Equal("Name: Mina; Role: Software engineer. Project: Evaluating email client interoperability.", result.GetProperty("text").GetString());
+        Assert.Equal("My name is Mina; my role is Software engineer. My current project is Evaluating email client interoperability.", result.GetProperty("text").GetString());
         Assert.Equal("profile", result.GetProperty("responseRoute").GetString());
         Assert.Equal("disabled", result.GetProperty("grounding").GetString());
         Assert.False(result.GetProperty("retrievalPrefetched").GetBoolean());

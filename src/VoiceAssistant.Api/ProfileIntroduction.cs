@@ -20,11 +20,12 @@ internal static class ProfileIntroduction
         if (!options.ProfileConfirmed || options.Profile.IsEmpty)
             throw new InvalidOperationException("Confirmed profile facts are required.");
         var identity = new List<string>();
-        if (options.Profile.Name.Length > 0) identity.Add("Name: " + options.Profile.Name);
-        if (options.Profile.Role.Length > 0) identity.Add("Role: " + options.Profile.Role);
+        if (options.Profile.Name.Length > 0) identity.Add("My name is " + options.Profile.Name);
+        if (options.Profile.Role.Length > 0)
+            identity.Add((identity.Count > 0 ? "my role is " : "My role is ") + options.Profile.Role);
         var sentences = new List<string>();
         if (identity.Count > 0) sentences.Add(string.Join("; ", identity) + ".");
-        if (options.Profile.Project.Length > 0) sentences.Add("Project: " + options.Profile.Project + ".");
+        if (options.Profile.Project.Length > 0) sentences.Add("My current project is " + options.Profile.Project + ".");
         return string.Join(' ', sentences);
     }
 }

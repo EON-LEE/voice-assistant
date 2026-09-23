@@ -71,7 +71,7 @@ function sourceList(id: string, reply: Reply | null): void {
       const route = document.createElement("li");
       route.textContent = reply.responseRoute === "knowledge" && reply.grounding === "no_matches"
         ? "Knowledge lookup completed without supporting reference candidates"
-        : { transcript: "Reply context: meeting transcript", profile: "Reply context: confirmed profile",
+        : { transcript: "Reply context: meeting transcript", profile: "Composed from confirmed profile (not model-generated)",
           knowledge: "Reply context: knowledge retrieval" }[reply.responseRoute];
       list.append(route);
     }

@@ -19,7 +19,7 @@ public sealed class ProfileIntroductionTests
     public void ConfirmedIntroductionOmitsRequestedUnknownHistory(string query)
     {
         Assert.Equal("profile", ResponseRouting.Select(query, Options()));
-        Assert.Equal("Name: Mina; Role: Software engineer. Project: Evaluating email client interoperability.",
+        Assert.Equal("My name is Mina; my role is Software engineer. My current project is Evaluating email client interoperability.",
             ProfileIntroduction.Compose(Options()));
     }
 
@@ -36,10 +36,10 @@ public sealed class ProfileIntroductionTests
         Assert.Equal("knowledge", ResponseRouting.Select(query, Options()));
 
     [Theory]
-    [InlineData("Mina", "", "", "Name: Mina.")]
-    [InlineData("", "Software engineer", "", "Role: Software engineer.")]
-    [InlineData("", "", "Evaluating interoperability", "Project: Evaluating interoperability.")]
-    [InlineData("Mina \"M\"", "Engineer", "", "Name: Mina \"M\"; Role: Engineer.")]
+    [InlineData("Mina", "", "", "My name is Mina.")]
+    [InlineData("", "Software engineer", "", "My role is Software engineer.")]
+    [InlineData("", "", "Evaluating interoperability", "My current project is Evaluating interoperability.")]
+    [InlineData("Mina \"M\"", "Engineer", "", "My name is Mina \"M\"; my role is Engineer.")]
     public void PartialFieldsAreCopiedVerbatimWithoutUnknownPlaceholders(string name, string role, string project, string expected)
     {
         var options = Options(new(name, role, project));

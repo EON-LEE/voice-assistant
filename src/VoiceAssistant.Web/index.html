@@ -34,13 +34,14 @@
             <select id="response-mode">
               <option value="balanced">Balanced — context first, knowledge when needed</option>
               <option value="grounded">Always knowledge — search approved references</option>
-              <option value="conversation">Conversation only — no Search</option>
+              <option value="conversation">Conversation only — no retrieval wait</option>
             </select>
             <div class="context-grid">
               <div><label for="profile-name">Your name (optional, 100 characters)</label><input id="profile-name" type="text" maxlength="100" autocomplete="off"></div>
               <div><label for="profile-role">Your role (optional, 160 characters)</label><input id="profile-role" type="text" maxlength="160" autocomplete="off"></div>
             </div>
             <label for="profile-project">Your project (optional, 300 characters)</label><textarea id="profile-project" maxlength="300" rows="2" autocomplete="off"></textarea>
+            <p class="fine">Use concise English wording you want to say; confirmed fields may be used verbatim. A confirmed introduction uses only these supplied facts, not model-invented personal history.</p>
             <label class="check"><input id="profile-confirmed" type="checkbox"> I confirm these profile details are accurate and may be used in suggested replies.</label>
             <label for="meeting-topic">Meeting topic (optional, 300 characters)</label><textarea id="meeting-topic" maxlength="300" rows="2" autocomplete="off"></textarea>
             <label for="meeting-phrases">Names and terms to recognize (optional)</label><textarea id="meeting-phrases" rows="3" autocomplete="off" aria-describedby="terms-help"></textarea>

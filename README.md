@@ -56,6 +56,41 @@ The browser, API, and infrastructure components are integrated from parallel
 worktrees. Passing offline tests is not evidence of a successful Azure
 deployment or a live Teams meeting test.
 
+## Faster meeting responses
+
+Before starting a **Live** session, expand **Meeting context and answer settings**.
+Settings apply to that session only and are not stored in browser storage.
+
+| Setting | Behavior |
+| --- | --- |
+| Balanced | Skips retrieval only for clearly supported general requests; ambiguous/private-fact requests still use authorized Search |
+| Always knowledge | Searches approved references for each answer |
+| Conversation only | Avoids retrieval waits; answers from the conversation and must not invent company-specific facts |
+| Confirmed name, role and project | Supplies only facts you explicitly confirm; blank fields are not guessed |
+| Names and terms | Adds a short Azure Speech phrase list, useful for technical acronyms |
+| End-of-turn silence | Defaults to 500ms in the new web client; shorter values trade waiting time against premature segmentation |
+
+Partial knowledge queries can be retrieved speculatively after a stable interval,
+with at most three starts per utterance and one active worker. Reuse is restricted
+to the same user/session/turn and exact case/whitespace-normalized final query;
+numbers, dates, negation and punctuation are preserved. Obsolete results are
+discarded. A failed selected prefetch is reported, and explicit retry performs a
+fresh retrieval. Speculative work can incur charges even when its result is not
+used. A cache miss is acceptable; unrelated evidence is not.
+
+General answers aim to start with a useful short sentence rather than filler.
+UI content updates are coalesced within 50ms while stop, pause, completion and
+pin actions remain immediate. These changes do not add a fixed audio delay.
+Existing clients without `session.start.options` keep the original grounded
+mode and 700ms segmentation setting.
+
+Use [MeetingBenchmark](tools/MeetingBenchmark/README.md) for reproducible
+before/after measurements. Its media tool trims before padding, verifies the
+entire silent tail and hashes the final input. Its analyzer separates first
+text, first complete sentence, clip-cut observation and human-annotated speech
+end; missing acoustic annotations and insufficient percentile samples stay
+unknown. Do not compare the invalid historical clips with corrected inputs.
+
 ## Build and test
 
 Contributors need Node.js 22 and the .NET 8 SDK, not only the .NET runtime.
