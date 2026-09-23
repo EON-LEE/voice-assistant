@@ -285,6 +285,39 @@ public sealed class SemanticGroundingTests
         Assert.Null(handler.SearchBody);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MixedIntroductionAndUnknownHistoryUsesOnlyConfirmedFields(bool confirmed)
+    {
+        using var handler = new FixtureTransport("""{"value":[]}""");
+        using var http = new HttpClient(handler);
+        const string question = "Please introduce yourself, describe your project, and explain your first encounter with the technology.";
+        var options = new SessionOptions
+        {
+            ResponseMode = "balanced", ProfileConfirmed = confirmed,
+            Profile = new("Mina", "Software engineer", "Evaluating email client interoperability")
+        };
+        await foreach (var _ in Provider(http).AnswerAsync([new(question)], new("no_matches", []),
+            options, "knowledge", CancellationToken.None)) { }
+        using var body = JsonDocument.Parse(handler.ChatBody!);
+        var messages = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        var policy = messages[0].GetProperty("content").GetString()!;
+        Assert.Contains("answer the supported parts first", policy);
+        Assert.Contains("using ONLY those supplied fields", policy);
+        Assert.Contains("Missing personal history does not invalidate confirmed profile fields", policy);
+        Assert.Contains("after stating the known facts", policy);
+        Assert.Contains("Only when no relevant personal fields are confirmed, do NOT generate a self-introduction", policy);
+        Assert.Contains("Do not invent a first touchpoint, prior employer, experience, motivation or a more specific role", policy);
+        var contextText = messages[1].GetProperty("content").GetString()!;
+        using var context = JsonDocument.Parse(contextText[contextText.IndexOf('{')..]);
+        Assert.Equal(confirmed, context.RootElement.GetProperty("ProfileConfirmed").GetBoolean());
+        Assert.Equal(confirmed ? "Mina" : "", context.RootElement.GetProperty("Profile").GetProperty("Name").GetString());
+        Assert.Equal(confirmed ? "Software engineer" : "", context.RootElement.GetProperty("Profile").GetProperty("Role").GetString());
+        Assert.Equal(question, messages[2].GetProperty("content").GetString());
+        Assert.Equal(1, handler.ChatCalls);
+    }
+
     private static AzureMeetingProvider Provider(HttpClient http)
     {
         var settings = new ServiceSettings { ChatDeployment = "chat", EmbeddingDeployment = "embedding" };
