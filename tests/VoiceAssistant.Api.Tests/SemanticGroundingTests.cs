@@ -251,6 +251,40 @@ public sealed class SemanticGroundingTests
         Assert.Contains("past experience", handler.ChatBody!);
     }
 
+    [Theory]
+    [InlineData("What are the main benefits of incremental synchronization?", "For us.", "conversation", "disabled")]
+    [InlineData("How does a database index reduce lookup work?", "For others.", "balanced", "no_matches")]
+    [InlineData("What delivery date have we promised the customer?", "For us.", "conversation", "disabled")]
+    [InlineData("How did you first encounter this technology?", "In your previous project.", "balanced", "no_matches")]
+    public async Task ShortContinuationKeepsCompleteQuestionAndGeneralPrivateDistinction(
+        string question, string continuation, string mode, string grounding)
+    {
+        using var handler = new FixtureTransport("""{"value":[]}""");
+        using var http = new HttpClient(handler);
+        await foreach (var _ in Provider(http).AnswerAsync(
+            [new(question), new(continuation)], new(grounding, []),
+            new() { ResponseMode = mode }, mode == "conversation" ? "transcript" : "knowledge", CancellationToken.None)) { }
+        using var body = JsonDocument.Parse(handler.ChatBody!);
+        var messages = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        var policy = messages[0].GetProperty("content").GetString()!;
+        Assert.Contains("chronological recognition segments, not necessarily separate questions", policy);
+        Assert.Contains("Interpret a short final fragment with the preceding complete question", policy);
+        Assert.Contains("answer that general question directly, without inventing organization-specific outcomes", policy);
+        Assert.Contains("only when material ambiguity remains", policy);
+        Assert.Contains("never supplies missing private facts", policy);
+        Assert.Contains("personal history and actual organizational results still require evidence or abstention", policy);
+        Assert.Contains("newer complete question or explicit correction supersedes it", policy);
+        Assert.Contains("Never invent the user's name, employer, role, current project, experience", policy);
+        Assert.Equal(question, messages[2].GetProperty("content").GetString());
+        Assert.Equal(continuation, messages[3].GetProperty("content").GetString());
+        Assert.Equal("user", messages[2].GetProperty("role").GetString());
+        Assert.Equal("user", messages[3].GetProperty("role").GetString());
+        Assert.DoesNotContain(question, policy);
+        Assert.DoesNotContain(continuation, policy);
+        Assert.Equal(1, handler.ChatCalls);
+        Assert.Null(handler.SearchBody);
+    }
+
     private static AzureMeetingProvider Provider(HttpClient http)
     {
         var settings = new ServiceSettings { ChatDeployment = "chat", EmbeddingDeployment = "embedding" };

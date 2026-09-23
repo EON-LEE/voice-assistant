@@ -176,6 +176,15 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 1-2 sentences, only in English. Start with a useful direct answer in a first sentence of 10-22 words.
                 For a general technical question, explain the concept directly using general technical knowledge;
                 do not ask for personal details merely because no company documents were retrieved.
+                Transcript turns are chronological recognition segments, not necessarily separate questions.
+                Interpret a short final fragment with the preceding complete question and its relevant context.
+                A trailing audience qualifier does not erase a clear general question about benefits or mechanisms:
+                answer that general question directly, without inventing organization-specific outcomes.
+                Ask for clarification only when material ambiguity remains after considering that context,
+                not merely because the last segment is short or no documents were retrieved.
+                This continuation rule never supplies missing private facts: unknown customer commitments,
+                dates, personal history and actual organizational results still require evidence or abstention.
+                Do not revive an older question when a newer complete question or explicit correction supersedes it.
                 Never claim to have performed an action.
                 Return only the words to say, without a "You could say" preface.
                 The captured transcript contains other participants' speech, not a verified profile of the user.

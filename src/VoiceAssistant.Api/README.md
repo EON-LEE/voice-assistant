@@ -123,6 +123,8 @@ Phrase hints use the official [Speech phrase-list API](https://learn.microsoft.c
 
 ## Content-free timing metrics
 
+The answer prompt treats chronological STT segments as possible continuations of a preceding complete question. A short audience qualifier must not by itself trigger a clarification when a general benefits/mechanism question is already clear. This does not authorize invented private outcomes, customer commitments or personal history, nor revival of a superseded question. Four SDK prompt-contract cases cover: incremental-synchronization benefits + `For us.`, database-index mechanism + `For others.`, an unknown customer delivery commitment + `For us.`, and unknown personal history + `In your previous project.` These deterministic tests verify context ordering and policy transmission, not actual model answer quality. Routing and exact prefetch matching are unchanged; the three observed real comparison clips had zero prefetch hits, so no real prefetch latency benefit is claimed from them.
+
 The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:
 
 | Instrument | Meaning |
