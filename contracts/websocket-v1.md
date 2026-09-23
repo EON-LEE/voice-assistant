@@ -50,6 +50,8 @@ Text commands: `{"type":"response.request"}`, `{"type":"response.cancel"}`, `{"t
 
 Server events:
 
+For a clear individual/group introduction request with any confirmed profile fields, balanced/conversation mode selects a **deterministic** `profile` response: fixed English labels and verbatim supplied name/role/project values only. It does not call Search or the language model, invent history or answer an unknown first-touchpoint question. Missing fields are omitted without placeholders. Mixed customer/date/commitment/employer requests are not eligible for this shortcut; grounded mode retains retrieval. `profile` completions have `grounding:disabled`, empty sources and `retrievalPrefetched:false`, and are excluded from model response histograms. The UI should ask users to enter concise English profile wording and identify the profile reply as composed from confirmed fields, not model-generated. Caller-provided punctuation/quotes remain literal user content, not interpreted instructions.
+
 | type | Additional fields |
 | --- | --- |
 | `session.ready` | `protocolVersion: 1` |

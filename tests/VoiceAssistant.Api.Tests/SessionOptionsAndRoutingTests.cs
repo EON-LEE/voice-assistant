@@ -74,8 +74,8 @@ public sealed class SessionOptionsAndRoutingTests
             Assert.Equal("transcript", ResponseRouting.Select(query, new() { ResponseMode = "conversation" }));
         }
         Assert.Equal("knowledge", ResponseRouting.Select("Introduce yourself", new() { ResponseMode = "balanced" }));
-        Assert.Equal("knowledge", ResponseRouting.Select("Introduce yourself and your project", Balanced with { Profile = new("Alex", "Engineer") }));
-        Assert.Equal("knowledge", ResponseRouting.Select("Introduce yourself and your role", Balanced with { Profile = new(Role: "Engineer") }));
+        Assert.Equal("profile", ResponseRouting.Select("Introduce yourself and your project", Balanced with { Profile = new("Alex", "Engineer") }));
+        Assert.Equal("profile", ResponseRouting.Select("Introduce yourself and your role", Balanced with { Profile = new(Role: "Engineer") }));
         Assert.Equal("knowledge", ResponseRouting.Select("What is your name?", Balanced with { ProfileConfirmed = false }));
     }
 

@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using VoiceAssistant.Api;
@@ -33,8 +34,18 @@ public sealed partial class ApiTests
         Assert.False(completion.GetProperty("retrievalPrefetched").GetBoolean());
         Assert.Equal(0, completion.GetProperty("sources").GetArrayLength());
         Assert.Equal(retrievals, provider.Retrievals);
-        Assert.Equal(provider.SpeechOptions, provider.AnswerOptions);
-        Assert.Equal(route, provider.Route);
+        if (route == "profile")
+        {
+            Assert.Null(provider.AnswerOptions);
+            Assert.Equal(0, provider.Answers);
+            Assert.Equal("Name: Mina; Role: Software engineer. Project: Evaluating email client interoperability.",
+                completion.GetProperty("text").GetString());
+        }
+        else
+        {
+            Assert.Equal(provider.SpeechOptions, provider.AnswerOptions);
+            Assert.Equal(route, provider.Route);
+        }
         await Send(socket, """{"type":"session.stop"}""");
     }
 
@@ -202,6 +213,44 @@ public sealed partial class ApiTests
         type = "session.start", protocolVersion = 1,
         audio = new { encoding = "pcm_s16le", sampleRate = 16000, channels = 1 }, options
     });
+
+    [Fact]
+    public async Task GroupIntroductionIsFactOnlyWithoutSearchModelOrModelTimingMeasurements()
+    {
+        var measurements = new System.Collections.Concurrent.ConcurrentBag<string>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, owner) =>
+            {
+                if (instrument.Meter.Name == MeetingMetrics.MeterName) owner.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((instrument, _, _, _) => measurements.Add(instrument.Name));
+        listener.Start();
+        var provider = new ControlledProvider();
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new
+        {
+            responseMode = "balanced", profileConfirmed = true,
+            profile = new { name = "Mina", role = "Software engineer", project = "Evaluating email client interoperability" }
+        }));
+        await Receive(socket);
+        provider.Emit(new("turn", 1,
+            "And I would like everybody to maybe shortly introduce himself and the project and first touchpoint with the technology.", true));
+        var result = await Until(socket, "response.completed");
+        Assert.Equal("Name: Mina; Role: Software engineer. Project: Evaluating email client interoperability.", result.GetProperty("text").GetString());
+        Assert.Equal("profile", result.GetProperty("responseRoute").GetString());
+        Assert.Equal("disabled", result.GetProperty("grounding").GetString());
+        Assert.False(result.GetProperty("retrievalPrefetched").GetBoolean());
+        Assert.Empty(result.GetProperty("sources").EnumerateArray());
+        Assert.Equal(0, provider.Answers);
+        Assert.Equal(0, provider.Retrievals);
+        await Send(socket, """{"type":"session.stop"}""");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        Assert.Equal(WebSocketMessageType.Close, (await socket.ReceiveAsync(new byte[4096], timeout.Token)).MessageType);
+        Assert.Empty(measurements);
+    }
 
     private sealed class ControlledProvider : IMeetingProvider
     {

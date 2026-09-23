@@ -334,6 +334,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     {
         try
         {
+            if (route == "profile")
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var introduction = ProfileIntroduction.Compose(options);
+                await events.Writer.WriteAsync(new("delta", introduction, number), cancellation);
+                await events.Writer.WriteAsync(new("complete",
+                    new Completion(introduction, [], "disabled", "profile", false), number), cancellation);
+                return;
+            }
             var grounding = route != "knowledge" ? new Grounding("disabled", []) :
                 prefetched is not null ? (await prefetched.WaitAsync(cancellation)).RequireGrounding() :
                 await MeetingMetrics.MeasureRetrievalAsync(provider, history[^1].Text, objectId, cancellation);
