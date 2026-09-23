@@ -38,11 +38,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private int generationNumber;
     private bool responseActive;
     private int overflow;
+    private SessionOptions options = SessionOptions.Legacy;
+    private PartialRetrieval? prefetch;
+    private string responseRoute = "knowledge";
+    private bool retrievalPrefetched;
     private readonly List<Task> retired = [];
     private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false);
     private sealed record AudioMessage(byte[] Bytes);
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
-    private sealed record Completion(string Text, Source[] Sources, string Grounding);
+    private sealed record Completion(string Text, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched);
 
     public async Task RunAsync(CancellationToken requestAborted)
     {
@@ -54,10 +58,14 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             startup.CancelAfter(TimeSpan.FromSeconds(15));
-            var start = await ReceiveAsync(startup.Token);
+            var start = await ReceiveAsync(startup.Token, 32768);
             if (start is null || start.Type != WebSocketMessageType.Text || !IsValidStart(start.Bytes))
                 throw new ProviderException("invalid_start", "First message must be protocol v1 session.start with PCM16LE 16 kHz mono audio.");
+            using (var json = JsonDocument.Parse(start.Bytes))
+                options = json.RootElement.TryGetProperty("options", out var input) ? SessionOptions.Parse(input) : SessionOptions.Legacy;
+            prefetch = new(provider, objectId, options, lifetime.Token);
             speech = await provider.StartSpeechAsync(
+                options,
                 transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
                 error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
             await SendAsync(new { type = "session.ready", protocolVersion = 1 }, lifetime.Token);
@@ -88,14 +96,19 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             lastFinalTimestamp = message.Timestamp;
                             await StartResponseAsync(lifetime.Token, manual: false);
                         }
-                        else if (responseActive && transcript.TurnId != responseTurn)
-                            await CancelResponseAsync(lifetime.Token);
+                        else
+                        {
+                            if (responseActive && transcript.TurnId != responseTurn)
+                                await CancelResponseAsync(lifetime.Token);
+                            prefetch.Update(transcript, conversation);
+                        }
                         break;
                     case "response.request":
                         if (lastTurn is null) await ErrorAsync("no_transcript", "Wait for a finalized utterance.", true, lifetime.Token);
                         else await StartResponseAsync(lifetime.Token, manual: true);
                         break;
                     case "response.cancel":
+                        prefetch.Cancel();
                         await CancelResponseAsync(lifetime.Token);
                         break;
                     case "session.stop":
@@ -116,7 +129,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             turnId = responseTurn,
                             text = completion.Text,
                             sources = completion.Sources,
-                            grounding = completion.Grounding
+                            grounding = completion.Grounding,
+                            responseRoute = completion.ResponseRoute,
+                            retrievalPrefetched = completion.RetrievalPrefetched
                         }, lifetime.Token);
                         if (message.ModelResponse) responseMeasurement?.CompletedSent();
                         responseActive = false;
@@ -133,7 +148,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                                 turnId = responseTurn,
                                 text = "Grounding is unavailable. Please try again before relying on a factual answer.",
                                 sources = Array.Empty<Source>(),
-                                grounding = "unavailable"
+                                grounding = "unavailable",
+                                responseRoute,
+                                retrievalPrefetched
                             }, lifetime.Token);
                             responseActive = false;
                         }
@@ -162,10 +179,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         {
             lifetime.Cancel();
             generation?.Cancel();
+            if (prefetch is not null) await prefetch.DisposeAsync();
             events.Writer.TryComplete();
-            await ObserveCleanupAsync(receiver);
-            await ObserveCleanupAsync(generationTask);
-            foreach (var task in retired) await ObserveCleanupAsync(task);
+            await ObserveCleanupAsync(Task.WhenAll(retired.Append(receiver).Append(generationTask)));
             generation?.Dispose();
             if (speech is not null)
             {
@@ -238,6 +254,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         {
             using var json = JsonDocument.Parse(bytes);
             var root = json.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("options", out var options))
+                SessionOptions.Parse(options);
             return root.ValueKind == JsonValueKind.Object && root.GetProperty("type").GetString() == "session.start" &&
                 root.GetProperty("protocolVersion").GetInt32() == 1 &&
                 root.GetProperty("audio").GetProperty("encoding").GetString() == "pcm_s16le" &&
@@ -261,7 +279,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         { throw new ProviderException("invalid_command", "Command must be a JSON object with a supported type."); }
     }
 
-    private async Task<WireMessage?> ReceiveAsync(CancellationToken cancellation)
+    private async Task<WireMessage?> ReceiveAsync(CancellationToken cancellation, int textLimit = 4096)
     {
         var buffer = new byte[8192];
         using var data = new MemoryStream();
@@ -270,7 +288,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         {
             result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation);
             if (result.MessageType == WebSocketMessageType.Close) return null;
-            var limit = result.MessageType == WebSocketMessageType.Text ? 4096 : 32768;
+            var limit = result.MessageType == WebSocketMessageType.Text ? textLimit : 32768;
             if (data.Length + result.Count > limit) throw new ProviderException("message_limit", "Message exceeds size limit.");
             data.Write(buffer, 0, result.Count);
         } while (!result.EndOfMessage);
@@ -285,6 +303,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         generation.CancelAfter(TimeSpan.FromSeconds(30));
         responseId = Guid.NewGuid().ToString("N");
         responseTurn = lastTurn;
+        responseRoute = ResponseRouting.Select(conversation[^1].Text, options, conversation.Take(conversation.Count - 1).ToArray());
+        var prefetched = prefetch?.Take(responseTurn!, conversation[^1].Text, responseRoute);
+        retrievalPrefetched = prefetched is not null;
         responseActive = true;
         responseMeasurement = new(lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual);
         var number = ++generationNumber;
@@ -292,7 +313,10 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         if (!generationTask.IsCompleted) retired.Add(generationTask);
         retired.RemoveAll(task => task.IsCompletedSuccessfully);
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
-        generationTask = GenerateAsync(number, conversation.ToArray(), generation.Token, lifetime);
+        var token = generation.Token;
+        var history = conversation.ToArray();
+        var route = responseRoute;
+        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, token, lifetime));
     }
 
     private async Task CancelResponseAsync(CancellationToken cancellation)
@@ -305,14 +329,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         await SendAsync(new { type = "response.cancelled", responseId, turnId = responseTurn }, cancellation);
     }
 
-    private async Task GenerateAsync(int number, ConversationTurn[] history, CancellationToken cancellation, CancellationToken lifetime)
+    private async Task GenerateAsync(int number, ConversationTurn[] history, string route,
+        Task<RetrievalOutcome>? prefetched, CancellationToken cancellation, CancellationToken lifetime)
     {
         try
         {
-            var grounding = await MeetingMetrics.MeasureRetrievalAsync(provider, history[^1].Text, objectId, cancellation);
+            var grounding = route != "knowledge" ? new Grounding("disabled", []) :
+                prefetched is not null ? (await prefetched.WaitAsync(cancellation)).RequireGrounding() :
+                await MeetingMetrics.MeasureRetrievalAsync(provider, history[^1].Text, objectId, cancellation);
             var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches";
             var text = new StringBuilder();
-            await foreach (var delta in provider.AnswerAsync(history, grounding, cancellation).WithCancellation(cancellation))
+            await foreach (var delta in provider.AnswerAsync(history, grounding, options, route, cancellation).WithCancellation(cancellation))
             {
                 cancellation.ThrowIfCancellationRequested();
                 if (text.Length + delta.Length > 8000) throw new ProviderException("response_limit", "Response exceeded its size limit.");
@@ -322,7 +349,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             cancellation.ThrowIfCancellationRequested();
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
             await events.Writer.WriteAsync(new("complete",
-                new Completion(text.ToString(), grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status), number,
+                new Completion(text.ToString(), grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status, route, prefetched is not null), number,
                 ModelResponse: modelResponse), cancellation);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)

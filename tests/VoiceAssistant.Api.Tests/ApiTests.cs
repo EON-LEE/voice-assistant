@@ -19,7 +19,7 @@ using Xunit;
 
 namespace VoiceAssistant.Api.Tests;
 
-public sealed class ApiTests
+public sealed partial class ApiTests
 {
     private const string Start = """{"type":"session.start","protocolVersion":1,"audio":{"encoding":"pcm_s16le","sampleRate":16000,"channels":1}}""";
     private const string ObjectId = "e59048e0-9a10-433e-8e0e-beb279c0c234";

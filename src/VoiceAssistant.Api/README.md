@@ -111,6 +111,16 @@ Errors are explicit safe messages; raw SDK exception details are suppressed. Sta
 
 SDK references: [Speech Entra auth](https://learn.microsoft.com/azure/ai-services/speech-service/how-to-configure-azure-ad-auth), [Azure OpenAI .NET streaming](https://learn.microsoft.com/dotnet/api/overview/azure/ai.openai-readme), [Search vector quickstart](https://learn.microsoft.com/azure/search/search-get-started-vector).
 
+## Optional fast-answer session context
+
+The [v1 start-options contract](../../contracts/websocket-v1.md) supports `responseMode`, a confirmed bounded name/role/project profile, topic, phrase list and `endSilenceMs`. No options means legacy grounded retrieval and700ms silence; the browser explicitly chooses balanced/500ms. Initial JSON is32KiB maximum (supports escaped Unicode at the field limits), subsequent commands remain4KiB, and binary audio remains32KiB. Invalid context fails startup rather than silently falling back.
+
+Balanced routing is a conservative anchored allowlist, not an LLM classifier: clear general technical/conversational questions and covered profile introductions can skip Search; ambiguous/company/customer/date/commitment requests retrieve. Bounded history can require retrieval but never promote an ambiguous fragment to a knowledge-free route. Explicit conversation mode skips Search while requiring private-fact abstention; grounded always retrieves. Replies are prompted to start with a useful10-22-word direct sentence and use1-2 English sentences. This is a generation instruction, not a promise of perfect word counts or factuality; no second model/rewriter is used. Unconfirmed profile fields never enter the model as user facts. Unknown past experience/motivation/employer is not invented.
+
+Only knowledge-routed substantive stable partials can prefetch retrieval, after250ms debounce, capped at3 starts/turn and one speculative worker per session. Exact final reuse folds case/whitespace only; negations/digits/punctuation stay significant. No cross-user cache, fuzzy matching, changed ACL, query logging or profile persistence. Matched Search failures stay visible. Completion exposes additive `responseRoute` and `retrievalPrefetched`; an in-flight exact match counts as prefetched, without claiming saved latency. Awaiting retrieval/generation runs outside the socket actor so audio/cancel/stop remain responsive. Retired response tasks are bounded and share a5-second cleanup wait; session cancellation also stops the prefetch worker.
+
+Phrase hints use the official [Speech phrase-list API](https://learn.microsoft.com/azure/ai-services/speech-service/improve-accuracy-phrase-list) (`PhraseListGrammar.FromRecognizer`/`AddPhrase`) before recognition; explicit350..1500ms segmentation silence is applied to SpeechConfig. The original provider overloads remain available for LiveProbe with legacy settings. This does not alter the native audio format, Entra authentication, semantic relevance gate or credential flow.
+
 ## Content-free timing metrics
 
 The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:

@@ -26,6 +26,10 @@ public interface IMeetingProvider
     Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation);
     Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation);
     IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding, CancellationToken cancellation);
+    Task<ISpeechStream> StartSpeechAsync(SessionOptions options, Action<Transcript> transcript,
+        Action<ProviderException> error, CancellationToken cancellation) => StartSpeechAsync(transcript, error, cancellation);
+    IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
+        SessionOptions options, string responseRoute, CancellationToken cancellation) => AnswerAsync(conversation, grounding, cancellation);
 }
 
 public sealed class FakeMeetingProvider : IMeetingProvider
