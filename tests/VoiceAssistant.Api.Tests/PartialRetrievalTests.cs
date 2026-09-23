@@ -54,6 +54,37 @@ public sealed class PartialRetrievalTests
         Assert.Equal("grounding_unavailable", error.Code);
         Assert.DoesNotContain("private", error.Message);
         Assert.Single(provider.Calls);
+        Assert.Null(cache.Take("turn", Query, "knowledge"));
+    }
+
+    [Fact]
+    public async Task FailureRacingFinalSelectionStillSurfacesOnceThenCanRetry()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        call.Result.SetException(new InvalidOperationException("private failure"));
+        // Take may race completion; either order must preserve the initial matched failure.
+        var first = cache.Take("turn", Query, "knowledge");
+        Assert.NotNull(first);
+        var outcome = await first!;
+        Assert.Throws<ProviderException>(() => outcome.RequireGrounding());
+        Assert.Null(cache.Take("turn", Query, "knowledge"));
+    }
+
+    [Fact]
+    public async Task SuccessfulExactPrefetchRemainsReusableForManualRequest()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        call.Result.SetResult(new("no_matches", []));
+        var first = cache.Take("turn", Query, "knowledge");
+        Assert.Equal("no_matches", (await first!).RequireGrounding().Status);
+        Assert.Same(first, cache.Take("turn", Query, "knowledge"));
+        Assert.Single(provider.Calls);
     }
 
     [Fact]

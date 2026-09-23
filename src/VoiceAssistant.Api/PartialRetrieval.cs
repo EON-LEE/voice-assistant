@@ -34,6 +34,7 @@ internal sealed class PartialRetrieval : IAsyncDisposable
         internal bool Processing { get; set; }
         internal bool Finished { get; set; }
         internal bool Cancelled { get; set; }
+        internal bool Selected { get; set; }
         internal void Cancel()
         {
             Cancelled = true;
@@ -83,7 +84,15 @@ internal sealed class PartialRetrieval : IAsyncDisposable
         {
             if (!closed && route == "knowledge" && candidate is { Started: true, Cancelled: false } match &&
                 match.TurnId == turnId && match.Text == ResponseRouting.Normalize(finalText))
+            {
+                if (match.Selected && match.Result.Task.IsCompletedSuccessfully && match.Result.Task.Result.Failure is not null)
+                {
+                    match.Cancel();
+                    return null;
+                }
+                match.Selected = true;
                 return match.Result.Task;
+            }
             candidate?.Cancel();
             return null;
         }

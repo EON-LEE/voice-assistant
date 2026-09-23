@@ -80,6 +80,38 @@ public sealed partial class ApiTests
     }
 
     [Fact]
+    public async Task ManualRetryAfterMatchedPrefetchFailurePerformsFreshRecoveredRetrieval()
+    {
+        const string query = "What is our customer delivery plan?";
+        var provider = new ControlledProvider();
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "balanced" }));
+        await Receive(socket);
+        provider.Emit(new("turn", 1, query, false));
+        await provider.RetrievalStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        provider.Emit(new("turn", 2, query, true));
+        await Until(socket, "response.started");
+        provider.Release.SetException(new InvalidOperationException("private failure"));
+        Assert.Equal("grounding_unavailable", (await Until(socket, "error")).GetProperty("code").GetString());
+        var failed = await Until(socket, "response.completed");
+        Assert.Equal("unavailable", failed.GetProperty("grounding").GetString());
+        Assert.True(failed.GetProperty("retrievalPrefetched").GetBoolean());
+        Assert.Equal(1, provider.Retrievals);
+        Assert.Equal(0, provider.Answers);
+
+        provider.AutomaticRetrieval = true;
+        await Send(socket, """{"type":"response.request"}""");
+        var recovered = await Until(socket, "response.completed");
+        Assert.Equal("no_matches", recovered.GetProperty("grounding").GetString());
+        Assert.False(recovered.GetProperty("retrievalPrefetched").GetBoolean());
+        Assert.Equal("knowledge", recovered.GetProperty("responseRoute").GetString());
+        Assert.NotEqual(failed.GetProperty("responseId").GetString(), recovered.GetProperty("responseId").GetString());
+        Assert.Equal(2, provider.Retrievals);
+        Assert.Equal(1, provider.Answers);
+    }
+
+    [Fact]
     public async Task PendingPrefetchDoesNotBlockAudioCancelOrStopAndNeverLeaksObsoleteResponse()
     {
         const string query = "What is our customer delivery plan?";
@@ -173,7 +205,7 @@ public sealed partial class ApiTests
 
     private sealed class ControlledProvider : IMeetingProvider
     {
-        public bool AutomaticRetrieval { get; init; }
+        public bool AutomaticRetrieval { get; set; }
         public bool IgnoreCancellation { get; init; }
         public ManualResetEventSlim? BlockRetrieval { get; init; }
         public SessionOptions? SpeechOptions { get; private set; }
