@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using VoiceAssistant.Api;
+using VoiceAssistant.Api.Knowledge;
 
 var app = ApiApplication.Build(args);
 app.Run();
@@ -22,12 +23,24 @@ namespace VoiceAssistant.Api
             builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.None);
             var settings = ServiceSettings.Read(builder.Configuration, builder.Environment);
             builder.Services.AddSingleton(settings);
-            builder.Services.AddSingleton(TimeProvider.System);
+            builder.Services.TryAddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<TicketStore>();
             builder.Services.AddSingleton<SessionSlots>();
+            builder.Services.AddSingleton<AzureServiceClients>();
             builder.Services.TryAddSingleton<IMeetingProvider>(services => settings.Fake
                 ? new FakeMeetingProvider()
-                : new AzureMeetingProvider(settings));
+                : new AzureMeetingProvider(settings, services.GetRequiredService<AzureServiceClients>()));
+            builder.Services.TryAddSingleton<IKnowledgeStore>(services =>
+            {
+                if (settings.Fake) return new InMemoryKnowledgeStore();
+                var clients = services.GetRequiredService<AzureServiceClients>();
+                return new AzureKnowledgeStore(clients.Search,
+                    settings.EmbeddingDeployment.Length == 0 ? null : clients.OpenAI.GetEmbeddingClient(settings.EmbeddingDeployment),
+                    services.GetRequiredService<ILogger<AzureKnowledgeStore>>());
+            });
+            builder.Services.AddSingleton<KnowledgeService>();
+            builder.Services.AddSingleton<MaterialExtractor>();
+            builder.Services.AddSingleton<KnowledgeRequestReader>();
             builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
             {
                 options.MapInboundClaims = false;
@@ -98,8 +111,10 @@ namespace VoiceAssistant.Api
                 using var slot = slots.TryAcquire(objectId);
                 if (slot is null) { context.Response.StatusCode = 429; return; }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                await new MeetingSession(socket, provider, objectId, app.Logger).RunAsync(context.RequestAborted);
+                await new MeetingSession(socket, provider, objectId, app.Logger, settings.MaxSessionMinutes,
+                    context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(context.RequestAborted);
             });
+            app.MapKnowledge(settings);
             app.MapFallbackToFile("index.html");
             return app;
         }

@@ -3,6 +3,7 @@ namespace VoiceAssistant.Api;
 public sealed class ServiceSettings
 {
     public string Mode { get; init; } = "Azure";
+    public int MaxSessionMinutes { get; init; } = 30;
     public string TenantId { get; init; } = "";
     public string Audience { get; init; } = "";
     public string ClientId { get; init; } = "";
@@ -28,6 +29,7 @@ public sealed class ServiceSettings
         var settings = new ServiceSettings
         {
             Mode = config["Provider:Mode"] ?? "Azure",
+            MaxSessionMinutes = ReadMaxSessionMinutes(config),
             TenantId = Get("Authentication:TenantId"),
             Audience = Get("Authentication:Audience"),
             ClientId = Get("Authentication:ClientId"),
@@ -79,6 +81,15 @@ public sealed class ServiceSettings
         if (value is null) return 2048;
         if (int.TryParse(value, out var limit) && limit is >= 64 and <= 4096) return limit;
         throw new InvalidOperationException("Azure:ChatMaxOutputTokens must be an integer from 64 to 4096.");
+    }
+
+    public static int ReadMaxSessionMinutes(IConfiguration config)
+    {
+        var value = config["Session:MaxMinutes"];
+        if (value is null) return 30;
+        if (int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
+            out var minutes) && minutes is >= 5 and <= 180) return minutes;
+        throw new InvalidOperationException("Session:MaxMinutes must be an integer from 5 to 180.");
     }
 
     public void ValidateSearchRelevance()

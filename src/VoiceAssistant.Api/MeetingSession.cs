@@ -22,7 +22,8 @@ public sealed class SessionSlots
     }
 }
 
-public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, string objectId, ILogger logger)
+public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, string objectId, ILogger logger,
+    int maxSessionMinutes = 30, TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly Channel<SessionEvent> events = Channel.CreateBounded<SessionEvent>(
@@ -50,8 +51,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     public async Task RunAsync(CancellationToken requestAborted)
     {
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
-        lifetime.CancelAfter(TimeSpan.FromMinutes(30));
+        using var duration = new CancellationTokenSource(TimeSpan.FromMinutes(maxSessionMinutes), timeProvider ?? TimeProvider.System);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, duration.Token);
+        using var receiving = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
         ISpeechStream? speech = null;
         Task receiver = Task.CompletedTask;
         try
@@ -69,7 +71,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
                 error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
             await SendAsync(new { type = "session.ready", protocolVersion = 1 }, lifetime.Token);
-            receiver = ReceiveLoopAsync(lifetime.Token);
+            // Cancelling a pending ReceiveAsync aborts the socket; retain it until the fatal time-limit event is sent.
+            receiver = ReceiveLoopAsync(receiving.Token);
             await foreach (var message in events.Reader.ReadAllAsync(lifetime.Token))
             {
                 switch (message.Kind)
@@ -161,8 +164,10 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
-            await TryErrorAsync(overflow != 0 ? "session_overloaded" : "session_ended",
-                overflow != 0 ? "Session could not keep up. Reconnect." : "Session ended or reached its time limit.");
+            await TryErrorAsync(overflow != 0 ? "session_overloaded" : duration.IsCancellationRequested ? "session_time_limit" : "session_ended",
+                overflow != 0 ? "Session could not keep up. Reconnect." :
+                duration.IsCancellationRequested ? "Session reached its time limit. Start a new session to continue." : "Session ended.",
+                retryable: !duration.IsCancellationRequested);
         }
         catch (OperationCanceledException)
         {
@@ -178,6 +183,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         finally
         {
             lifetime.Cancel();
+            receiving.Cancel();
             generation?.Cancel();
             if (prefetch is not null) await prefetch.DisposeAsync();
             events.Writer.TryComplete();
@@ -384,11 +390,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     }
     private Task ErrorAsync(string code, string message, bool retryable, CancellationToken cancellation) =>
         SendAsync(new { type = "error", code, message, retryable }, cancellation);
-    private async Task TryErrorAsync(string code, string message)
+    private async Task TryErrorAsync(string code, string message, bool retryable = true)
     {
         if (socket.State != WebSocketState.Open) return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        try { await ErrorAsync(code, message, true, timeout.Token); }
+        try { await ErrorAsync(code, message, retryable, timeout.Token); }
         catch (Exception exception) when (exception is WebSocketException or OperationCanceledException)
         { logger.LogInformation("Meeting error could not be delivered to disconnected client."); }
     }

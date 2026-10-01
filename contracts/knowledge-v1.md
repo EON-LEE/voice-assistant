@@ -5,9 +5,15 @@ grounded replies can use them. Everything reuses the existing `meeting-knowledge
 vector search, ACL prefilter and semantic relevance gate. **No index schema change.** Original files are NOT stored
 anywhere; only extracted text chunks and their embeddings are stored, until the user deletes them.
 
-All endpoints require the existing `Meeting` authorization policy (Entra bearer JWT, delegated `Meeting.Access`, `oid`).
-Mutating requests (POST/DELETE) also require `OriginPolicy.Allows` (exact allowed Origin) and return 403 otherwise.
+In Azure/production mode all endpoints require the existing `Meeting` authorization policy (Entra bearer JWT,
+delegated `Meeting.Access`, `oid`). Mutating requests (POST/DELETE) also require `OriginPolicy.Allows`
+(exact allowed Origin) and return 403 otherwise. GET permits absent Origin (normal same-origin bearer-only GET)
+but returns403 for a supplied disallowed Origin.
 The owner is **always** the validated `oid`; never accept an owner/principal from the request.
+
+Explicit Development Fake supports offline browser upload/list/delete without Entra only for loopback peer and
+loopback Host, using fixed fake owner `00000000-0000-0000-0000-000000000001`. GET accepts absent or loopback Origin;
+POST/DELETE require loopback Origin. Cross-site/non-loopback requests are rejected. Fake cannot start in Production.
 
 ## Endpoints
 

@@ -379,7 +379,9 @@ public sealed partial class ApiTests
                 now.AddMinutes(-10), expired ? now.AddMinutes(-5) : now.AddMinutes(5),
                 new SigningCredentials(Key, SecurityAlgorithms.HmacSha256)));
         }
-        public static async Task<Host> StartAsync(bool azure = false, string environment = "Development", IMeetingProvider? provider = null)
+        public static async Task<Host> StartAsync(bool azure = false, string environment = "Development", IMeetingProvider? provider = null,
+            VoiceAssistant.Api.Knowledge.IKnowledgeStore? knowledge = null, TimeProvider? clock = null,
+            Dictionary<string, string?>? configuration = null)
         {
             var app = ApiApplication.Build([], builder =>
             {
@@ -398,6 +400,9 @@ public sealed partial class ApiTests
                     ["Azure:ChatDeployment"] = "chat",
                     ["Security:AllowedOrigins:0"] = "https://meeting.example"
                 });
+                if (configuration is not null) builder.Configuration.AddInMemoryCollection(configuration);
+                if (knowledge is not null) builder.Services.AddSingleton(knowledge);
+                if (clock is not null) builder.Services.AddSingleton(clock);
                 builder.Services.AddSingleton<IMeetingProvider>(provider ?? new FakeMeetingProvider());
                 builder.Services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {
