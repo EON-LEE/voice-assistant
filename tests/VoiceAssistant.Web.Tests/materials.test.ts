@@ -56,6 +56,7 @@ test("Binary disguised as text and invalid UTF8 are filtered, known containers a
   assert.equal(await looksBinary(new File([new Uint8Array([255, 255])], "fake.md")), true);
   assert.equal(await looksBinary(new File(["Original 한글"], "notes.txt")), false);
   assert.equal(await looksBinary(new File([new Uint8Array([0, 1])], "slide.pptx")), false);
+  assert.equal(await looksBinary(new File(["x".repeat(10000), new Uint8Array([0])], "binary-at-end.txt")), true);
 });
 test("Two-slot queue never exceeds concurrency, retry only failures does not duplicate success", async () => {
   let active = 0, maximum = 0;

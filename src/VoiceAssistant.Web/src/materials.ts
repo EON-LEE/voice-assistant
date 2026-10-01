@@ -19,11 +19,17 @@ export function fileRejection(file: Pick<File, "name" | "size">, path = file.nam
 export async function looksBinary(file: File): Promise<boolean> {
   const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   if ([".pdf", ".docx", ".pptx"].includes(extension)) return false;
-  const bytes = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
-  if (bytes.includes(0)) return true;
-  try { new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: file.size > bytes.length }); }
-  catch { return true; }
-  return bytes.some(byte => byte < 9 || byte > 13 && byte < 32);
+  const reader = file.stream().getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) { decoder.decode(); return false; }
+      if (value.some(byte => byte < 9 || byte > 13 && byte < 32)) return true;
+      decoder.decode(value, { stream: true });
+    }
+  } catch { return true; }
+  finally { await reader.cancel(); reader.releaseLock(); }
 }
 export const materialMessages: Record<string, string> = {
   invalid_request: "Check the title and file or notes format.",

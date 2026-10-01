@@ -20,9 +20,20 @@
           <audio id="demo-audio" preload="none" aria-label="Prerecorded demo input"></audio>
         </div>
         <div id="live-options" hidden>
+          <label for="audio-source">Audio source</label>
+          <select id="audio-source"><option value="display">Meeting tab / system audio</option><option value="microphone">Microphone (in-person)</option></select>
+          <div id="microphone-options" hidden>
+            <p>Real room audio is sent to Azure in Live mode. Inform participants under your company/customer policy. Internet is required. Test the level after starting, place the device near the speaker, and pause while you speak.</p>
+            <label for="microphone-device">Microphone device (labels appear after permission)</label>
+            <select id="microphone-device"><option value="">Browser default microphone</option></select>
+            <label for="input-level">Microphone input level</label><meter id="input-level" min="0" max="1" value="0"></meter>
+            <p id="microphone-warning" role="status" class="notice" hidden></p>
+          </div>
+          <div id="display-options">
           <p class="notice"><strong>Recommended: Teams in a browser tab.</strong> Choose that tab in the browser's Share prompt and enable <strong>Share tab audio</strong>. Sharing a window may provide no audio. System audio depends on your browser and OS; Teams desktop audio is not guaranteed.</p>
           <p>The browser requires video sharing to offer audio. Video stays in the browser: it is never displayed, uploaded, recorded, or retained by this app. System audio can include other apps. No microphone is requested.</p>
-          <label class="check"><input id="consent" type="checkbox"> I have permission from the participants to capture and send this meeting audio.</label>
+          </div>
+          <label class="check"><input id="consent" type="checkbox"><span id="consent-label">I have permission from the participants to capture and send this meeting audio.</span></label>
           <button id="signin" type="button" class="secondary">Sign in securely</button><span id="auth-status" role="status">Sign-in required before sharing.</span>
         </div>
         <details id="meeting-options" hidden>
@@ -52,14 +63,16 @@
           </fieldset>
         </details>
         <div class="actions"><button id="start" type="button">Start demo</button><button id="stop" type="button" class="secondary" disabled>Stop session</button><label class="check"><input id="pause" type="checkbox" disabled> Pause while speaking</label></div>
+        <p class="fine">Press P to toggle Pause while speaking when you are not typing in a field. Pause drops new audio; Stop releases the microphone or shared tracks.</p>
         <p id="error" role="alert" class="error" hidden></p>
       </section>
+      <section id="materials-host" class="card" aria-label="My meeting materials"></section>
       <div class="workspace">
         <section class="card transcript-panel" aria-labelledby="transcript-title"><div class="section-heading"><h2 id="transcript-title">English transcript</h2><span class="eyebrow">LIVE NOTES</span></div><div id="transcript" tabindex="0" aria-label="Partial and final meeting transcripts"><p class="empty">The conversation will appear here after you start.</p></div></section>
         <section class="card reply-panel" aria-labelledby="reply-title"><div class="section-heading"><h2 id="reply-title">Your next reply</h2><span id="reply-status" role="status">Ready when you are</span></div><p id="reply" class="answer">Ask for a suggestion after a final transcript arrives.</p><ul id="sources" aria-label="Suggestion sources"></ul><div class="actions"><button id="suggest" type="button" disabled>Suggest a short reply</button><button id="cancel" type="button" class="secondary" disabled>Cancel</button><button id="pin" type="button" class="secondary" disabled>Pin this answer</button></div><p class="fine">Suggestions can be wrong. Check names, facts, and commitments before speaking.</p></section>
         <section class="card pinned-panel" aria-labelledby="pinned-title"><div class="section-heading"><h2 id="pinned-title">Pinned answer</h2><button id="unpin" type="button" class="text-button" disabled>Unpin</button></div><p id="pinned" class="answer">Keep a useful answer here. New suggestions will not replace it.</p><ul id="pinned-sources" aria-label="Pinned sources"></ul></section>
       </div>
-      <footer>Audio is streamed, never recorded to a file. Stop releases all shared tracks. Pause drops new audio locally; already-sent audio cannot be recalled. Text stays only in this page's memory.</footer>
+      <footer>Audio is streamed, never recorded to a file. Stop releases all microphone/shared tracks. Pause drops new audio locally; already-sent audio cannot be recalled. Meeting transcripts and replies stay in page memory. Uploaded materials are stored separately as described above.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

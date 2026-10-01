@@ -3,12 +3,14 @@ import workletUrl from "./audio.worklet.ts?worker&url";
 import demoAudioUrl from "./assets/demo-original.wav?url";
 import { BrowserAuth } from "./auth.js";
 import { DemoAudioSource } from "./demo.js";
-import { DisplayAudioSource, SyntheticSource } from "./capture.js";
+import { DisplayAudioSource, MicrophoneAudioSource, SyntheticSource } from "./capture.js";
 import { MeetingSession } from "./session.js";
 import { ReplyState, type Reply } from "./state.js";
 import { DemoTransport, SocketTransport, asError, isLoopback } from "./transport.js";
 import { createStartMessage, parsePhrases, validateOptions, type SessionOptions } from "./options.js";
 import { RenderScheduler } from "./render-scheduler.js";
+import { MaterialsPanel } from "./materials-panel.js";
+import { referenceText } from "./materials.js";
 
 function element<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -24,8 +26,11 @@ const cancel = element<HTMLButtonElement>("cancel");
 const pin = element<HTMLButtonElement>("pin");
 const consent = element<HTMLInputElement>("consent");
 const signin = element<HTMLButtonElement>("signin");
+const audioSource = element<HTMLSelectElement>("audio-source");
+const micDevice = element<HTMLSelectElement>("microphone-device");
 const state = new ReplyState();
 const auth = new BrowserAuth();
+const materials = new MaterialsPanel(element("materials-host"), auth, () => render());
 let session: MeetingSession | null = null;
 let configReady = false;
 let fake = false;
@@ -83,7 +88,7 @@ function sourceList(id: string, reply: Reply | null): void {
   }
   for (const source of reply?.sources ?? []) {
     const item = document.createElement("li");
-    item.textContent = `${source.title} — ${source.url}${source.updatedAt ? ` · updated ${source.updatedAt}` : ""}`;
+    item.textContent = referenceText(source);
     list.append(item);
   }
 }
@@ -124,12 +129,29 @@ function renderControls(): void {
   stop.disabled = !session;
   mode.disabled = !!session;
   consent.disabled = !!session;
+  audioSource.disabled = micDevice.disabled = !!session;
   signin.disabled = !!session || !configReady || fake;
   element<HTMLFieldSetElement>("meeting-fields").disabled = !!session;
   if (configReady && !fake && !auth.signedIn)
     element("auth-status").textContent = "Sign in first, then click Share meeting audio.";
 }
-function render(): void { renderControls(); scheduler.flush(); }
+function renderSource(): void {
+  const microphone = audioSource.value === "microphone";
+  element("microphone-options").hidden = !microphone;
+  element("display-options").hidden = microphone;
+  element("consent-label").textContent = microphone
+    ? "I have permission to capture and send this room's audio, and participants are informed under company/customer policy."
+    : "I have permission from the participants to capture and send this meeting audio.";
+  start.textContent = mode.value === "demo" ? "Start demo" : mode.value === "synthetic" ? "Start synthetic test"
+    : microphone ? "Start microphone" : "Share meeting audio";
+}
+function renderMaterialsAccess(): void {
+  materials.setAccess(mode.value !== "demo" && configReady && auth.signedIn,
+    mode.value === "demo" ? "Materials are disabled in Demo. Choose Live and sign in to manage your materials."
+      : !auth.signedIn ? "Sign in before managing meeting materials."
+      : fake ? "LOCAL FAKE: test materials are held in the local service, not Azure." : "Signed in: materials are stored in your Azure Search index until deleted.");
+}
+function render(): void { renderControls(); scheduler.flush(); renderMaterialsAccess(); }
 async function configureMode(): Promise<void> {
   const generation = ++configGeneration;
   error("");
@@ -137,11 +159,11 @@ async function configureMode(): Promise<void> {
   element("live-options").hidden = mode.value !== "live";
   element("demo-options").hidden = mode.value !== "demo";
   element("meeting-options").hidden = mode.value === "demo";
-  start.textContent = mode.value === "demo" ? "Start demo" : mode.value === "synthetic" ? "Start synthetic test" : "Share meeting audio";
+  renderSource();
   element("mode-help").textContent = mode.value === "demo"
     ? "AUDIO DEMO — hear a prerecorded English sample, then see its scripted transcript and reply. No sign-in, capture, or Azure AI calls."
     : mode.value === "synthetic" ? "LOCAL FAKE SERVICE — synthetic silence through a real WebSocket. No media permission or cloud calls."
-    : "LIVE — explicitly share a tab or screen with audio. No audio sharing starts until you click Share.";
+    : "LIVE — choose tab/system audio or the microphone explicitly. Audio only starts when you click Start and grant permission.";
   render();
   if (mode.value === "demo") return;
   try {
@@ -157,6 +179,7 @@ async function configureMode(): Promise<void> {
 }
 mode.addEventListener("change", () => { consent.checked = false; void configureMode(); });
 consent.addEventListener("change", render);
+audioSource.addEventListener("change", () => { consent.checked = false; renderSource(); render(); });
 for (const id of ["profile-name", "profile-role", "profile-project"])
   element(id).addEventListener("input", () => { element<HTMLInputElement>("profile-confirmed").checked = false; });
 signin.addEventListener("click", () => {
@@ -173,15 +196,38 @@ start.addEventListener("click", () => {
     catch (e) { error(asError(e).message); return; }
   }
   error(""); scheduler.cancel(); state.reset(); transcriptDirty = true; pause.checked = false;
+  const shared = {
+    context: () => new AudioContext(),
+    node: (context: AudioContext) => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
+    workletUrl,
+  };
+  const microphone = selectedMode === "live" && audioSource.value === "microphone";
+  if (microphone && !navigator.mediaDevices?.getUserMedia) {
+    error("Microphone access requires HTTPS and a supported browser."); return;
+  }
   const source = selectedMode === "live"
-    ? new DisplayAudioSource({
+    ? microphone ? new MicrophoneAudioSource({
+      ...shared,
+      getUserMedia: constraints => {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone access requires HTTPS and a supported browser.");
+        return navigator.mediaDevices.getUserMedia(constraints);
+      },
+      devices: navigator.mediaDevices,
+      deviceId: micDevice.value || undefined,
+      onDevices: devices => {
+        const selected = micDevice.value;
+        micDevice.replaceChildren(new Option("Browser default microphone", ""));
+        for (const device of devices) micDevice.add(new Option(device.label || "Microphone", device.deviceId));
+        if (devices.some(device => device.deviceId === selected)) micDevice.value = selected;
+      },
+      onWarning: message => { element("microphone-warning").textContent = message; element("microphone-warning").hidden = !message; },
+      onLevel: level => { element<HTMLMeterElement>("input-level").value = level; },
+    }) : new DisplayAudioSource({
+      ...shared,
       getDisplayMedia: () => {
         if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("This browser does not support audio sharing. Use current Edge or Chrome over HTTPS.");
         return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       },
-      context: () => new AudioContext(),
-      node: context => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
-      workletUrl,
     }) : selectedMode === "demo"
       ? new DemoAudioSource(element<HTMLAudioElement>("demo-audio"), demoAudioUrl)
       : new SyntheticSource();
@@ -201,7 +247,8 @@ start.addEventListener("click", () => {
     status => {
       element("status").textContent = selectedMode === "demo" && status.startsWith("Connected")
         ? "DEMO · sample playback and scripted responses (not live AI)"
-        : (selectedMode === "demo" ? "DEMO · " : fake && selectedMode !== "demo" ? "LOCAL FAKE · " : "") + status;
+        : (selectedMode === "demo" ? "DEMO · " : fake && selectedMode !== "demo" ? "LOCAL FAKE · " : "") + status
+          + (microphone && status.startsWith("Connected") ? fake ? " · microphone room audio sent to localhost" : " · microphone room audio sent to Azure" : "");
       if (status.startsWith("Stopped")) { session = null; pause.checked = false; consent.checked = false; state.pause(true); }
       render();
     }, e => error(e.message), options);
@@ -211,6 +258,12 @@ start.addEventListener("click", () => {
 });
 stop.addEventListener("click", () => { scheduler.flush(); void session?.stop(); render(); });
 pause.addEventListener("change", () => { state.pause(pause.checked); session?.pause(pause.checked); render(); });
+document.addEventListener("keydown", event => {
+  if (event.key.toLowerCase() !== "p" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || pause.disabled) return;
+  const target = event.target;
+  if (target instanceof HTMLElement && (target.closest("input,textarea,select,button") || target.isContentEditable)) return;
+  event.preventDefault(); pause.checked = !pause.checked; pause.dispatchEvent(new Event("change"));
+});
 suggest.addEventListener("click", () => {
   if (!canSuggest()) return;
   state.request(); error(""); session?.request(); render();

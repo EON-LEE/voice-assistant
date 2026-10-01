@@ -1,6 +1,6 @@
 # Browser meeting assistant
 
-Installation-free TypeScript/Vite frontend for the same-origin Azure-hosted API. End users open a URL; no Windows app, extension, download, or microphone permission is needed. The preserved desktop project is not a dependency.
+Installation-free TypeScript/Vite frontend for the same-origin Azure-hosted API. End users open a URL; no Windows app, extension, or download is needed. Tab capture never requests microphone permission; the explicit in-person microphone mode does. The preserved desktop project is not a dependency.
 
 ## Build and run
 
@@ -65,7 +65,7 @@ The shared API accepts integer silence 350..1500; the UI deliberately offers the
 
 ## Browser capture constraints and consent
 
-Use **Teams in a browser tab** where possible. After selecting Live, sign in (Azure only), check participant permission, then click **Share meeting audio**. Select the Teams tab and enable **Share tab audio** in the browser/OS prompt. The application invokes `getDisplayMedia({ video: true, audio: true })` only from that click, and creates/resumes `AudioContext` in the same gesture.
+For remote meetings use **Teams in a browser tab** where possible. After selecting Live, choose **Meeting tab / system audio**, sign in (Azure only), check participant permission, then click **Share meeting audio**. Select the Teams tab and enable **Share tab audio** in the browser/OS prompt. The application invokes `getDisplayMedia({ video: true, audio: true })` only from that click, and creates/resumes `AudioContext` in the same gesture.
 
 The browser requires `video: true` to offer display audio; video is not attached to a video element, inspected, uploaded, recorded, or retained by this app. All video and audio tracks are stopped on Stop, session failure, permission/setup failure, source `ended`/audio `mute`, and page unload. A share granted after a cancelled/pending picker is also immediately stopped. Browsers do not let websites dismiss the picker themselves; dismiss an outstanding picker if you stop while it is open.
 
@@ -74,6 +74,28 @@ Audio availability depends on the browser, OS, selected surface, and user's audi
 The live source converts only audio tracks with a fixed-memory AudioWorklet: mono downmix, 127-tap low-pass FIR anti-alias filter, continuous fractional resampling to 16 kHz, clipped signed little-endian PCM16. It sends 640-byte/20ms frames without a WAV header, only after `session.ready`. Video is never sent. Fifty recyclable transferable buffers cap the worklet queue at one second (32,000 bytes), tolerating short UI-thread stalls without losing samples; no growing per-sample arrays are used. Worklet starvation and WebSocket `bufferedAmount` exceeding 32,000 bytes still stop visibly rather than accumulating unbounded audio or silently losing speech. Buffer capacity is not a fixed delay: frames are sent immediately while the UI thread is responsive.
 
 Pause while speaking drops audio locally and cancels suggestions. Epoch-tagged worklet frames prevent already-queued pre-pause buffers being uploaded after resume; DSP history is reset to avoid retaining paused speech. Pause leaves the shared tracks open; **Stop** releases them. Already-uploaded audio cannot be recalled. Browser throttling/suspension can interrupt capture; keep the page available. No automatic reconnect, recording, TTS, Teams posting, or external source-link navigation is performed.
+
+## In-person use
+
+Select **Live → Audio source → Microphone (in-person)**, sign in, inform the participants under your company/customer policy, check the room-audio permission checkbox, then click **Start microphone**. Internet is required for Azure processing. Test the microphone first: the input-level meter should respond after Start. Place the laptop/phone near the speaker without blocking its microphone. Room acoustics, noise and browser support affect recognition; this does not identify individual speakers or guarantee a particular latency.
+
+This explicit choice requests `getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true,deviceId?:{exact:...}},video:false})` from the Start click. It never requests screen capture and never falls back to another source. After permission, the device list shows `enumerateDevices()` audio-input labels; Stop before selecting a different device for the next session. Selection stays in page memory only. Permission denial, no device, a busy device, disconnection and device removal produce actionable errors; missing devices are not silently replaced.
+
+The microphone reuses the same fixed-memory Worklet, PCM16/16kHz conversion, 50-frame capacity, ready-gated WebSocket and one-use-ticket auth as tab capture. A parallel 256-sample AnalyserNode updates the level meter at 10Hz without allocating per-frame sample arrays or changing PCM transmission. **Pause while speaking** drops audio and cancels generation; press **P** when not typing in an input, textarea, select, editable area or button to toggle it. Stop releases all tracks and closes the context (the browser microphone indicator should turn off). A system/browser `mute` displays a warning, drops microphone frames and keeps the session; `unmute` clears the warning and resumes unless the user remains paused. An ended track stops the session instead. Permission never starts automatically on page load, mode selection or device selection.
+
+The server controls session duration (`Session:MaxMinutes`). Its exact fatal `session_time_limit` event produces **Session time limit reached – click Start to continue** after cleanup. Other normal server closes are shown as ended sessions, abnormal closes as unexpected disconnects; normal closure alone is not falsely classified as a time limit. A new Start always requires fresh capture consent.
+
+## My meeting materials
+
+The collapsible panel is disabled in Demo with an explanation. Choose Live and sign in to manage materials; the localhost-only Fake backend uses its explicitly labelled fixed fake owner without a token. Production calls the existing memory-only MSAL token flow and adds `Authorization: Bearer` only to `/api/knowledge` or a validated document-ID path; redirects to other origins are refused. A 401 prompts sign-in rather than falling back to Fake. Document ownership comes only from the server's authenticated identity; no owner ID is sent.
+
+Select multiple files or a folder (`webkitdirectory`), or drag/drop files/folders. Selection shows ready/skipped counts before **Upload selected files**. Filtering excludes hidden directories/files, `node_modules`, `.git`, `bin`, `obj`, `dist`, `build`, `.venv`, `__pycache__`, unsupported extensions, files above 5 MiB, and binary/non-UTF-8 content masquerading as text. Supported DOCX/PPTX/PDF containers are sent to the server for bounded extraction; the client does not parse them. Drag-folder traversal stops at 2,000 entries and a selection/queue is capped at 300 files. No ignored file is uploaded. See `contracts/knowledge-v1.md` for the exact extension list and extraction/ACL guarantees.
+
+Alternatively paste notes with a title (1–200 characters; notes up to 400,000 characters). Uploads use at most **two concurrent requests**, including notes. Per-item state is queued/uploading-and-processing/success/failure, not a fabricated byte-percentage meter. **Retry failed only** never replays successful or cancelled items. **Cancel uploads** aborts active client requests and cancels queued items; an already accepted server upload may still complete, so refresh and delete if necessary. Clear finished entries releases their in-memory file/text references. Uploading is allowed while a meeting runs and does not pause audio.
+
+The list displays titles, chunk counts and dates with keyboard-accessible per-item Delete; the usage line shows documents/chunks versus server limits. Changes are refreshed after successful uploads/deletes. Error codes map to safe messages (too large, unsupported type, no extractable text, quota, busy, unavailable, or sign-in required); raw server/cloud errors and file contents are not logged or displayed as diagnostics. Reference sources whose host is `my-materials.invalid` render the document title with **My meeting materials**, never that placeholder URL or an automatic navigation link.
+
+**Extracted text and search embeddings are stored in your Azure subscription's Search index until you delete them; the original file is not stored; do not upload anything you are not allowed to process in Azure.** Meeting transcript/reply text remains in page memory; uploaded material is a separate persistent server resource. Uploaded text is untrusted evidence, not instructions. This panel does not grant tenant-wide knowledge access or claim live Azure storage was tested locally.
 
 ## Agreed browser authentication contract
 
@@ -127,6 +149,8 @@ Streaming partial/delta content updates coalesce behind **one pending 50ms rende
 ## Validation
 
 `npm test` compiles and runs Node's test runner with tests in `tests/VoiceAssistant.Web.Tests`: conversion rates/endianness, stereo/clipping/nonfinite samples, chunk continuity and anti-alias rejection, reducer revision/cancellation/stale IDs/pins, strict event parsing, ready gating, disconnect/fatal/device cleanup, no-audio/permission failure, picker cancellation and late tracks, worklet source lifecycle mocks, explicit Demo, and WebSocket backpressure. No test requests actual meeting/screen or microphone permission.
+
+Microphone tests add mocked browser lifecycle/constraints, permission/busy/no-device errors, recoverable mute/unmute, device removal, grant-after-abort, pause epochs, level meter and exact time-limit handling. Materials units cover contract requests, safe errors, filtering/UTF-8, bounds, two-slot concurrency, cancellation, retry-only-failed and personal-reference formatting. `microphone.spec.js` launches only its isolated Chromium using `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<original fixture>`; it never touches a real user's microphone or opens a screen picker. The actual-Fake case uses `VOICE_ASSISTANT_BACKEND_E2E=1`. `materials.spec.js` labels its route-mocked scenarios; opt in to real localhost Fake knowledge CRUD with `VOICE_ASSISTANT_KNOWLEDGE_E2E=1` once those endpoints are running. Its injected bearer-auth case is Vite-only (`VOICE_ASSISTANT_VITE_AUTH_TESTS=1`). Keep the existing Playwright **1.61.1** lock/runtime; no browser package upgrade is required.
 
 `npm run build` runs strict TypeScript typechecking and bundles both main UI and AudioWorklet. A local browser smoke checks Demo Start/Suggest/Pin/Pause/Stop. Coordinator-owned Playwright tests in a separate E2E directory cover full mocked-browser capture and actual fake-backend integration after merge.
 
