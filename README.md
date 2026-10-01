@@ -119,6 +119,13 @@ final replay. A separate fictional-profile test produced only the three
 confirmed facts, with no invented personal history. Voice Live comparison and
 a larger real-meeting sample remain future validation, not completed work.
 
+## In-person meetings and personal meeting materials
+
+* **Microphone mode:** Live → Audio source → *Microphone (in-person)* uses the same PCM pipeline, transcript, reply, pin, pause and stop controls as tab capture. It still needs internet and sends the room audio to Azure; inform participants as your company/customer policy requires. See the Web README for the in-person checklist.
+* **My meeting materials:** after sign-in you can upload notes, meeting minutes, slides (`.pptx`), documents (`.docx`, `.pdf` text layer), text/Markdown, transcripts (`.vtt/.srt`) and source-code files or whole folders, or paste notes. Only extracted text chunks and embeddings are stored (Azure AI Search, visible only to your Entra object ID) until you delete them; original files are not stored. Contract: `contracts/knowledge-v1.md`.
+* **Longer sessions:** the maximum session length is the deployment setting `sessionMaxMinutes` (currently 90). At the limit the app says so and you click Start again.
+* **Verified (2026-10-01):** API 429 tests, web 89 unit tests and 38 browser tests (including real Chromium fake-microphone audio into the local Fake API and real upload/list/delete against it); infra checks pass. On the deployed Azure app with the operator identity: anonymous access 401, a pasted note and an uploaded Markdown file were indexed, a spoken English question (Windows SAPI synthesized, original) was transcribed and answered from the uploaded note with that note as the only reference, then after deletion no uploaded evidence was used; a legacy `.doc` was rejected. Record: `tests/acceptance-results/materials-2026-10-01.json`.
+* **Not verified:** a physical microphone in a real room, the browser microphone against Azure (the live test streamed PCM through the real WebSocket instead), interactive tenant sign-in, `.pdf/.docx/.pptx` on Azure (covered by in-process tests only), 30–90 minute real sessions, US-region latency and large code-base uploads.
 ## Build and test
 
 Contributors need Node.js 22 and the .NET 8 SDK, not only the .NET runtime.

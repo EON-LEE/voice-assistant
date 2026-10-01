@@ -1,0 +1,95 @@
+{
+  "runId": "first",
+  "startedAt": "2026-10-01T14:24:12.748Z",
+  "steps": [
+    {
+      "name": "anonymous list rejected",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "authenticated list",
+      "ok": true,
+      "detail": "HTTP 200, docs=0, chunks=0"
+    },
+    {
+      "name": "paste notes created",
+      "ok": true,
+      "detail": "HTTP 201 chunks=1"
+    },
+    {
+      "name": "file upload created",
+      "ok": true,
+      "detail": "HTTP 201 chunks=1"
+    },
+    {
+      "name": "legacy binary rejected safely",
+      "ok": true,
+      "detail": "HTTP 415"
+    },
+    {
+      "name": "created documents listed",
+      "ok": true,
+      "detail": "docs=2"
+    },
+    {
+      "name": "question grounded in uploaded notes",
+      "ok": true,
+      "detail": "{\"grounding\":\"grounded\",\"sources\":[\"Zephyr rollout meeting notes\"]}"
+    },
+    {
+      "name": "reply mentions notes facts",
+      "ok": true,
+      "detail": "The agreed launch window is Thursday 14 November, between 02:00 and 04:00 UTC. Priya Nair from the platform operations team owns the rollout checklist."
+    },
+    {
+      "name": "document deleted",
+      "ok": true,
+      "detail": "HTTP 204"
+    },
+    {
+      "name": "document deleted",
+      "ok": true,
+      "detail": "HTTP 204"
+    },
+    {
+      "name": "deleted documents no longer listed",
+      "ok": true,
+      "detail": "docs=0"
+    },
+    {
+      "name": "after deletion no uploaded evidence is used",
+      "ok": true,
+      "detail": "{\"grounding\":\"no_matches\",\"sources\":[],\"text\":\"Could you please clarify your question about the Zephyr rollout planning?\"}"
+    }
+  ],
+  "sessions": [
+    {
+      "label": "with-materials-1",
+      "finals": [
+        "Quick question for you.",
+        "What launch window did we agree on for the Zephyr rollout and who owns the rollout checklist?"
+      ],
+      "grounding": "grounded",
+      "responseRoute": "knowledge",
+      "text": "The agreed launch window is Thursday 14 November, between 02:00 and 04:00 UTC. Priya Nair from the platform operations team owns the rollout checklist.",
+      "sources": [
+        "Zephyr rollout meeting notes"
+      ],
+      "errors": []
+    },
+    {
+      "label": "after-delete",
+      "finals": [
+        "Quick question for you."
+      ],
+      "grounding": "no_matches",
+      "responseRoute": "knowledge",
+      "text": "Could you please clarify your question about the Zephyr rollout planning?",
+      "sources": [],
+      "errors": []
+    }
+  ],
+  "finishedAt": "2026-10-01T14:24:42.228Z",
+  "ok": true
+}
