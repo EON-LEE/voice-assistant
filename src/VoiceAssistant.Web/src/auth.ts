@@ -50,6 +50,25 @@ export class BrowserAuth {
     const result = await this.app!.loginPopup({ scopes: [this.config.scope] });
     this.account = result.account;
   }
+  private async token(): Promise<string> {
+    if (!this.account || !this.app || !this.config) throw new Error("Sign in before accessing meeting materials or sharing audio.");
+    try {
+      return (await this.app.acquireTokenSilent({ scopes: [this.config.scope], account: this.account })).accessToken;
+    } catch (error) {
+      if (error instanceof InteractionRequiredAuthError) { this.account = undefined; throw new Error("Sign-in expired. Sign in again to continue."); }
+      throw error;
+    }
+  }
+  async knowledgeRequest(path: string, init: RequestInit = {}): Promise<Response> {
+    if (!/^\/api\/knowledge(?:\/[0-9a-f]{32})?$/.test(path)) throw new Error("Invalid materials endpoint.");
+    const config = await this.initialize();
+    const headers = new Headers(init.headers);
+    if (config.mode === "Azure") headers.set("Authorization", `Bearer ${await this.token()}`);
+    else headers.delete("Authorization");
+    const response = await this.deps.fetch(path, { ...init, headers, credentials: "same-origin", cache: "no-store", redirect: "error" });
+    if (response.status === 401 || response.status === 403) this.account = undefined;
+    return response;
+  }
   async endpoint(synthetic: boolean): Promise<URL> {
     const config = await this.initialize();
     const url = new URL("/api/meeting", this.deps.location.origin);
