@@ -61,6 +61,10 @@ param ingestionPrincipalId string = ''
   'Group'
 ])
 param ingestionPrincipalType string = 'User'
+@description('Maximum minutes one meeting session may stay open (API Session__MaxMinutes).')
+@minValue(5)
+@maxValue(180)
+param sessionMaxMinutes int = 90
 @description('Optional pre-existing Azure Monitor action group ARM ID. No email/webhook content is configured here.')
 param alertActionGroupId string = ''
 
@@ -68,7 +72,8 @@ var suffix = uniqueString(resourceGroup().id, namePrefix)
 var appName = '${namePrefix}-web'
 var speechUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f2dc8367-1007-4938-bd23-fe263f013447')
 var openAIUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
-var searchReaderRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '1407120a-92aa-4202-b7e9-c0e197c71c8f')
+// Search Index Data Contributor: the runtime stores each user's own uploaded meeting materials (ACL = caller oid).
+var searchDataRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-runtime'
@@ -188,9 +193,9 @@ resource openAIAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   properties: { principalId: identity.properties.principalId, principalType: 'ServicePrincipal', roleDefinitionId: openAIUserRole }
 }
 resource searchAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(search.id, identity.id, searchReaderRole)
+  name: guid(search.id, identity.id, searchDataRole)
   scope: search
-  properties: { principalId: identity.properties.principalId, principalType: 'ServicePrincipal', roleDefinitionId: searchReaderRole }
+  properties: { principalId: identity.properties.principalId, principalType: 'ServicePrincipal', roleDefinitionId: searchDataRole }
 }
 
 resource ingestionSearchService 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(ingestionPrincipalId)) {
@@ -281,6 +286,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'Azure__SearchIndex', value: searchIndexName }
           { name: 'Azure__SearchSemanticConfiguration', value: 'meeting-semantic' }
           { name: 'Azure__SearchMinimumRerankerScore', value: '2.0' }
+          { name: 'Session__MaxMinutes', value: string(sessionMaxMinutes) }
           { name: 'Logging__LogLevel__Microsoft.AspNetCore', value: 'Warning' }
           { name: 'Logging__LogLevel__Azure', value: 'Warning' }
         ]

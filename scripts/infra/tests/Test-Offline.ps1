@@ -129,6 +129,13 @@ try {
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
     Assert-True (-not $environment.properties.appLogsConfiguration.PSObject.Properties['destination'] -and
         -not $environment.properties.appLogsConfiguration.PSObject.Properties['logAnalyticsConfiguration']) 'Log destination/workspace are unset; never send the unsupported literal none'
+    $searchDataRoles = @($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
+        $_.properties.roleDefinitionId -eq "[variables('searchDataRole')]" -and $_.properties.principalType -eq 'ServicePrincipal' })
+    Assert-True ($searchDataRoles.Count -eq 1 -and $template.variables.searchDataRole -match '8ebe5a00-799e-43f5-93ac-243d3dce84a7' -and -not ($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
+        $_.properties.roleDefinitionId -match '1407120a-92aa-4202-b7e9-c0e197c71c8f' })) 'Runtime identity has Search Index Data Contributor for per-user materials, no redundant Reader'
+    Assert-True ((@($env | Where-Object name -EQ 'Session__MaxMinutes')[0].value -eq "[string(parameters('sessionMaxMinutes'))]" -and
+        $template.parameters.sessionMaxMinutes.defaultValue -eq 90 -and $template.parameters.sessionMaxMinutes.minValue -eq 5 -and
+        $template.parameters.sessionMaxMinutes.maxValue -eq 180)) 'Session maximum is an explicit bounded parameter'
     $blobRoles = @($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
         $_.properties.roleDefinitionId -match 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' })
     Assert-True ($blobRoles.Count -eq 1 -and $blobRoles[0].properties.principalId -eq "[parameters('ingestionPrincipalId')]" -and

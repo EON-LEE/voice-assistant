@@ -28,7 +28,7 @@ the existing registry. Provider registrations must already be approved.
 | --- | --- | --- |
 | Runtime managed identity | Cognitive Services Speech User | Speech account |
 | Runtime managed identity | Cognitive Services OpenAI User | OpenAI account |
-| Runtime managed identity | Search Index Data Reader | Search service |
+| Runtime managed identity | Search Index Data Contributor (reads for grounding; writes only each signed-in user's own uploaded meeting materials, ACL = caller object ID) | Search service |
 | Runtime managed identity | AcrPull | Existing registry |
 | Optional ingestion operator | Search Service Contributor and Search Index Data Contributor | Search service |
 | Optional ingestion operator | Cognitive Services OpenAI User | OpenAI account |
