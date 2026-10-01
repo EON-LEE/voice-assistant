@@ -33,9 +33,10 @@ export class SocketTransport implements Transport {
         catch (error) { fail(asError(error)); }
       };
       socket.onerror = () => fail(new Error("WebSocket connection failed. Check sign-in and server availability."));
-      socket.onclose = () => {
+      socket.onclose = event => {
         signal.removeEventListener("abort", abort);
-        fail(new Error("Server disconnected. Audio has stopped; reconnect explicitly."));
+        fail(new Error(event.code === 1000 ? "The server ended this session. Click Start to continue."
+          : "Server disconnected unexpectedly. Audio has stopped; click Start to reconnect."));
       };
     });
   }

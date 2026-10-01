@@ -10,6 +10,7 @@ export class MeetingSession {
   private paused = false;
   private handshake: ReturnType<typeof setTimeout> | undefined;
   private stopTask: Promise<void> | undefined;
+  private stopStatus = "Stopped · no capture";
   constructor(private readonly source: AudioSource, private readonly transport: Transport,
     private readonly event: (event: ServerEvent) => void,
     private readonly status: (text: string) => void, private readonly error: (error: Error) => void,
@@ -43,6 +44,8 @@ export class MeetingSession {
         this.status("Connected · audio streaming");
       } else if (e.type === "session.ready") throw new Error("Unexpected duplicate session.ready.");
       this.event(e);
+      if (e.type === "error" && e.code === "session_time_limit")
+        this.stopStatus = "Stopped · Session time limit reached – click Start to continue";
       if (e.type === "error" && !e.retryable) this.fail(new Error(`${e.code}: ${e.message}`));
     } catch (error) { this.fail(asError(error)); }
   }
@@ -72,7 +75,7 @@ export class MeetingSession {
     this.transport.close();
     this.lifetime.abort();
     this.stopTask = this.source.stop().catch(error => this.error(asError(error)))
-      .finally(() => this.status("Stopped · no capture"));
+      .finally(() => this.status(this.stopStatus));
     return this.stopTask;
   }
 }
