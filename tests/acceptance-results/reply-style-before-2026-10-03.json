@@ -1,0 +1,151 @@
+{
+  "runId": "style-before",
+  "startedAt": "2026-10-02T15:17:38.973Z",
+  "steps": [
+    {
+      "name": "note created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "q1 reply received",
+      "ok": true,
+      "detail": "22 words"
+    },
+    {
+      "name": "q2 reply received",
+      "ok": true,
+      "detail": "14 words"
+    },
+    {
+      "name": "q3 reply received",
+      "ok": true,
+      "detail": "44 words"
+    },
+    {
+      "name": "q4 reply received",
+      "ok": true,
+      "detail": "31 words"
+    },
+    {
+      "name": "q5 reply received",
+      "ok": true,
+      "detail": "15 words"
+    },
+    {
+      "name": "q6 reply received",
+      "ok": true,
+      "detail": "27 words"
+    },
+    {
+      "name": "note deleted",
+      "ok": true,
+      "detail": "HTTP 204"
+    }
+  ],
+  "sessions": [
+    {
+      "label": "q1",
+      "question": "Can you tell us what the main risk is for the Zephyr rollout and how you plan to reduce it?",
+      "grounding": "grounded",
+      "route": "knowledge",
+      "sources": [
+        "Zephyr rollout meeting notes"
+      ],
+      "text": "The main risk is a slow database migration, and we’ll reduce it by running the migration a week early on a copy.",
+      "wordCount": 22,
+      "sentenceCount": 1,
+      "maxSentenceWords": 22,
+      "longWords": 0,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q2",
+      "question": "Why did the team choose a staged rollout instead of releasing everything at once?",
+      "grounding": "grounded",
+      "route": "knowledge",
+      "sources": [
+        "Zephyr rollout meeting notes"
+      ],
+      "text": "To limit blast radius and reduce risk if something goes wrong during the rollout.",
+      "wordCount": 14,
+      "sentenceCount": 1,
+      "maxSentenceWords": 14,
+      "longWords": 0,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q3",
+      "question": "What is the difference between latency and throughput and which one matters more for this service?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "Latency is the time for one request to complete, while throughput is how many requests the service can handle per second.\n\nWhich matters more depends on the service’s goal: user-facing interactions usually favor low latency, while batch or high-volume systems usually favor high throughput.",
+      "wordCount": 44,
+      "sentenceCount": 2,
+      "maxSentenceWords": 23,
+      "longWords": 5,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q4",
+      "question": "Could you walk us through your plan for the next two weeks and what support do you need from us?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "I’ll focus on the highest-priority rollout tasks, then share a day-by-day plan for the next two weeks. I’ll also call out any blockers and specific support I need from the team.",
+      "wordCount": 31,
+      "sentenceCount": 2,
+      "maxSentenceWords": 17,
+      "longWords": 1,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q5",
+      "question": "We noticed the error rate went up last night. Do you know what caused it?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "I don’t know the cause yet; we should check logs, recent deploys, and service dependencies.",
+      "wordCount": 15,
+      "sentenceCount": 1,
+      "maxSentenceWords": 15,
+      "longWords": 1,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q6",
+      "question": "How would you explain the benefit of this architecture to a non-technical stakeholder?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "It simplifies the system so teams can deliver changes faster, with less risk and easier maintenance. That usually means quicker updates, fewer outages, and lower long-term cost.",
+      "wordCount": 27,
+      "sentenceCount": 2,
+      "maxSentenceWords": 16,
+      "longWords": 2,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    }
+  ],
+  "stats": {
+    "n": 6,
+    "meanWords": 25.5,
+    "maxWords": 44,
+    "formatted": 0,
+    "prefixed": 0
+  },
+  "finishedAt": "2026-10-02T15:18:46.189Z",
+  "ok": true
+}
