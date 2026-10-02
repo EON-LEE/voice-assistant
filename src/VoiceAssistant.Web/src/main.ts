@@ -9,7 +9,6 @@ import { ReplyState, type Reply } from "./state.js";
 import { DemoTransport, SocketTransport, asError, isLoopback } from "./transport.js";
 import { createStartMessage, parsePhrases, validateOptions, type SessionOptions } from "./options.js";
 import { RenderScheduler } from "./render-scheduler.js";
-import { MaterialsPanel } from "./materials-panel.js";
 import { referenceText } from "./materials.js";
 
 function element<T extends HTMLElement>(id: string): T {
@@ -30,7 +29,6 @@ const audioSource = element<HTMLSelectElement>("audio-source");
 const micDevice = element<HTMLSelectElement>("microphone-device");
 const state = new ReplyState();
 const auth = new BrowserAuth();
-const materials = new MaterialsPanel(element("materials-host"), auth, () => render());
 let session: MeetingSession | null = null;
 let configReady = false;
 let fake = false;
@@ -145,13 +143,7 @@ function renderSource(): void {
   start.textContent = mode.value === "demo" ? "Start demo" : mode.value === "synthetic" ? "Start synthetic test"
     : microphone ? "Start microphone" : "Share meeting audio";
 }
-function renderMaterialsAccess(): void {
-  materials.setAccess(mode.value !== "demo" && configReady && auth.signedIn,
-    mode.value === "demo" ? "Materials are disabled in Demo. Choose Live and sign in to manage your materials."
-      : !auth.signedIn ? "Sign in before managing meeting materials."
-      : fake ? "LOCAL FAKE: test materials are held in the local service, not Azure." : "Signed in: materials are stored in your Azure Search index until deleted.");
-}
-function render(): void { renderControls(); scheduler.flush(); renderMaterialsAccess(); }
+function render(): void { renderControls(); scheduler.flush(); }
 async function configureMode(): Promise<void> {
   const generation = ++configGeneration;
   error("");

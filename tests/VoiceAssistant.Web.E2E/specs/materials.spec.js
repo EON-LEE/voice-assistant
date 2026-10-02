@@ -20,9 +20,7 @@ async function mocked(page) {
   return { attempts: () => attempts, maxActive: () => maxActive };
 }
 async function panel(page) {
-  await page.goto('/'); await page.getByTestId('mode').selectOption('synthetic');
-  await expect(page.getByTestId('start')).toBeEnabled();
-  await page.locator('#materials-panel > summary').click();
+  await page.goto('/materials.html');
   await expect(page.locator('#materials-refresh')).toBeEnabled();
 }
 test('mocked materials: filtering, two uploads, safe retry, notes, quota, delete and no placeholder link', async ({ page }) => {
@@ -50,15 +48,17 @@ test('mocked materials: filtering, two uploads, safe retry, notes, quota, delete
   await expect(page.locator('#materials-documents')).toContainText('<img src=x');
   expect(await page.locator('#materials-documents img').count()).toBe(0);
   await expect(page.locator('#materials-usage')).toContainText('4 / 300');
+  page.once('dialog', dialog => dialog.accept());
   await page.locator('#materials-documents button').first().click();
   await expect(page.locator('#materials-usage')).toContainText('3 / 300');
 });
-test('materials disabled in demo; 401 prompts sign-in and upload cancel stays explicit (mocked)', async ({ page }) => {
+test('meeting demo has only a separate materials link; 401 on that page prompts sign-in (mocked)', async ({ page }) => {
   await mocked(page); await page.goto('/');
-  await page.locator('#materials-panel > summary').click();
-  await expect(page.locator('#material-files')).toBeDisabled();
-  await expect(page.locator('#materials-status')).toContainText('disabled in Demo');
-  await page.getByTestId('mode').selectOption('synthetic');
+  await expect(page.locator('#materials-host')).toHaveCount(0);
+  await expect(page.locator('#manage-materials')).toHaveAttribute('href', '/materials.html');
+  await expect(page.locator('#manage-materials')).toHaveAttribute('target', '_blank');
+  await expect(page.locator('#manage-materials')).toHaveAttribute('rel', 'noopener');
+  await panel(page);
   await expect(page.locator('#material-files')).toBeEnabled();
   await page.route('**/api/knowledge', route => route.fulfill({ status: 401, json: { error: 'unauthorized' } }));
   await page.locator('#materials-refresh').click();
@@ -94,7 +94,7 @@ test('personal reference placeholder URLs render as titles only (mocked WS)', as
       ]) socket.send(JSON.stringify(event));
     });
   });
-  await panel(page); await page.getByTestId('start').click();
+  await page.goto('/'); await page.getByTestId('mode').selectOption('synthetic'); await page.getByTestId('start').click();
   await expect(page.locator('#sources')).toContainText('My original notes (My meeting materials)');
   await expect(page.locator('#sources')).not.toContainText('my-materials.invalid');
   await page.getByTestId('pin').click();
@@ -110,6 +110,7 @@ test('real localhost Fake materials stores lists and deletes original notes', as
   await page.locator('#materials-save-notes').click();
   await expect(page.locator('#materials-progress')).toContainText('Stored successfully');
   await expect(page.locator('#materials-documents')).toContainText(title);
+  page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: `Delete ${title}`, exact: true }).click();
   await expect(page.locator('#materials-documents')).not.toContainText(title);
 });
@@ -139,19 +140,28 @@ test('folder selection skips hidden/build paths and drag-drop selection remains 
   await expect(page.locator('#materials-upload')).toBeEnabled();
 });
 
-test('notes upload remains available during an active meeting (mocked)', async ({ page }) => {
+test('materials open in a new noopener tab without interrupting active meeting (mocked)', async ({ page, context }) => {
   await mocked(page);
   await page.routeWebSocket('**/api/meeting*', socket => socket.onMessage(message => {
     if (typeof message === 'string' && JSON.parse(message).type === 'session.start') socket.send(JSON.stringify({ type: 'session.ready' }));
   }));
-  await panel(page); await page.getByTestId('start').click();
+  await page.goto('/'); await page.getByTestId('mode').selectOption('synthetic'); await page.getByTestId('start').click();
   await expect(page.getByTestId('pause')).toBeEnabled();
-  await page.locator('#material-title').fill('During meeting fixture');
-  await page.locator('#material-notes').fill('Original nonprivate notes while connected.');
-  await page.locator('#materials-save-notes').click();
-  await expect(page.locator('#materials-documents')).toContainText('During meeting fixture');
+  // Context routes cover the new page's first request, which occurs before a page-scoped route can be installed.
+  await context.route('**/api/client-config', route => route.fulfill({ json: { mode: 'Fake', webSocketPath: '/api/meeting' } }));
+  await context.route('**/api/knowledge', route => route.fulfill({ json: {
+    documents: [], limits, usage: { documents: 0, chunks: 0 }, extensions: ['.txt'],
+  } }));
+  const next = context.waitForEvent('page');
+  await page.locator('#manage-materials').click();
+  const materials = await next;
+  await expect(materials).toHaveURL(/\/materials\.html$/);
+  await expect(materials.locator('#material-files')).toBeEnabled();
+  expect(await materials.evaluate(() => window.opener === null)).toBe(true);
+  expect(new URL(page.url()).pathname).toBe('/');
   await expect(page.getByTestId('stop')).toBeEnabled();
   await page.getByTestId('stop').click();
+  await materials.close();
 });
 
 test('materials bearer auth remains memory-only and restricted to contract endpoints (injected auth)', async ({ page }) => {

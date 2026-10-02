@@ -66,7 +66,10 @@
         <p class="fine">Press P to toggle Pause while speaking when you are not typing in a field. Pause drops new audio; Stop releases the microphone or shared tracks.</p>
         <p id="error" role="alert" class="error" hidden></p>
       </section>
-      <section id="materials-host" class="card" aria-label="My meeting materials"></section>
+      <aside class="materials-link">
+        <a id="manage-materials" href="/materials.html" target="_blank" rel="noopener">Manage my meeting materials</a>
+        <p class="fine">Upload and check indexed documents in a separate tab; replies can reference them without leaving this meeting.</p>
+      </aside>
       <div class="workspace">
         <section class="card transcript-panel" aria-labelledby="transcript-title"><div class="section-heading"><h2 id="transcript-title">English transcript</h2><span class="eyebrow">LIVE NOTES</span></div><div id="transcript" tabindex="0" aria-label="Partial and final meeting transcripts"><p class="empty">The conversation will appear here after you start.</p></div></section>
         <section class="card reply-panel" aria-labelledby="reply-title"><div class="section-heading"><h2 id="reply-title">Your next reply</h2><span id="reply-status" role="status">Ready when you are</span></div><p id="reply" class="answer">Ask for a suggestion after a final transcript arrives.</p><ul id="sources" aria-label="Suggestion sources"></ul><div class="actions"><button id="suggest" type="button" disabled>Suggest a short reply</button><button id="cancel" type="button" class="secondary" disabled>Cancel</button><button id="pin" type="button" class="secondary" disabled>Pin this answer</button></div><p class="fine">Suggestions can be wrong. Check names, facts, and commitments before speaking.</p></section>

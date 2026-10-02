@@ -91,3 +91,31 @@ test("Queue bounded at300 entries and personal references never reveal placehold
   assert.equal(referenceText({ title: "<img>", url: `https://my-materials.invalid/${document.id}` }), "<img> (My meeting materials)");
   assert.match(referenceText({ title: "Guide", url: "https://example.org" }), /example.org/);
 });
+test("Per-item retry retains size and never restarts another failed item", async () => {
+  const queue = new UploadQueue(() => {}); const attempts = [0, 0];
+  for (let i = 0; i < 2; i++) queue.add(`file${i}`, async () => {
+    attempts[i]!++;
+    if (attempts[i] === 1) throw new MaterialError("busy");
+  }, 100 + i);
+  await tick();
+  assert.equal(queue.items[0]!.size, 100);
+  queue.retryFailed(queue.items[0]);
+  await tick();
+  assert.deepEqual(attempts, [2, 1]);
+  assert.equal(queue.items[0]!.state, "success");
+  assert.equal(queue.items[1]!.state, "failed");
+});
+test("Per-item cancellation leaves other queued/active uploads alone", async () => {
+  const queue = new UploadQueue(() => {});
+  const release: (() => void)[] = [];
+  for (let i = 0; i < 3; i++) queue.add(String(i), signal => new Promise<void>((resolve, reject) => {
+    release.push(resolve); signal.addEventListener("abort", () => reject(new DOMException("Cancelled", "AbortError")));
+  }), 12);
+  await tick();
+  queue.cancel(queue.items[2]); queue.cancel(queue.items[0]);
+  await tick();
+  assert.equal(queue.items[0]!.state, "cancelled");
+  assert.equal(queue.items[1]!.state, "uploading");
+  assert.equal(queue.items[2]!.state, "cancelled");
+  release[1]!(); await tick(); assert.equal(queue.items[1]!.state, "success");
+});

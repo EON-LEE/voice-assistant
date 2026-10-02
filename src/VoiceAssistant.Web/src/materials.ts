@@ -111,21 +111,22 @@ function validateDocument(value: unknown): void {
     throw new MaterialError("knowledge_unavailable");
 }
 export type UploadState = "queued" | "uploading" | "success" | "failed" | "cancelled";
-export interface UploadItem { name: string; run(signal: AbortSignal): Promise<unknown>; state: UploadState; message: string; controller?: AbortController }
+export interface UploadItem { name: string; size?: number; run(signal: AbortSignal): Promise<unknown>; state: UploadState; message: string; controller?: AbortController }
 export class UploadQueue {
   readonly items: UploadItem[] = [];
   private active = 0;
   constructor(private readonly changed: () => void) {}
-  add(name: string, run: UploadItem["run"]): void {
+  add(name: string, run: UploadItem["run"], size?: number): void {
     if (this.items.length >= 300) throw new Error("Queue limit reached (300 items). Clear finished items before adding more.");
-    this.items.push({ name, run, state: "queued", message: "Queued" }); this.changed(); this.pump();
+    this.items.push({ name, size, run, state: "queued", message: "Queued" }); this.changed(); this.pump();
   }
-  retryFailed(): void {
-    for (const item of this.items) if (item.state === "failed") { item.state = "queued"; item.message = "Queued for retry"; }
+  retryFailed(target?: UploadItem): void {
+    for (const item of this.items) if ((!target || item === target) && item.state === "failed") { item.state = "queued"; item.message = "Queued for retry"; }
     this.changed(); this.pump();
   }
-  cancel(): void {
+  cancel(target?: UploadItem): void {
     for (const item of this.items) {
+      if (target && item !== target) continue;
       if (item.state === "queued") { item.state = "cancelled"; item.message = "Cancelled before upload"; }
       if (item.state === "uploading") item.controller?.abort();
     }
