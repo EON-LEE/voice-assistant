@@ -127,6 +127,21 @@ a larger real-meeting sample remain future validation, not completed work.
 * **Verified (2026-10-01):** API 429 tests, web 89 unit tests and 38 browser tests (including real Chromium fake-microphone audio into the local Fake API and real upload/list/delete against it); infra checks pass. On the deployed Azure app with the operator identity: anonymous access 401, a pasted note and an uploaded Markdown file were indexed, a spoken English question (Windows SAPI synthesized, original) was transcribed and answered from the uploaded note with that note as the only reference, then after deletion no uploaded evidence was used; a legacy `.doc` was rejected. Record: `tests/acceptance-results/materials-2026-10-01.json`.
 * **Reply style (tuned 2026-10-03):** replies are plain text for reading aloud: at most 2 short sentences and 25 words, simple everyday English (about B1), no markdown, lists, quotes or "You could say" prefixes, and one short line such as "I'm not sure. Let me check and get back to you." when the facts are not available. Measured on the deployed app with 6 original synthesized English questions (grounded mode, one uploaded note, deleted afterwards): mean 25.5 -> 18.7 words, longest 44 -> 23 words, no formatting artifacts before or after. This is a small sample, not a general quality guarantee. Records: `tests/acceptance-results/reply-style-before-2026-10-03.json` and `reply-style-after-2026-10-03.json`.
 * **Not verified:** a physical microphone in a real room, the browser microphone against Azure (the live test streamed PCM through the real WebSocket instead), interactive tenant sign-in, `.pdf/.docx/.pptx` on Azure (covered by in-process tests only), 30–90 minute real sessions, US-region latency and large code-base uploads.
+
+## English coach: Korean assist, read-aloud and practice rounds
+
+The meeting page is an English meeting coach. The English reply streams exactly as before; after it completes the browser
+asks `POST /api/assist/enrich` for a Korean translation of the question and the reply and a word-chunk Hangul reading of the
+reply (approximate, a guide only). "Click to listen" calls `POST /api/assist/speak` (Azure Speech neural voices
+`en-US-JennyNeural` for the coach and `en-US-GuyNeural` for the practice partner, 24 kHz mono mp3, normal or slow) for shadowing.
+The Practice tab runs a stateless AI partner round (`/api/practice/turn|suggest|feedback|summary`) with sales, interview,
+presentation or custom scenarios, optional use of your uploaded materials, Korean feedback on wording/grammar/clarity (not
+pronunciation or accent) and a Korean summary. Answers use a recognition-only WebSocket (`transcribeOnly`). Nothing is stored.
+Contract: `contracts/practice-v1.md`. Live evidence (deployed Korea Central, synthetic prompts only):
+`tests/acceptance-results/practice-live-2026-10-04.json` plus three consecutive full passes; reply-style re-check
+`reply-style-after-practice-2026-10-04.json`. Not verified: interactive tenant sign-in, a physical microphone in a room, and
+Korean translation, Hangul reading or coaching quality as judged by a human.
+
 ## Build and test
 
 Contributors need Node.js 22 and the .NET 8 SDK, not only the .NET runtime.
