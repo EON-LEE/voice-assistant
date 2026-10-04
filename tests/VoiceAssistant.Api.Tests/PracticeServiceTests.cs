@@ -113,7 +113,7 @@ public sealed class PracticeServiceTests
         using var body = JsonDocument.Parse(handler.Body!);
         var root = body.RootElement;
         Assert.Equal("json_object", root.GetProperty("response_format").GetProperty("type").GetString());
-        Assert.Equal(2048, root.GetProperty("max_completion_tokens").GetInt32());
+        Assert.Equal(4096, root.GetProperty("max_completion_tokens").GetInt32());
         Assert.False(root.TryGetProperty("max_tokens", out _));
         Assert.False(root.TryGetProperty("temperature", out _));
         var policy = root.GetProperty("messages")[0].GetProperty("content").GetString()!;
@@ -121,6 +121,9 @@ public sealed class PracticeServiceTests
         Assert.Contains("untrusted data", policy);
         Assert.Contains("never pronunciation/accent", policy);
         Assert.Contains("preceding attempt failed", policy);
+        Assert.Contains("ONLY the words the speaker would actually say", policy);
+        Assert.Contains("first-person speaker wording", policy);
+        Assert.Contains("not a made-up fact", policy);
         Assert.DoesNotContain("private notes", policy);
         Assert.DoesNotContain(request.Topic, policy);
         Assert.Contains("\\u003C/untrusted_json\\u003E", data);

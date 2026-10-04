@@ -40,14 +40,27 @@ public static class PracticeEndpoints
                 catch (PracticeException exception)
                 {
                     if (exception.Status == 429) context.Response.Headers.RetryAfter = "1";
+                    if (exception.Status >= 500)
+                        PracticeDiagnostics.Failure(app.Logger, operation, exception, 0);
                     return Error(exception);
                 }
                 catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException)
-                { return Error(parsed ? PracticeException.Unavailable() : PracticeException.Invalid()); }
+                {
+                    if (parsed) PracticeDiagnostics.Failure(app.Logger, operation, exception, 0);
+                    return Error(parsed ? PracticeException.Unavailable() : PracticeException.Invalid());
+                }
                 catch (BadHttpRequestException exception) when (exception.StatusCode == 413)
                 { return Error(PracticeException.TooLarge()); }
-                catch (OperationCanceledException) { return Error(PracticeException.Timeout()); }
-                catch (Exception) { return Error(PracticeException.Unavailable()); }
+                catch (OperationCanceledException exception)
+                {
+                    PracticeDiagnostics.Failure(app.Logger, operation, exception, 0);
+                    return Error(PracticeException.Timeout());
+                }
+                catch (Exception exception)
+                {
+                    PracticeDiagnostics.Failure(app.Logger, operation, exception, 0);
+                    return Error(PracticeException.Unavailable());
+                }
                 finally
                 {
                     if (lease is not null)

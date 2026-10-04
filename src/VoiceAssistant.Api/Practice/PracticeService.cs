@@ -2,7 +2,8 @@ using System.Text.Json;
 
 namespace VoiceAssistant.Api.Practice;
 
-public sealed class PracticeService(IPracticeModel model, IPracticeSpeech speech, IMeetingProvider meeting, ServiceSettings settings)
+public sealed class PracticeService(IPracticeModel model, IPracticeSpeech speech, IMeetingProvider meeting, ServiceSettings settings,
+    ILogger<PracticeService>? logger = null)
 {
     public Task<PracticeAudio> SpeakAsync(PracticeRequest request, CancellationToken cancellation) => speech.SpeakAsync(request, cancellation);
 
@@ -18,20 +19,34 @@ public sealed class PracticeService(IPracticeModel model, IPracticeSpeech speech
                 request.Operation == "turn" ? request.History!.LastOrDefault()?.Text ?? "" : request.Question });
             try { grounding = await meeting.RetrieveAsync(query, owner, cancellation); }
             catch (OperationCanceledException) { throw; }
-            catch (Exception) { grounding = new("unavailable", []); }
+            catch (Exception)
+            {
+                PracticeDiagnostics.Failure(logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PracticeService>.Instance,
+                    request.Operation, PracticeOutputNormalization.Invalid("retrieval_unavailable"), 0);
+                grounding = new("unavailable", []);
+            }
             if (grounding.Status is not ("disabled" or "grounded" or "no_matches" or "unavailable"))
                 grounding = new("unavailable", []);
         }
         for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellation.ThrowIfCancellationRequested();
-            var response = await model.GenerateAsync(request, grounding, attempt > 0, cancellation);
-            cancellation.ThrowIfCancellationRequested();
             JsonElement output;
-            try { output = PracticeOutputs.Validate(response, request, settings.Fake); }
-            catch (Exception exception) when (exception is PracticeException or JsonException or InvalidOperationException or FormatException)
+            try
             {
-                if (attempt == 0) continue;
+                var response = await model.GenerateAsync(request, grounding, attempt > 0, cancellation);
+                cancellation.ThrowIfCancellationRequested();
+                output = PracticeOutputs.Validate(response, request, settings.Fake);
+            }
+            catch (Exception exception)
+            {
+                PracticeDiagnostics.Failure(logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PracticeService>.Instance,
+                    request.Operation, exception, attempt + 1);
+                var invalidOutput = exception is JsonException ||
+                    exception is PracticeException { DiagnosticCategory: not null };
+                if (invalidOutput && attempt == 0) continue;
+                if (exception is OperationCanceledException) throw;
+                if (!invalidOutput) throw;
                 throw PracticeException.Unavailable();
             }
             var sources = grounding.Status == "grounded" ? grounding.Documents.Select(item => item.Source.Title)

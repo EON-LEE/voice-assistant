@@ -6,6 +6,7 @@ public sealed class PracticeException(int status, string code, string message) :
 {
     public int Status { get; } = status;
     public string Code { get; } = code;
+    internal string? DiagnosticCategory { get; init; }
     public static PracticeException Invalid() => new(400, "invalid_request", "The practice request is invalid.");
     public static PracticeException TooLarge() => new(413, "too_large", "The request exceeds 16 KiB.");
     public static PracticeException Unavailable() => new(502, "provider_unavailable", "The assistant provider is unavailable. Please retry.");

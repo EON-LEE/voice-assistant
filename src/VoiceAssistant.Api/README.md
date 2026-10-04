@@ -158,9 +158,39 @@ and practice; speech has a separate three-active/30-per-minute bucket. Rejection
 The deadlines are20seconds for model operations and15seconds for speech. A noncooperative timed-out provider keeps
 its concurrency slot until its task unwinds instead of spawning unlimited background work.
 
-Azure chat reuses the existing client/options and JSON response format, with a minimum2048 completion-token budget
+Azure chat reuses the existing client/options and JSON response format, with a minimum4096 completion-token budget
 (reasoning tokens also consume it). Outputs are structurally validated; invalid model JSON/schema gets one retry,
-then502, never a Fake fallback. Hangul guides are **approximate pronunciation aids**, not pronunciation assessment.
+then502, never a Fake fallback. A token-cap finish is logged as `completion_token_limit`, distinct from empty content.
+The larger practice-only budget reduces reasoning-token exhaustion risk but does not prove it caused any prior502;
+live response limits and all per-field output caps remain unchanged. JSON-object mode is retained rather than
+assuming additional strict-schema API compatibility with the pinned SDK/deployed model.
+
+Model output only (never incoming request validation) tolerates harmless NFC/whitespace normalization, curly
+apostrophes in generated English, a complete outer JSON markdown fence, or a sole `result`/`data`/`output` object
+wrapper. Unrecognized model properties are discarded at known object boundaries, so model-supplied turn numbers,
+source titles, grounding status and similar extras cannot override server-computed metadata. Ambiguous wrappers,
+duplicate properties, trailing prose, non-JSON, missing/wrong-type required fields, overlong outputs, unsafe style,
+English-only Korean echoes and misaligned pronunciation still fail. Pronunciation `en` case/words/punctuation must
+still match input; only whitespace and NFC are normalized. Korean coaching may contain English technical terms
+without an arbitrary Latin-vs-Hangul character ratio and may quote the learner's English terms; Hangul text is still
+required, and the enrichment meaning translation still starts with Hangul. Feedback/headline caps are800characters
+and summary-phrase Korean meanings400, matching browser limits; enrichment translation remains400 and point text120.
+Hangul-only sound chunks retain their stricter script rule. Do not mistake these structural tolerances for semantic
+correction of model output.
+
+Practice diagnostics log **Warning** records containing only fixed endpoint name, fixed failure category,
+numeric HTTP status (zero if unavailable), and attempt number. Model attempts are1 and2; attempt0 identifies an
+outer endpoint timeout/provider failure or retrieval fallback. Categories include `empty`, `json_parse`,
+`completion_token_limit`, `completion_not_stopped`, `schema:<fixed field/rule>`, `http_error`, `timeout` and
+`retrieval_unavailable`. No exception object, body, prompt, user text, identity, URL or rejected property name is logged.
+An exhausted schema retry can therefore yield two detailed safe model warnings and one generic endpoint warning.
+
+Suggestions/corrected sample answers are prompted to be only first-person words the speaker would say, not
+commentary about "provided information" or "a safe answer". The style validator rejects such meta-answer prefixes;
+it does not strip them into fabricated success. Without materials the model may express a general preference or
+approach, never assert made-up company facts, dates or commitments. Turn and feedback policies share these limits.
+
+Hangul guides are **approximate pronunciation aids**, not pronunciation assessment.
 Aligned English chunks must reconstruct the input exactly after whitespace collapse, and Hangul sound chunks reject
 Latin echoes. The validator enforces form/length/alignment, not semantic translation correctness, CEFR level or the
 truth of generated coaching: real Azure/user review is still necessary. Feedback uses transcripts, not voice/accent.

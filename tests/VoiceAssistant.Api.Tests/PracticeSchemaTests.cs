@@ -94,12 +94,10 @@ public sealed class PracticeSchemaTests
         foreach (var broken in new[]
         {
             valid.Replace("is slow migration.", "slow migration."),
-            valid.Replace("The main risk", "The  main risk"),
             valid.Replace("더 메인 리스크", "the main risk"),
             valid.Replace("더 메인 리스크", "더 메인 리스크1"),
             valid.Replace("더 메인 리스크", "더<메인>리스크"),
             valid.Replace("가장 큰 위험은 느린 이전이에요.", "The main risk is slow migration."),
-            valid.Replace("\"pronunciation\":[", "\"extra\":true,\"pronunciation\":["),
             valid.Replace("\"korean\":", "\"korean\":\"중복\",\"korean\":")
         }) Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(broken, request));
         var question = request with { Kind = "question" };
@@ -121,7 +119,6 @@ public sealed class PracticeSchemaTests
     [InlineData("You could say hello.")]
     [InlineData("**Please explain the goal.**")]
     [InlineData("\"Hello there.\"")]
-    [InlineData("Hello\nthere.")]
     [InlineData("Hello 😀.")]
     [InlineData("One. Two. Three.")]
     public void EnglishOutputRejectsStyleViolations(string text)
@@ -141,7 +138,7 @@ public sealed class PracticeSchemaTests
         var summary = """{"headlineKo":"연습을 마쳤어요.","strengthsKo":[],"improveKo":[],"phrases":[{"en":"Could you repeat that?","ko":"다시 말해 주시겠어요?"}]}""";
         PracticeOutputs.Validate(summary, new("summary"));
         Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(summary.Replace("\"improveKo\":[]", "\"improveKo\":[\"영어\",\"영어\",\"영어\",\"영어\"]"), new("summary")));
-        Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(summary.Replace("\"phrases\":", "\"owner\":\"private\",\"phrases\":"), new("summary")));
+        Assert.False(PracticeOutputs.Validate(summary.Replace("\"phrases\":", "\"owner\":\"private\",\"phrases\":"), new("summary")).TryGetProperty("owner", out _));
         Assert.Throws<PracticeException>(() => PracticeOutputs.Validate("""{"text":"This is not a question."}""", new("turn")));
     }
 

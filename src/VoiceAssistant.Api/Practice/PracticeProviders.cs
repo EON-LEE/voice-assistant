@@ -35,6 +35,13 @@ public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings
             For general questions give simple general explanations; unknown private facts require uncertainty.
             Every English output: simple CEFR B1 everyday words, no idioms, markdown, bullets, quotes, emojis, line breaks,
             or prefaces like "You could say". Do not claim actions or invent commitments in sample answers.
+            English dialogue and corrected/sample replies must be ONLY the words the speaker would actually say.
+            Never discuss "the provided information", label something "a safe answer", or narrate how to answer.
+            Suggestions and feedback sample replies use first-person speaker wording when appropriate, not third-person advice.
+            With no materials, offer a brief plausible GENERAL goal or approach framed as a preference or suggestion,
+            not a made-up fact about the named company, customer, project history, delivery date or commitment.
+            For example, a general intention may be expressed as "I would focus on clear goals and small, safe steps."
+            For unknown specific facts, speaker wording such as "I need to check that detail." is preferable to meta commentary.
             Korean coaching is encouraging, positive first; assess wording only, never pronunciation/accent,
             since answers are speech-recognition transcripts which may contain recognition mistakes.
             For enrichment, Korean is a meaning translation, while ko pronunciation chunks are the English SOUNDS
@@ -48,10 +55,10 @@ public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings
         {
             "enrich" when request.Kind == "question" => """{"korean":"Hangul-first translation <=400 chars","pronunciation":null}""",
             "enrich" => """{"korean":"Hangul-first translation <=400 chars","pronunciation":[{"en":"exact input chunk","ko":"Hangul sounds"}]}""",
-            "turn" => """{"text":"1-2 short sentences, <=30 words, ends with one clear question. Respect scenario difficulty and ask the next question based on history."}""",
-            "suggest" => """{"text":"1-2 short sentences, <=25 words, first sentence answers the question directly. No invented private facts."}""",
-            "feedback" => """{"correctedEnglish":"<=40 words, <=2 sentences","easierEnglish":"<=40 words, <=2 sentences","feedbackKo":"positive Korean feedback <=400 chars, <=2 sentences","points":[{"tag":"grammar|vocabulary|clarity|length|tone","ko":"Korean <=120 chars"}],"clarity":4} For skipped answers provide two safe short samples and encouraging Korean. points:0..3; clarity integer1..5, clarity of wording not person's grade.""",
-            "summary" => """{"headlineKo":"Korean <=400 chars","strengthsKo":["Korean <=120 chars"],"improveKo":["Korean <=120 chars"],"phrases":[{"en":"reusable English <=40 words <=2 sentences","ko":"Korean meaning <=120 chars"}]} strengthsKo/improveKo:0..3 each; phrases:0..8. Summarize only supplied turns; never invent counts, statements or achievement.""",
+            "turn" => """{"text":"1-2 short sentences, <=30 words, ends with one clear question. Respect scenario difficulty and ask the next question based on history. Only direct partner dialogue, never commentary about provided information or safe answers. Do not return done/turn/grounding/sources: the server computes them."}""",
+            "suggest" => """{"text":"1-2 short sentences, <=25 words, first sentence answers directly in first-person speaker wording. Only the spoken reply, no safe-answer labels, no discussion of provided information. General preferences or suggestions are allowed without materials; invented private facts and commitments are not."}""",
+            "feedback" => """{"correctedEnglish":"<=40 words, <=2 sentences","easierEnglish":"<=40 words, <=2 sentences","feedbackKo":"positive Korean feedback <=800 chars, <=2 sentences","points":[{"tag":"grammar|vocabulary|clarity|length|tone","ko":"Korean <=120 chars"}],"clarity":4} For skipped answers provide two safe short samples and encouraging Korean. points:0..3; clarity integer1..5, clarity of wording not person's grade.""",
+            "summary" => """{"headlineKo":"Korean <=800 chars","strengthsKo":["Korean <=120 chars"],"improveKo":["Korean <=120 chars"],"phrases":[{"en":"reusable English <=40 words <=2 sentences","ko":"Korean meaning <=400 chars"}]} strengthsKo/improveKo:0..3 each; phrases:0..8. Summarize only supplied turns; never invent counts, statements or achievement.""",
             _ => throw PracticeException.Invalid()
         };
         // Serialized strings cannot terminate the outer data fence; no raw user text enters system instructions.
@@ -68,14 +75,16 @@ public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings
             new UserChatMessage("<untrusted_json>\n" + data + "\n</untrusted_json>")
         ];
         var options = AzureMeetingProvider.CreateChatOptions(settings);
-        options.MaxOutputTokenCount = Math.Max(2048, settings.ChatMaxOutputTokens);
+        options.MaxOutputTokenCount = Math.Max(4096, settings.ChatMaxOutputTokens);
         options.ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat();
         var result = await openAI.GetChatClient(settings.ChatDeployment).CompleteChatAsync(messages, options, cancellation);
-        if (result.Value.FinishReason != ChatFinishReason.Stop) return "";
+        if (result.Value.FinishReason != ChatFinishReason.Stop)
+            throw PracticeOutputNormalization.Invalid(result.Value.FinishReason == ChatFinishReason.Length
+                ? "completion_token_limit" : "completion_not_stopped");
         var text = new StringBuilder();
         foreach (var part in result.Value.Content)
         {
-            if (text.Length + part.Text.Length > 32768) return "";
+            if (text.Length + part.Text.Length > 32768) throw PracticeOutputNormalization.Invalid("schema:output_size");
             text.Append(part.Text);
         }
         return text.ToString();
