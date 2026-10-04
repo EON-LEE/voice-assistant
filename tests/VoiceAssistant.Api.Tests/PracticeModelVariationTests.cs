@@ -136,7 +136,7 @@ public sealed class PracticeModelVariationTests
     {
         foreach (var (output, category) in new[]
         {
-            ("""{"korean":"위험을 확인해요.","pronunciation":[{"en":"The risk","ko":"더 리스크"}]}""", "schema:pronunciation:rejoin"),
+            ("""{"korean":"위험을 확인해요.","pronunciation":[{"en":"The other risk","ko":"더 리스크"}]}""", "schema:pronunciation:rejoin"),
             ("""{"korean":"위험을 확인해요.","pronunciation":[{"en":"The risk.","ko":"risk-secret"}]}""", "schema:pronunciation:hangul_chunk")
         })
         {
@@ -197,12 +197,20 @@ public sealed class PracticeModelVariationTests
     }
 
     [Fact]
-    public void NormalizationDoesNotRelaxInputSchemaOrPronunciationCaseAndPunctuation()
+    public void NormalizationPreservesInputSchemaAndRebuildsOriginalPronunciationCaseAndPunctuation()
     {
         var normalized = PracticeOutputs.Validate("""{"text":"  I’d  check\nfirst.  ","extra":"ignored"}""", new("suggest"));
         Assert.Equal("I'd check first.", normalized.GetProperty("text").GetString());
         Assert.False(normalized.TryGetProperty("extra", out _));
-        foreach (var en in new[] { "the risk.", "The risk", "The risks.", "The risk. extra" })
+        foreach (var en in new[] { "the risk.", "The risk" })
+        {
+            var repaired = PracticeOutputs.Validate(JsonSerializer.Serialize(new
+            {
+                korean = "위험이에요.", pronunciation = new[] { new { en, ko = "더 리스크" } }
+            }), new("enrich", "The risk.", "reply"));
+            Assert.Equal("The risk.", repaired.GetProperty("pronunciation")[0].GetProperty("en").GetString());
+        }
+        foreach (var en in new[] { "The risks.", "The risk. extra" })
             Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(JsonSerializer.Serialize(new
             {
                 korean = "위험이에요.", pronunciation = new[] { new { en, ko = "더 리스크" } }

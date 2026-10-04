@@ -46,7 +46,8 @@ public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings
             since answers are speech-recognition transcripts which may contain recognition mistakes.
             For enrichment, Korean is a meaning translation, while ko pronunciation chunks are the English SOUNDS
             written in Hangul, not a translation. risk sounds like 리스크; database sounds like 데이터베이스.
-            Pronunciation chunks must preserve every original word and punctuation, 1-4 words each, at most 40 chunks.
+            Pronunciation chunks must preserve every original word and punctuation. Prefer exactly 1-3 words per chunk,
+            never exceed 4 words in a chunk, at most 40 chunks, and provide exactly one matching Hangul sound chunk for each.
             Joining en chunks by one space must equal whitespace-collapsed input exactly.
             Each ko contains Hangul syllables, spaces and ,.?!'- only, at most 80 characters;
             digits allowed only if the corresponding en chunk contains digits. Prefer spoken Hangul numbers.
@@ -57,7 +58,7 @@ public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings
             "enrich" => """{"korean":"Hangul-first translation <=400 chars","pronunciation":[{"en":"exact input chunk","ko":"Hangul sounds"}]}""",
             "turn" => """{"text":"1-2 short sentences, <=30 words, ends with one clear question. Respect scenario difficulty and ask the next question based on history. Only direct partner dialogue, never commentary about provided information or safe answers. Do not return done/turn/grounding/sources: the server computes them."}""",
             "suggest" => """{"text":"1-2 short sentences, <=25 words, first sentence answers directly in first-person speaker wording. Only the spoken reply, no safe-answer labels, no discussion of provided information. General preferences or suggestions are allowed without materials; invented private facts and commitments are not."}""",
-            "feedback" => """{"correctedEnglish":"<=40 words, <=2 sentences","easierEnglish":"<=40 words, <=2 sentences","feedbackKo":"positive Korean feedback <=800 chars, <=2 sentences","points":[{"tag":"grammar|vocabulary|clarity|length|tone","ko":"Korean <=120 chars"}],"clarity":4} For skipped answers provide two safe short samples and encouraging Korean. points:0..3; clarity integer1..5, clarity of wording not person's grade.""",
+            "feedback" => """{"correctedEnglish":"<=40 words, <=2 sentences","easierEnglish":"<=40 words, <=2 sentences","feedbackKo":"positive Korean feedback <=800 chars, <=3 sentences","points":[{"tag":"grammar|vocabulary|clarity|length|tone","ko":"Korean <=120 chars"}],"clarity":4} For skipped answers provide two safe short samples and encouraging Korean. points:0..3; clarity integer1..5, clarity of wording not person's grade.""",
             "summary" => """{"headlineKo":"Korean <=800 chars","strengthsKo":["Korean <=120 chars"],"improveKo":["Korean <=120 chars"],"phrases":[{"en":"reusable English <=40 words <=2 sentences","ko":"Korean meaning <=400 chars"}]} strengthsKo/improveKo:0..3 each; phrases:0..8. Summarize only supplied turns; never invent counts, statements or achievement.""",
             _ => throw PracticeException.Invalid()
         };

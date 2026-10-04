@@ -170,13 +170,26 @@ apostrophes in generated English, a complete outer JSON markdown fence, or a sol
 wrapper. Unrecognized model properties are discarded at known object boundaries, so model-supplied turn numbers,
 source titles, grounding status and similar extras cannot override server-computed metadata. Ambiguous wrappers,
 duplicate properties, trailing prose, non-JSON, missing/wrong-type required fields, overlong outputs, unsafe style,
-English-only Korean echoes and misaligned pronunciation still fail. Pronunciation `en` case/words/punctuation must
-still match input; only whitespace and NFC are normalized. Korean coaching may contain English technical terms
+English-only Korean echoes and actual pronunciation word changes still fail. Pronunciation comparison ignores
+case/punctuation/whitespace but requires identical normalized word count, order and spelling; the server then
+rebuilds every `en` chunk from the original input words, restoring the caller's exact casing and punctuation.
+If model chunk sizes are0 or above4, the server rechunks to at most3 original words, only when the number of supplied
+Hangul chunks matches the new chunk count. It never manufactures missing Hangul or repairs word additions,
+omissions or reordering. Input punctuation-only standalone tokens are rejected for alignment rather than guessed.
+Korean coaching may contain English technical terms
 without an arbitrary Latin-vs-Hangul character ratio and may quote the learner's English terms; Hangul text is still
 required, and the enrichment meaning translation still starts with Hangul. Feedback/headline caps are800characters
 and summary-phrase Korean meanings400, matching browser limits; enrichment translation remains400 and point text120.
 Hangul-only sound chunks retain their stricter script rule. Do not mistake these structural tolerances for semantic
 correction of model output.
+
+Feedback permits up to3 Korean sentences within the800-character limit, recognizing ASCII and Korean/full-width
+sentence endings and ignoring trailing closing quotes for sentence counting. Partner questions remain at most
+30 words and2 sentences including a short acknowledgement, ending in `?`; contractions, colons, semicolons and
+in-sentence hyphens are accepted. Markdown/list prefixes, emoji/non-English characters, URLs and meta-answer
+commentary remain invalid. Diagnostics now include exact suffixes such as `schema:text:english_style:max_words`,
+`schema:text:english_style:max_sentences`, `schema:feedbackKo:max_characters`,
+`schema:feedbackKo:max_sentences`, and `schema:pronunciation:rejoin:word_sequence`, without rejected text.
 
 Practice diagnostics log **Warning** records containing only fixed endpoint name, fixed failure category,
 numeric HTTP status (zero if unavailable), and attempt number. Model attempts are1 and2; attempt0 identifies an

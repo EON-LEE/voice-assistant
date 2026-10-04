@@ -8,6 +8,8 @@ public static class PracticeOutputs
     public static JsonElement Validate(string json, PracticeRequest request, bool fake = false)
     {
         json = PracticeOutputNormalization.Normalize(json, request.Operation);
+        if (request.Operation == "enrich" && request.Kind == "reply")
+            json = PronunciationAlignment.Rebuild(json, request.Text);
         using var parsed = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 8 });
         var value = parsed.RootElement;
         var rule = "root";
@@ -54,19 +56,19 @@ public static class PracticeOutputs
             case "suggest":
                 PracticeJson.Object(value, ["text"]);
                 rule = "text:english_style";
-                var reply = English(value.GetProperty("text"), request.Operation == "turn" ? 30 : 25, 2);
+                var reply = English(value.GetProperty("text"), request.Operation == "turn" ? 30 : 25, 2, "text:english_style");
                 rule = "text:question";
                 if (request.Operation == "turn" && !reply.EndsWith('?')) throw PracticeException.Invalid();
                 break;
             case "feedback":
                 PracticeJson.Object(value, ["correctedEnglish", "easierEnglish", "feedbackKo", "points", "clarity"]);
                 rule = "correctedEnglish:style";
-                English(value.GetProperty("correctedEnglish"), 40, 2);
+                English(value.GetProperty("correctedEnglish"), 40, 2, "correctedEnglish:style");
                 rule = "easierEnglish:style";
-                English(value.GetProperty("easierEnglish"), 40, 2);
+                English(value.GetProperty("easierEnglish"), 40, 2, "easierEnglish:style");
                 rule = "feedbackKo";
-                var feedback = Korean(value.GetProperty("feedbackKo"), 800);
-                if (SentenceCount(feedback) > 2) throw PracticeException.Invalid();
+                var feedback = Korean(value.GetProperty("feedbackKo"), 800, rule: "feedbackKo");
+                if (SentenceCount(feedback) > 3) throw PracticeOutputNormalization.Invalid("schema:feedbackKo:max_sentences");
                 rule = "points";
                 foreach (var point in PracticeJson.Array(value.GetProperty("points"), 0, 3))
                 {
@@ -103,28 +105,43 @@ public static class PracticeOutputs
         { throw PracticeOutputNormalization.Invalid("schema:" + rule); }
     }
 
-    internal static string English(JsonElement element, int maxWords, int maxSentences)
+    internal static string English(JsonElement element, int maxWords, int maxSentences, string rule = "english_style")
     {
-        var text = PracticeJson.Text(element, 1, 800);
-        if (text != PracticeJson.Collapse(text) || !text.Any(char.IsAsciiLetter) ||
-            text.Split(' ').Length > maxWords || SentenceCount(text) > maxSentences ||
-            text.Any(c => !(char.IsAsciiLetterOrDigit(c) || " .,?!';:-()".Contains(c))) ||
-            HasMetaCommentary(text) || text.Contains(';') ||
-            text.StartsWith('-') || text.Contains(" - ", StringComparison.Ordinal) ||
-            (char.IsAsciiDigit(text[0]) && text.Contains(". ", StringComparison.Ordinal)) ||
-            text.Contains("http://", StringComparison.OrdinalIgnoreCase) ||
-            text.Contains("https://", StringComparison.OrdinalIgnoreCase)) throw PracticeException.Invalid();
+        var text = OutputText(element, 800, rule);
+        if (text != PracticeJson.Collapse(text)) throw Invalid("whitespace");
+        if (!text.Any(char.IsAsciiLetter)) throw Invalid("no_english");
+        if (text.Split(' ').Length > maxWords) throw Invalid("max_words");
+        if (SentenceCount(text) > maxSentences) throw Invalid("max_sentences");
+        if (text.Any(c => !(char.IsAsciiLetterOrDigit(c) || " .,?!';:-()".Contains(c)))) throw Invalid("characters");
+        if (HasMetaCommentary(text)) throw Invalid("meta_commentary");
+        if (text.StartsWith('-') || (char.IsAsciiDigit(text[0]) && text.Contains(". ", StringComparison.Ordinal))) throw Invalid("list_prefix");
+        if (text.Contains("http://", StringComparison.OrdinalIgnoreCase) || text.Contains("https://", StringComparison.OrdinalIgnoreCase))
+            throw Invalid("url");
         return text;
+        PracticeException Invalid(string reason) => PracticeOutputNormalization.Invalid("schema:" + rule + ":" + reason);
     }
 
-    private static string Korean(JsonElement value, int max, bool hangulFirst = false)
+    private static string Korean(JsonElement value, int max, bool hangulFirst = false, string rule = "korean")
     {
-        var text = PracticeJson.Text(value, 1, max);
+        var text = OutputText(value, max, rule);
         var hangul = text.Count(Hangul);
-        if (hangul == 0 || (hangulFirst && !Hangul(text.FirstOrDefault(char.IsLetter))) ||
-            text.Any(c => CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.Surrogate or UnicodeCategory.OtherSymbol) ||
-            text.IndexOfAny(['<', '>', '*', '`', '#']) >= 0) throw PracticeException.Invalid();
+        if (hangul == 0) throw Invalid("no_hangul");
+        if (hangulFirst && !Hangul(text.FirstOrDefault(char.IsLetter))) throw Invalid("hangul_first");
+        if (text.Any(c => CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.Surrogate or UnicodeCategory.OtherSymbol))
+            throw Invalid("symbols");
+        if (text.IndexOfAny(['<', '>', '*', '`', '#']) >= 0) throw Invalid("markup");
         return text;
+        PracticeException Invalid(string reason) => PracticeOutputNormalization.Invalid("schema:" + rule + ":" + reason);
+    }
+    private static string OutputText(JsonElement value, int maximum, string rule)
+    {
+        if (value.ValueKind != JsonValueKind.String) throw Invalid("type");
+        var text = value.GetString()!;
+        if (string.IsNullOrWhiteSpace(text)) throw Invalid("empty");
+        if (text.Length > maximum) throw Invalid("max_characters");
+        if (text.Any(char.IsControl)) throw Invalid("control_character");
+        return text;
+        PracticeException Invalid(string reason) => PracticeOutputNormalization.Invalid("schema:" + rule + ":" + reason);
     }
     private static bool HasMetaCommentary(string text) => new[]
     {
@@ -141,8 +158,8 @@ public static class PracticeOutputs
         {
             var c = text[i];
             if (c == '.' && i > 0 && i + 1 < text.Length && char.IsAsciiDigit(text[i - 1]) && char.IsAsciiDigit(text[i + 1])) continue;
-            if (".?!".Contains(c)) { if (!inEnding) count++; inEnding = true; }
-            else if (!char.IsWhiteSpace(c)) inEnding = false;
+            if (".?!。？！".Contains(c)) { if (!inEnding) count++; inEnding = true; }
+            else if (!char.IsWhiteSpace(c) && !"\"'”’)]".Contains(c)) inEnding = false;
         }
         return count + (inEnding ? 0 : 1);
     }
