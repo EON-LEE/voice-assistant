@@ -15,11 +15,13 @@ public sealed record SessionOptions
     public string Topic { get; init; } = "";
     public IReadOnlyList<string> Phrases { get; init; } = Array.Empty<string>();
     public int EndSilenceMs { get; init; } = 700;
+    public bool TranscribeOnly { get; init; }
     public static SessionOptions Legacy { get; } = new();
 
     internal static SessionOptions Parse(JsonElement value)
     {
-        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs");
+        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly");
+        var transcribeOnly = value.TryGetProperty("transcribeOnly", out var only) && only.GetBoolean();
         var mode = Text(value, "responseMode", 20, "grounded");
         if (mode is not ("balanced" or "grounded" or "conversation")) throw Invalid();
         var profile = new ConfirmedProfile();
@@ -48,7 +50,8 @@ public sealed record SessionOptions
         return new()
         {
             ResponseMode = mode, Profile = profile, ProfileConfirmed = confirmed,
-            Topic = Text(value, "topic", 300), Phrases = phrases.AsReadOnly(), EndSilenceMs = silence
+            Topic = Text(value, "topic", 300), Phrases = phrases.AsReadOnly(), EndSilenceMs = silence,
+            TranscribeOnly = transcribeOnly
         };
     }
 

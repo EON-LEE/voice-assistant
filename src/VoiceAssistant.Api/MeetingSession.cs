@@ -65,7 +65,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 throw new ProviderException("invalid_start", "First message must be protocol v1 session.start with PCM16LE 16 kHz mono audio.");
             using (var json = JsonDocument.Parse(start.Bytes))
                 options = json.RootElement.TryGetProperty("options", out var input) ? SessionOptions.Parse(input) : SessionOptions.Legacy;
-            prefetch = new(provider, objectId, options, lifetime.Token);
+            if (!options.TranscribeOnly) prefetch = new(provider, objectId, options, lifetime.Token);
             speech = await provider.StartSpeechAsync(
                 options,
                 transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
@@ -91,6 +91,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             revision = transcript.Revision,
                             text = transcript.Text
                         }, lifetime.Token);
+                        if (options.TranscribeOnly) break;
                         if (transcript.Final)
                         {
                             conversation.Add(new(transcript.Text));
@@ -103,15 +104,16 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         {
                             if (responseActive && transcript.TurnId != responseTurn)
                                 await CancelResponseAsync(lifetime.Token);
-                            prefetch.Update(transcript, conversation);
+                            prefetch!.Update(transcript, conversation);
                         }
                         break;
                     case "response.request":
-                        if (lastTurn is null) await ErrorAsync("no_transcript", "Wait for a finalized utterance.", true, lifetime.Token);
+                        if (options.TranscribeOnly) await ErrorAsync("transcribe_only", "This session only transcribes speech.", false, lifetime.Token);
+                        else if (lastTurn is null) await ErrorAsync("no_transcript", "Wait for a finalized utterance.", true, lifetime.Token);
                         else await StartResponseAsync(lifetime.Token, manual: true);
                         break;
                     case "response.cancel":
-                        prefetch.Cancel();
+                        prefetch?.Cancel();
                         await CancelResponseAsync(lifetime.Token);
                         break;
                     case "session.stop":

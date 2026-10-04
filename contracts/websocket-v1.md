@@ -46,6 +46,11 @@ The example profile is fictional test data, not the user's identity. Missing opt
 
 Optional `transcribeOnly` (boolean, default false, JSON null is not an omission) makes the socket recognition-only for practice mode: `transcript.partial/final` are emitted as usual but there is no automatic response, no Search and no model call, and `response.request` returns `error` `code:"transcribe_only"`, `retryable:false` while the session continues. See `practice-v1.md`.
 
+Recognition-only sessions do not create a partial-retrieval worker or compose confirmed-profile replies.
+`response.cancel` remains safe and `session.stop` closes normally; phrase hints and end-silence settings still reach
+Speech. The option cannot be changed after the handshake. Clients should not treat the manual-request rejection as
+a terminal transport error; further spoken answers are still transcribed.
+
 Speech receives the explicit phrase list through `PhraseListGrammar` before continuous recognition starts, plus the configured segmentation silence. Hints are recognition bias, not verified facts. Confirmed profile fields are passed as untrusted JSON facts for relevant introductions, not instructions or evidence of personal history, employer, dates or commitments.
 
 Routing: `grounded` always retrieves. `conversation` explicitly skips Search and instructs the model to abstain from unsupported private facts. `balanced` skips only anchored clear conversational requests, allowlisted self-contained general technical questions, or introductions covered by confirmed profile fields. Company/customer/date/commitment questions and ambiguous fragments default to Search. Up to12 prior turns/24000 characters can make routing more conservative; history never turns an ambiguous fragment into a confident knowledge-free answer. The model receives bounded history even when routing chooses Search. General technical questions should get direct explanations, not irrelevant requests for personal details.

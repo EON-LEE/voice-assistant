@@ -381,7 +381,9 @@ public sealed partial class ApiTests
         }
         public static async Task<Host> StartAsync(bool azure = false, string environment = "Development", IMeetingProvider? provider = null,
             VoiceAssistant.Api.Knowledge.IKnowledgeStore? knowledge = null, TimeProvider? clock = null,
-            Dictionary<string, string?>? configuration = null)
+            Dictionary<string, string?>? configuration = null,
+            VoiceAssistant.Api.Practice.IPracticeModel? practiceModel = null,
+            VoiceAssistant.Api.Practice.IPracticeSpeech? practiceSpeech = null)
         {
             var app = ApiApplication.Build([], builder =>
             {
@@ -403,6 +405,8 @@ public sealed partial class ApiTests
                 if (configuration is not null) builder.Configuration.AddInMemoryCollection(configuration);
                 if (knowledge is not null) builder.Services.AddSingleton(knowledge);
                 if (clock is not null) builder.Services.AddSingleton(clock);
+                if (practiceModel is not null) builder.Services.AddSingleton(practiceModel);
+                if (practiceSpeech is not null) builder.Services.AddSingleton(practiceSpeech);
                 builder.Services.AddSingleton<IMeetingProvider>(provider ?? new FakeMeetingProvider());
                 builder.Services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {

@@ -146,6 +146,46 @@ Only knowledge-routed substantive stable partials can prefetch retrieval, after2
 
 Phrase hints use the official [Speech phrase-list API](https://learn.microsoft.com/azure/ai-services/speech-service/improve-accuracy-phrase-list) (`PhraseListGrammar.FromRecognizer`/`AddPhrase`) before recognition; explicit350..1500ms segmentation silence is applied to SpeechConfig. The original provider overloads remain available for LiveProbe with legacy settings. This does not alter the native audio format, Entra authentication, semantic relevance gate or credential flow.
 
+## Korean assist, read-aloud and practice
+
+The additive POST endpoints are `/api/assist/enrich`, `/api/assist/speak`, `/api/practice/turn`,
+`/api/practice/suggest`, `/api/practice/feedback` and `/api/practice/summary`; see
+[practice-v1](../../contracts/practice-v1.md). Azure requires the existing Meeting JWT policy and exact Origin;
+explicit Development Fake uses the same loopback peer/Host/Origin guard and fixed local owner as the fake socket.
+Requests are strictly validated JSON (16KiB maximum), with unknown/duplicate fields, invalid types and forbidden
+controls rejected. Eight non-speech requests may be active per owner, with60 in a rolling minute across enrichment
+and practice; speech has a separate three-active/30-per-minute bucket. Rejections carry429 and Retry-After.
+The deadlines are20seconds for model operations and15seconds for speech. A noncooperative timed-out provider keeps
+its concurrency slot until its task unwinds instead of spawning unlimited background work.
+
+Azure chat reuses the existing client/options and JSON response format, with a minimum2048 completion-token budget
+(reasoning tokens also consume it). Outputs are structurally validated; invalid model JSON/schema gets one retry,
+then502, never a Fake fallback. Hangul guides are **approximate pronunciation aids**, not pronunciation assessment.
+Aligned English chunks must reconstruct the input exactly after whitespace collapse, and Hangul sound chunks reject
+Latin echoes. The validator enforces form/length/alignment, not semantic translation correctness, CEFR level or the
+truth of generated coaching: real Azure/user review is still necessary. Feedback uses transcripts, not voice/accent.
+User context and retrieved evidence are fenced serialized data, never system instructions. Materials use the existing
+caller-ACL/semantic retrieval; retrieval failure is explicitly `unavailable` with scenario-only practice output, as
+specified by the practice contract. Live WebSocket grounding-failure behavior is unchanged.
+
+Read-aloud maps `coach` to **en-US-JennyNeural** and `partner` to **en-US-GuyNeural**, with XML-writer-escaped SSML and
+normal/80% rates. Speech SDK returns24kHz48kbit/s mono MP3 without local speaker playback; Fake returns a valid100ms
+silent24kHz mono PCM WAV. Authorization reuses SpeechAuthorization and the standard managed-identity credential,
+retaining CRL checks. The existing Cognitive Services Speech User role is the expected runtime permission.
+**The deployed Korea Central voice list, live AAD synthesis and audio playback have not been checked by this change**;
+the coordinator must verify those selected voices against the resource before claiming live acceptance.
+No input text, audio, feedback or provider error body is logged or persisted. Response caching remains disabled.
+
+Fake enrichment deliberately uses the contract's `[fake-ko] ` marker and an input echo (truncated to400characters),
+not a real Korean translation; this marker is the explicit Fake-only exception to Hangul-first translation validation.
+Pronunciation still passes exact alignment/Hangul validation. Very word-dense replies that cannot fit40chunks fail502,
+rather than returning invalid alignment.
+
+`session.start.options.transcribeOnly:true` creates an immutable recognition-only channel: Speech phrase/silence
+options still apply, partial/final transcripts continue, but no history-driven reply, Search, profile composition or
+speculative retrieval occurs. Manual `response.request` returns nonfatal-in-session `transcribe_only` with
+`retryable:false`; the socket remains usable until stop/expiry. Missing/false retains the existing live behavior.
+
 ## Content-free timing metrics
 
 **Deterministic confirmed introductions:** a recognized individual/group introduction request in balanced/conversation mode uses fixed English labels plus verbatim confirmed name/role/project fields, not a model call. It emits `responseRoute:profile`, `grounding:disabled`, `sources:[]`, `retrievalPrefetched:false`. Unknown history/first encounter is omitted entirely. Partial known profiles work without adding unknown placeholders; missing/unconfirmed profiles keep conservative model behavior. Mixed private customer/date/commitment/employer requests do not qualify, and grounded mode continues retrieving. The browser should request concise English profile text. The deterministic reply is excluded from all model first-delta/completion histograms; no new latency metric claims model work occurred.

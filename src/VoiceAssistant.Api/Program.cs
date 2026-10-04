@@ -3,6 +3,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using VoiceAssistant.Api;
 using VoiceAssistant.Api.Knowledge;
+using VoiceAssistant.Api.Practice;
 
 var app = ApiApplication.Build(args);
 app.Run();
@@ -41,6 +42,15 @@ namespace VoiceAssistant.Api
             builder.Services.AddSingleton<KnowledgeService>();
             builder.Services.AddSingleton<MaterialExtractor>();
             builder.Services.AddSingleton<KnowledgeRequestReader>();
+            builder.Services.TryAddSingleton<IPracticeModel>(services => settings.Fake
+                ? new FakePracticeModel()
+                : new AzurePracticeModel(services.GetRequiredService<AzureServiceClients>().OpenAI, settings));
+            builder.Services.TryAddSingleton<IPracticeSpeech>(services => settings.Fake
+                ? new FakePracticeSpeech()
+                : new AzurePracticeSpeech(settings, services.GetRequiredService<AzureServiceClients>(),
+                    services.GetRequiredService<ILogger<AzurePracticeSpeech>>()));
+            builder.Services.AddSingleton<PracticeService>();
+            builder.Services.AddSingleton<PracticeLimiter>();
             builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
             {
                 options.MapInboundClaims = false;
@@ -115,6 +125,7 @@ namespace VoiceAssistant.Api
                     context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(context.RequestAborted);
             });
             app.MapKnowledge(settings);
+            app.MapPractice(settings);
             app.MapFallbackToFile("index.html");
             return app;
         }
