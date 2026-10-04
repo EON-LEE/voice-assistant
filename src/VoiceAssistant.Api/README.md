@@ -198,6 +198,13 @@ outer endpoint timeout/provider failure or retrieval fallback. Categories includ
 `retrieval_unavailable`. No exception object, body, prompt, user text, identity, URL or rejected property name is logged.
 An exhausted schema retry can therefore yield two detailed safe model warnings and one generic endpoint warning.
 
+Question enrichment treats `pronunciation` as server-owned: any model-provided value is discarded and the response
+always contains JSON null, including when the field was omitted. Korean translation still passes validation.
+Reply enrichment has no null-success fallback: pronunciation remains required and aligned after at most one retry.
+On that retry only the allowlisted failed validator category is added to the system prompt (for example
+`schema:pronunciation:rejoin:word_sequence`), never the rejected output or an arbitrary property/message.
+Unknown optional model fields remain discarded; missing/invalid required reply fields still fail502 after retry.
+
 Suggestions/corrected sample answers are prompted to be only first-person words the speaker would say, not
 commentary about "provided information" or "a safe answer". The style validator rejects such meta-answer prefixes;
 it does not strip them into fabricated success. Without materials the model may express a general preference or

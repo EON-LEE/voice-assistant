@@ -101,7 +101,7 @@ public sealed class PracticeSchemaTests
             valid.Replace("\"korean\":", "\"korean\":\"중복\",\"korean\":")
         }) Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(broken, request));
         var question = request with { Kind = "question" };
-        Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(valid, question));
+        Assert.Equal(JsonValueKind.Null, PracticeOutputs.Validate(valid, question).GetProperty("pronunciation").ValueKind);
         Assert.Throws<PracticeException>(() => PracticeOutputs.Validate("""{"korean":"좋아요.","pronunciation":null}""", request));
     }
 

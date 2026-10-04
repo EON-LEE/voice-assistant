@@ -7,7 +7,7 @@ public static class PracticeOutputs
 {
     public static JsonElement Validate(string json, PracticeRequest request, bool fake = false)
     {
-        json = PracticeOutputNormalization.Normalize(json, request.Operation);
+        json = PracticeOutputNormalization.Normalize(json, request.Operation, request.Kind);
         if (request.Operation == "enrich" && request.Kind == "reply")
             json = PronunciationAlignment.Rebuild(json, request.Text);
         using var parsed = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 8 });

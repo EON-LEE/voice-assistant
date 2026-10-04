@@ -10,6 +10,8 @@ namespace VoiceAssistant.Api.Practice;
 public interface IPracticeModel
 {
     Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, CancellationToken cancellation);
+    Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, string? failedRule,
+        CancellationToken cancellation) => GenerateAsync(request, grounding, retry, cancellation);
 }
 
 public sealed record PracticeAudio(byte[] Bytes, string ContentType);
@@ -20,7 +22,11 @@ public interface IPracticeSpeech
 
 public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings settings) : IPracticeModel
 {
-    public async Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, CancellationToken cancellation)
+    public Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, CancellationToken cancellation) =>
+        GenerateAsync(request, grounding, retry, null, cancellation);
+
+    public async Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, string? failedRule,
+        CancellationToken cancellation)
     {
         var instructions = """
             You are an English meeting practice coach for a Korean-speaking learner.
@@ -54,7 +60,7 @@ public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings
             """;
         var schema = request.Operation switch
         {
-            "enrich" when request.Kind == "question" => """{"korean":"Hangul-first translation <=400 chars","pronunciation":null}""",
+            "enrich" when request.Kind == "question" => """{"korean":"Hangul-first translation <=400 chars","pronunciation":null} This is a question translation only. pronunciation MUST be JSON null, never an array or text.""",
             "enrich" => """{"korean":"Hangul-first translation <=400 chars","pronunciation":[{"en":"exact input chunk","ko":"Hangul sounds"}]}""",
             "turn" => """{"text":"1-2 short sentences, <=30 words, ends with one clear question. Respect scenario difficulty and ask the next question based on history. Only direct partner dialogue, never commentary about provided information or safe answers. Do not return done/turn/grounding/sources: the server computes them."}""",
             "suggest" => """{"text":"1-2 short sentences, <=25 words, first sentence answers directly in first-person speaker wording. Only the spoken reply, no safe-answer labels, no discussion of provided information. General preferences or suggestions are allowed without materials; invented private facts and commitments are not."}""",
@@ -72,7 +78,9 @@ public sealed class AzurePracticeModel(AzureOpenAIClient openAI, ServiceSettings
         ChatMessage[] messages =
         [
             new SystemChatMessage(instructions + "\nJSON output contract: " + schema +
-                (retry ? "\nThe preceding attempt failed schema validation. Produce a fresh fully valid object; do not add explanations." : "")),
+                (retry ? "\nThe preceding attempt failed schema validation. Failed validation rule: " +
+                    PracticeDiagnostics.SafeRule(failedRule) +
+                    ". Correct that rule and produce a fresh fully valid object; do not add explanations." : "")),
             new UserChatMessage("<untrusted_json>\n" + data + "\n</untrusted_json>")
         ];
         var options = AzureMeetingProvider.CreateChatOptions(settings);

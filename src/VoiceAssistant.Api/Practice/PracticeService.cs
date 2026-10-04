@@ -28,13 +28,14 @@ public sealed class PracticeService(IPracticeModel model, IPracticeSpeech speech
             if (grounding.Status is not ("disabled" or "grounded" or "no_matches" or "unavailable"))
                 grounding = new("unavailable", []);
         }
+        string? failedRule = null;
         for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellation.ThrowIfCancellationRequested();
             JsonElement output;
             try
             {
-                var response = await model.GenerateAsync(request, grounding, attempt > 0, cancellation);
+                var response = await model.GenerateAsync(request, grounding, attempt > 0, failedRule, cancellation);
                 cancellation.ThrowIfCancellationRequested();
                 output = PracticeOutputs.Validate(response, request, settings.Fake);
             }
@@ -44,7 +45,12 @@ public sealed class PracticeService(IPracticeModel model, IPracticeSpeech speech
                     request.Operation, exception, attempt + 1);
                 var invalidOutput = exception is JsonException ||
                     exception is PracticeException { DiagnosticCategory: not null };
-                if (invalidOutput && attempt == 0) continue;
+                if (invalidOutput && attempt == 0)
+                {
+                    failedRule = PracticeDiagnostics.SafeRule(exception is JsonException ? "json_parse" :
+                        (exception as PracticeException)?.DiagnosticCategory);
+                    continue;
+                }
                 if (exception is OperationCanceledException) throw;
                 if (!invalidOutput) throw;
                 throw PracticeException.Unavailable();
