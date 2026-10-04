@@ -5,6 +5,7 @@ export interface SessionOptions {
   topic: string;
   phrases: string[];
   endSilenceMs: number;
+  transcribeOnly?: boolean;
 }
 
 export function defaultOptions(): SessionOptions {
@@ -37,8 +38,11 @@ export function validateOptions(input: SessionOptions): SessionOptions {
   if (phrases.reduce((sum, value) => sum + value.length, 0) > 2048) throw new Error("Terms must total at most 2048 characters.");
   if (!Number.isInteger(input.endSilenceMs) || input.endSilenceMs < 350 || input.endSilenceMs > 1500)
     throw new Error("End-of-turn silence must be an integer between 350 and 1500 ms.");
+  if (input.transcribeOnly !== undefined && typeof input.transcribeOnly !== "boolean")
+    throw new Error("transcribeOnly must be a boolean.");
   return { responseMode: input.responseMode, profile, profileConfirmed: input.profileConfirmed,
-    topic: field(input.topic, 300, "Meeting topic"), phrases, endSilenceMs: input.endSilenceMs };
+    topic: field(input.topic, 300, "Meeting topic"), phrases, endSilenceMs: input.endSilenceMs,
+    ...(input.transcribeOnly === undefined ? {} : { transcribeOnly: input.transcribeOnly }) };
 }
 
 export function parsePhrases(text: string): string[] {

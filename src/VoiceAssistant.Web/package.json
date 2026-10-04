@@ -7,7 +7,9 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "tsc -p ../../tests/VoiceAssistant.Web.Tests/tsconfig.json && node --test ../../tests/VoiceAssistant.Web.Tests/.compiled/tests/VoiceAssistant.Web.Tests/*.test.js"
+    "test": "npm run test:core && npm run test:coach",
+    "test:core": "tsc -p ../../tests/VoiceAssistant.Web.Tests/tsconfig.json && node --test ../../tests/VoiceAssistant.Web.Tests/.compiled/tests/VoiceAssistant.Web.Tests/*.test.js",
+    "test:coach": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@azure/msal-browser": "^4.27.0"
@@ -15,6 +17,8 @@
   "devDependencies": {
     "@types/node": "^22.18.0",
     "typescript": "~5.9.3",
-    "vite": "^7.1.0"
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4",
+    "jsdom": "^26.1.0"
   }
 }

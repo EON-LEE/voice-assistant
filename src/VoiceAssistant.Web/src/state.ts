@@ -16,7 +16,13 @@ export class ReplyState {
   pin(): void { if (this.current) this.pinned = structuredClone(this.current); }
   cancel(): void { this.suppressed = this.latest; this.current = null; }
   request(): void { this.suppressed = undefined; this.error = ""; }
-  pause(value: boolean): void { this.paused = value; if (value) this.cancel(); else this.suppressed = undefined; }
+  pause(value: boolean, preserveCompleted = false): void {
+    this.paused = value;
+    if (value) {
+      this.suppressed = this.latest;
+      if (!preserveCompleted || !this.current?.complete) this.current = null;
+    } else this.suppressed = undefined;
+  }
   apply(e: ServerEvent): void {
     if (e.type === "error") { this.error = `${e.code}: ${e.message}${e.retryable ? " You can retry." : ""}`; return; }
     if (e.type === "transcript.partial" || e.type === "transcript.final") {

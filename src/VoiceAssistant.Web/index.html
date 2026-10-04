@@ -7,9 +7,17 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2317634f'/%3E%3Cpath d='M8 10h16v10H14l-6 4z' fill='white'/%3E%3C/svg%3E">
     <title>Meeting English reply assistant</title>
   </head>
-  <body>
-    <main>
-      <header><span class="eyebrow">YOUR MEETING COMPANION</span><h1>Find the words.<br>Stay in the conversation.</h1><p>Live English transcripts and short reply suggestions. Nothing is spoken or sent on your behalf.</p></header>
+  <body class="coach-theme">
+    <main class="coach-shell">
+      <header class="coach-heading"><span class="eyebrow">A LITTLE SUPPORT, YOUR OWN VOICE</span><h1>English meeting coach</h1><p>회의는 자연스럽게, 연습은 편안하게 · Listen, understand, and find your words.</p></header>
+      <div class="coach-strip" aria-label="Coach controls">
+        <button id="coach-toggle" type="button" class="round-control" aria-label="Start session">▶</button>
+        <time id="elapsed" aria-label="Elapsed session time">00:00</time>
+        <div class="mode-chips" role="group" aria-label="Coach mode"><button id="meeting-chip" type="button" aria-pressed="true">Meeting · 회의</button><button id="practice-chip" type="button" aria-pressed="false">Practice · 연습</button></div>
+        <span id="coach-status" role="status">Ready · 준비</span>
+      </div>
+      <p id="audio-status" role="status" class="fine"></p>
+      <div id="meeting-view">
       <section aria-labelledby="session-title" class="card controls">
         <div class="section-heading"><h2 id="session-title">Your session</h2><span id="status" role="status">Stopped · no capture</span></div>
         <label for="mode">Connection mode</label>
@@ -72,9 +80,53 @@
       </aside>
       <div class="workspace">
         <section class="card transcript-panel" aria-labelledby="transcript-title"><div class="section-heading"><h2 id="transcript-title">English transcript</h2><span class="eyebrow">LIVE NOTES</span></div><div id="transcript" tabindex="0" aria-label="Partial and final meeting transcripts"><p class="empty">The conversation will appear here after you start.</p></div></section>
-        <section class="card reply-panel" aria-labelledby="reply-title"><div class="section-heading"><h2 id="reply-title">Your next reply</h2><span id="reply-status" role="status">Ready when you are</span></div><p id="reply" class="answer">Ask for a suggestion after a final transcript arrives.</p><ul id="sources" aria-label="Suggestion sources"></ul><div class="actions"><button id="suggest" type="button" disabled>Suggest a short reply</button><button id="cancel" type="button" class="secondary" disabled>Cancel</button><button id="pin" type="button" class="secondary" disabled>Pin this answer</button></div><p class="fine">Suggestions can be wrong. Check names, facts, and commitments before speaking.</p></section>
+        <section class="card reply-panel" aria-labelledby="reply-title">
+          <div class="question-line"><span class="eyebrow">THE OTHER PERSON · 상대방</span><p id="coach-question">The latest question will appear here.</p><p id="question-ko" class="korean" lang="ko" hidden></p></div>
+          <div class="section-heading"><h2 id="reply-title"><span aria-hidden="true">✧</span> Suggestion · 답변 제안</h2><span id="reply-status" role="status">Ready when you are</span></div>
+          <p id="reply" class="answer">Ask for a suggestion after a final transcript arrives.</p>
+          <div class="listen-row"><button id="reply-listen" class="listen-pill" type="button" disabled>◖ Click to listen · 듣기</button><label for="speech-rate">Speed</label><select id="speech-rate"><option value="normal">Normal · 보통</option><option value="slow">Slow · 천천히</option></select><button id="stop-listening" type="button" class="secondary">Stop audio</button></div>
+          <p id="reply-ko" class="korean" lang="ko" hidden></p><div id="reply-pronunciation" class="pronunciation" aria-label="English chunks and approximate Hangul reading" hidden></div>
+          <p id="pronunciation-note" class="fine" hidden>Hangul reading is approximate · 한글 발음은 참고용입니다.</p>
+          <ul id="sources" aria-label="Suggestion sources"></ul><div class="actions"><button id="suggest" type="button" disabled>Suggest a short reply</button><button id="cancel" type="button" class="secondary" disabled>Cancel</button><button id="pin" type="button" class="secondary" disabled>Pin this answer</button></div><p class="fine">Suggestions can be wrong. Check names, facts, and commitments before speaking.</p>
+        </section>
         <section class="card pinned-panel" aria-labelledby="pinned-title"><div class="section-heading"><h2 id="pinned-title">Pinned answer</h2><button id="unpin" type="button" class="text-button" disabled>Unpin</button></div><p id="pinned" class="answer">Keep a useful answer here. New suggestions will not replace it.</p><ul id="pinned-sources" aria-label="Pinned sources"></ul></section>
       </div>
+      </div>
+      <section id="practice-view" hidden aria-labelledby="practice-title">
+        <div class="card">
+          <h2 id="practice-title">A safe place to rehearse · 영어 회의 연습</h2>
+          <p class="fine">A practice partner asks short questions. Your microphone answers are transcribed only; feedback covers wording, not pronunciation or accent. Nothing is saved in this page's storage.</p>
+          <p id="practice-auth-status" role="status">Choose Practice to connect.</p><button id="practice-signin" type="button">Sign in for practice</button>
+          <fieldset id="practice-settings"><legend>Choose your round</legend>
+            <div class="scenario-chips" role="group" aria-label="Practice scenario">
+              <button type="button" data-scenario="sales" aria-pressed="true">Sales meeting</button><button type="button" data-scenario="interview" aria-pressed="false">Interview</button><button type="button" data-scenario="presentation" aria-pressed="false">Presentation</button><button type="button" data-scenario="custom" aria-pressed="false">Custom</button>
+            </div>
+            <label for="practice-description">Custom scenario / extra context</label><textarea id="practice-description" maxlength="400" rows="2" placeholder="Describe an original situation to rehearse"></textarea>
+            <div class="context-grid"><div><label for="practice-difficulty">Difficulty</label><select id="practice-difficulty"><option value="1">1 · Simple</option><option value="2" selected>2 · Business</option><option value="3">3 · Challenging</option></select></div>
+            <div><label for="practice-count">Number of questions</label><input id="practice-count" type="number" min="1" max="12" value="5"></div></div>
+            <label for="practice-topic">Practice topic</label><input id="practice-topic" maxlength="300" type="text">
+            <label class="check"><input id="practice-materials" type="checkbox" checked> Use my materials</label>
+            <label class="check"><input id="practice-smart" type="checkbox" checked> Smart suggestion on request</label>
+            <label class="check"><input id="practice-consent" type="checkbox"> I agree to send my microphone answers for this practice. I have permission for any room audio captured.</label>
+          </fieldset>
+          <div class="actions"><button id="practice-start" type="button" disabled>Start practice</button><button id="practice-stop" type="button" class="secondary" disabled>Stop / restart</button></div>
+          <p id="practice-status" role="status">Not started</p><p id="practice-error" role="alert" class="error" hidden></p>
+          <p id="practice-warning" role="status" class="notice" hidden></p>
+          <button id="practice-retry" type="button" hidden>Retry request</button>
+        </div>
+        <div id="practice-conversation" class="card" hidden>
+          <span class="eyebrow">YOUR PRACTICE PARTNER</span>
+          <h3 id="practice-question"></h3><p id="practice-question-ko" class="korean" lang="ko" hidden></p><ul id="practice-sources"></ul>
+          <div class="listen-row"><button id="partner-listen" class="listen-pill" type="button">Listen to question</button><label for="practice-rate">Speed</label><select id="practice-rate"><option value="normal">Normal</option><option value="slow">Slow</option></select></div>
+          <div class="actions"><button id="practice-answer" type="button">Answer by voice</button><button id="practice-done" type="button" disabled>Done answering</button><button id="practice-skip" type="button">Skip question</button><button id="practice-hint" type="button">Smart suggestion</button></div>
+          <p class="fine">Listen first, then click Answer by voice. Recognition stays paused during partner audio. Done uses final transcripts only; wait until your words are final.</p>
+          <p id="practice-answer-text" aria-live="polite"></p><p id="practice-partial" class="fine"></p>
+          <div id="practice-hint-box" hidden><h3>One way to answer · 답변 힌트</h3><p id="practice-hint-text" class="answer"></p><button id="hint-listen" class="listen-pill" type="button">Click to listen</button><p id="practice-hint-ko" class="korean" lang="ko" hidden></p><div id="practice-pronunciation" class="pronunciation" hidden></div><p class="fine">Hangul reading is approximate · 한글 발음은 참고용입니다.</p><ul id="practice-hint-sources"></ul></div>
+        </div>
+        <div id="practice-feedback" class="card" hidden></div>
+        <button id="practice-next" type="button" hidden>Next question →</button>
+        <div id="practice-summary" class="card" hidden></div>
+      </section>
       <footer>Audio is streamed, never recorded to a file. Stop releases all microphone/shared tracks. Pause drops new audio locally; already-sent audio cannot be recalled. Meeting transcripts and replies stay in page memory. Uploaded materials are stored separately as described above.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>

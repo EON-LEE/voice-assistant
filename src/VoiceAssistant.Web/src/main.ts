@@ -1,4 +1,5 @@
 import "./style.css";
+import "./coach.css";
 import workletUrl from "./audio.worklet.ts?worker&url";
 import demoAudioUrl from "./assets/demo-original.wav?url";
 import { BrowserAuth } from "./auth.js";
@@ -10,6 +11,10 @@ import { DemoTransport, SocketTransport, asError, isLoopback } from "./transport
 import { createStartMessage, parsePhrases, validateOptions, type SessionOptions } from "./options.js";
 import { RenderScheduler } from "./render-scheduler.js";
 import { referenceText } from "./materials.js";
+import { CoachClient, type Rate } from "./coach-client.js";
+import { CoachAudio } from "./coach-audio.js";
+import { EnrichmentRequests, renderEnrichment } from "./enrichment.js";
+import { PracticeUI } from "./practice-ui.js";
 
 function element<T extends HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -37,6 +42,39 @@ let transcriptDirty = true;
 let renderedReply: Reply | null | undefined;
 let renderedPinned: Reply | null | undefined;
 const scheduler = new RenderScheduler(renderContent);
+let coachMode: "meeting" | "practice" = "meeting";
+let elapsedStarted = 0;
+let elapsedTimer: ReturnType<typeof setInterval> | undefined;
+let assistTurn: string | undefined;
+const coachClient = new CoachClient((path, init) => auth.coachRequest(path, init), () => auth.isFake);
+const clip = new CoachAudio(coachClient, new Audio(), audio => {
+  element("audio-status").textContent = audio.message;
+  element<HTMLButtonElement>("stop-listening").disabled = !["loading", "playing"].includes(audio.state);
+  element<HTMLButtonElement>("reply-listen").textContent = audio.key === "meeting-reply" && audio.state === "loading"
+    ? "Preparing audio…" : audio.key === "meeting-reply" && audio.state === "playing" ? "Playing · 재생 중" : "◖ Click to listen · 듣기";
+});
+const enrichment = new EnrichmentRequests(coachClient, (kind, value) => {
+  if (kind === "question") renderEnrichment(element("question-ko"), null, value);
+  else {
+    renderEnrichment(element("reply-ko"), element("reply-pronunciation"), value);
+    element("pronunciation-note").hidden = !value?.pronunciation?.length;
+  }
+});
+const practice = new PracticeUI(auth, clip, workletUrl, (active, status) => {
+  if (coachMode === "practice") updateCoachActivity(active, status);
+});
+function updateCoachActivity(active: boolean, status: string): void {
+  const toggle = element<HTMLButtonElement>("coach-toggle");
+  toggle.textContent = active ? "■" : "▶"; toggle.setAttribute("aria-label", active ? "Stop session" : "Start session");
+  element("coach-status").textContent = status;
+  if (active && !elapsedTimer) {
+    elapsedStarted = Date.now(); element("elapsed").textContent = "00:00";
+    elapsedTimer = setInterval(() => {
+      const seconds = Math.floor((Date.now() - elapsedStarted) / 1000);
+      element("elapsed").textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+    }, 1000);
+  } else if (!active && elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = undefined; }
+}
 for (const id of ["mode", "start", "stop", "suggest", "pause", "pin", "transcript", "reply", "status", "error", "consent", "signin"])
   element(id).dataset.testid = id;
 element("pinned").dataset.testid = "pinned-reply";
@@ -104,6 +142,7 @@ function renderContent(): void {
       item.append(label, document.createTextNode(turn.text)); fragment.append(item);
     }
     transcript.replaceChildren(fragment);
+    element("coach-question").textContent = state.turns.at(-1)?.text ?? "The latest question will appear here.";
   }
   if (renderedReply !== state.current) {
     element("reply").textContent = state.current?.text || "Ask for a suggestion after a final transcript arrives.";
@@ -118,6 +157,7 @@ function renderContent(): void {
   }
 }
 function renderControls(): void {
+  element("meeting-view").classList.toggle("running", !!session);
   suggest.disabled = !canSuggest();
   cancel.disabled = !session?.isReady;
   pause.disabled = !session?.isReady;
@@ -132,6 +172,9 @@ function renderControls(): void {
   element<HTMLFieldSetElement>("meeting-fields").disabled = !!session;
   if (configReady && !fake && !auth.signedIn)
     element("auth-status").textContent = "Sign in first, then click Share meeting audio.";
+  element<HTMLButtonElement>("reply-listen").disabled = mode.value === "demo" || !state.current?.complete ||
+    !state.current.text || state.current.text.length > 400 || !auth.signedIn;
+  if (coachMode === "meeting") updateCoachActivity(!!session, element("status").textContent ?? "Ready");
 }
 function renderSource(): void {
   const microphone = audioSource.value === "microphone";
@@ -170,6 +213,35 @@ async function configureMode(): Promise<void> {
   if (generation === configGeneration) render();
 }
 mode.addEventListener("change", () => { consent.checked = false; void configureMode(); });
+for (const id of ["meeting-chip", "practice-chip"]) element(id).addEventListener("click", () => {
+  const next = id === "meeting-chip" ? "meeting" : "practice";
+  if (coachMode === next) return;
+  clip.stop(); enrichment.reset(); assistTurn = undefined;
+  if (next === "practice") { void session?.stop(); scheduler.flush(); }
+  else void practice.stop();
+  coachMode = next;
+  element("meeting-view").hidden = next !== "meeting";
+  element("practice-view").hidden = next !== "practice";
+  element("meeting-chip").setAttribute("aria-pressed", String(next === "meeting"));
+  element("practice-chip").setAttribute("aria-pressed", String(next === "practice"));
+  updateCoachActivity(false, next === "practice" ? "Practice ready" : "Meeting ready");
+  if (next === "practice") void practice.configure();
+});
+element("coach-toggle").addEventListener("click", () => {
+  if (coachMode === "practice") {
+    if (practice.active) void practice.stop(); else element<HTMLButtonElement>("practice-start").click();
+  } else if (session) stop.click(); else start.click();
+});
+element("reply-listen").addEventListener("click", () => {
+  if (!state.current?.complete || element<HTMLButtonElement>("reply-listen").disabled) return;
+  const text = state.current.text;
+  // Avoid feeding the read-aloud into either microphone or system-loopback recognition.
+  if (session?.isReady && !pause.checked) {
+    pause.checked = true; state.pause(true, true); session.pause(true); render();
+  }
+  void clip.play(text, "coach", element<HTMLSelectElement>("speech-rate").value as Rate, "meeting-reply");
+});
+element("stop-listening").addEventListener("click", () => clip.stop());
 consent.addEventListener("change", render);
 audioSource.addEventListener("change", () => { consent.checked = false; renderSource(); render(); });
 for (const id of ["profile-name", "profile-role", "profile-project"])
@@ -187,7 +259,7 @@ start.addEventListener("click", () => {
     try { options = readOptions(); createStartMessage(options); }
     catch (e) { error(asError(e).message); return; }
   }
-  error(""); scheduler.cancel(); state.reset(); transcriptDirty = true; pause.checked = false;
+  error(""); scheduler.cancel(); clip.stop(); enrichment.reset(); assistTurn = undefined; state.reset(); transcriptDirty = true; pause.checked = false;
   const shared = {
     context: () => new AudioContext(),
     node: (context: AudioContext) => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
@@ -227,11 +299,20 @@ start.addEventListener("click", () => {
   session = new MeetingSession(source, transport,
     e => {
       state.apply(e);
+      if ((e.type === "transcript.partial" || e.type === "transcript.final") && state.turns.at(-1)?.id === e.turnId && assistTurn !== e.turnId) {
+        assistTurn = e.turnId; enrichment.reset(); clip.stop();
+      }
+      if (e.type === "response.started" && state.current?.id === e.responseId) { enrichment.clear("reply"); clip.stop(); }
       if (e.type === "transcript.partial" || e.type === "transcript.final") transcriptDirty = true;
       if (state.error) error(state.error);
       renderControls();
       if (e.type === "transcript.partial" || e.type === "response.delta") scheduler.schedule();
       else scheduler.flush();
+      // Never await optional assistance on the streaming path. English is already rendered.
+      if (selectedMode !== "demo" && e.type === "transcript.final" && state.turns.at(-1)?.id === e.turnId)
+        void enrichment.load("question", e.text!);
+      if (selectedMode !== "demo" && e.type === "response.completed" && state.current?.id === e.responseId)
+        void enrichment.load("reply", e.text!);
       if (selectedMode === "demo" && e.type === "transcript.final" && canSuggest()) {
         state.request(); session?.request(); render();
       }
@@ -241,17 +322,17 @@ start.addEventListener("click", () => {
         ? "DEMO · sample playback and scripted responses (not live AI)"
         : (selectedMode === "demo" ? "DEMO · " : fake && selectedMode !== "demo" ? "LOCAL FAKE · " : "") + status
           + (microphone && status.startsWith("Connected") ? fake ? " · microphone room audio sent to localhost" : " · microphone room audio sent to Azure" : "");
-      if (status.startsWith("Stopped")) { session = null; pause.checked = false; consent.checked = false; state.pause(true); }
+      if (status.startsWith("Stopped")) { session = null; pause.checked = false; consent.checked = false; state.pause(true); clip.stop(); enrichment.reset(); }
       render();
     }, e => error(e.message), options);
   // No await before this call: getDisplayMedia and AudioContext.resume need this gesture.
   void session.start();
   render();
 });
-stop.addEventListener("click", () => { scheduler.flush(); void session?.stop(); render(); });
+stop.addEventListener("click", () => { clip.stop(); enrichment.reset(); scheduler.flush(); void session?.stop(); render(); });
 pause.addEventListener("change", () => { state.pause(pause.checked); session?.pause(pause.checked); render(); });
 document.addEventListener("keydown", event => {
-  if (event.key.toLowerCase() !== "p" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || pause.disabled) return;
+  if (coachMode !== "meeting" || event.key.toLowerCase() !== "p" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || pause.disabled) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.closest("input,textarea,select,button") || target.isContentEditable)) return;
   event.preventDefault(); pause.checked = !pause.checked; pause.dispatchEvent(new Event("change"));
@@ -260,8 +341,8 @@ suggest.addEventListener("click", () => {
   if (!canSuggest()) return;
   state.request(); error(""); session?.request(); render();
 });
-cancel.addEventListener("click", () => { state.cancel(); session?.cancel(); render(); });
+cancel.addEventListener("click", () => { clip.stop(); enrichment.clear("reply"); state.cancel(); session?.cancel(); render(); });
 pin.addEventListener("click", () => { state.pin(); render(); });
 element("unpin").addEventListener("click", () => { state.pinned = null; render(); });
-window.addEventListener("pagehide", () => { scheduler.cancel(); void session?.stop(); });
+window.addEventListener("pagehide", () => { clearInterval(elapsedTimer); clip.stop(); enrichment.reset(); scheduler.cancel(); void practice.stop(); void session?.stop(); });
 void configureMode();

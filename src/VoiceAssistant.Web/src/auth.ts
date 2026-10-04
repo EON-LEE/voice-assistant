@@ -18,6 +18,7 @@ export class BrowserAuth {
     createClient: config => new PublicClientApplication(config),
   }) {}
   get signedIn(): boolean { return !!this.account || this.config?.mode === "Fake"; }
+  get isFake(): boolean { return this.config?.mode === "Fake"; }
   async initialize(): Promise<ClientConfig> {
     if (this.config) return this.config;
     if (!this.initializing) this.initializing = this.loadConfig().finally(() => { this.initializing = undefined; });
@@ -61,6 +62,17 @@ export class BrowserAuth {
   }
   async knowledgeRequest(path: string, init: RequestInit = {}): Promise<Response> {
     if (!/^\/api\/knowledge(?:\/[0-9a-f]{32})?$/.test(path)) throw new Error("Invalid materials endpoint.");
+    const config = await this.initialize();
+    const headers = new Headers(init.headers);
+    if (config.mode === "Azure") headers.set("Authorization", `Bearer ${await this.token()}`);
+    else headers.delete("Authorization");
+    const response = await this.deps.fetch(path, { ...init, headers, credentials: "same-origin", cache: "no-store", redirect: "error" });
+    if (response.status === 401 || response.status === 403) this.account = undefined;
+    return response;
+  }
+  async coachRequest(path: string, init: RequestInit): Promise<Response> {
+    if (!/^\/api\/(?:assist\/(?:enrich|speak)|practice\/(?:turn|suggest|feedback|summary))$/.test(path) || init.method !== "POST")
+      throw new Error("Invalid coach endpoint.");
     const config = await this.initialize();
     const headers = new Headers(init.headers);
     if (config.mode === "Azure") headers.set("Authorization", `Bearer ${await this.token()}`);

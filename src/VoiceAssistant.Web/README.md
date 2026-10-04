@@ -2,6 +2,44 @@
 
 Installation-free TypeScript/Vite frontend for the same-origin Azure-hosted API. End users open a URL; no Windows app, extension, or download is needed. Tab capture never requests microphone permission; the explicit in-person microphone mode does. The preserved desktop project is not a dependency.
 
+## English-meeting coach overlay and practice
+
+The meeting page has an original dark, rounded, approximately 720px-wide coach surface with Meeting / Practice chips, a round Start/Stop control, elapsed timer and status. The latest English question sits above the streamed suggestion. Active conversation content takes priority over settings; all existing tab/microphone, profile/topic/terms, materials, pause/pin and session-limit controls remain available. The separate materials page keeps its own layout. No third-party brand, wording, imagery, logo or assets are included.
+
+### Korean assist and listening
+
+In Live/local Fake mode, the client requests `/api/assist/enrich` for a final question and **only after `response.completed`** for a reply. English text is rendered first using the existing 50ms-coalesced delta path; no translation or pronunciation request blocks it. A newer turn cancels both enrichment lanes; a newer response invalidates the previous reply lane. Late results are ignored even if the network ignores abort. Optional enrichment errors/malformed data leave plain English visible without an error-shaped replacement. Inputs longer than the contract's 600-character assist limit are left in English.
+
+Korean meaning appears below each English line. Reply pronunciation chunks stack the exact English words above their Hangul reading and wrap on narrow screens. The client validates chunk order, punctuation, 1–4 words/chunk, 40-chunk maximum, Hangul-only reading rules, and Korean translation bounds; invalid data is omitted. **Hangul reading is approximate**, not a phonetic assessment. Only explicit local Fake config permits the contract's `[fake-ko]` test prefix. The normal Audio demo remains scripted and makes no assist/API/auth/capture calls.
+
+**Click to listen / 듣기** sends `/api/assist/speak` with `voice:"coach"` and normal/slow rate. Audio is never automatically played for meeting suggestions. One shared audio controller cancels older fetches/clips, caps response bytes, uses the actual MIME type (MP3; WAV only for local Fake), and revokes its Blob URL on completion/error/replacement/Stop/unload. Loading, playing, blocked-autoplay, rate-limit and retry states are visible. Reading a meeting reply pauses capture to avoid feeding playback back into microphone/system audio; the completed reply remains visible, and the user explicitly resumes with Pause. Speech is limited to 400 characters; longer replies are still readable but cannot be synthesized from the listen control. Fake speech is a silent test clip, not a real voice-quality demonstration.
+
+### Practice flow
+
+Select Practice, sign in if required, choose Sales meeting / Interview / Presentation / Custom, difficulty 1–3 and 1–12 questions (default 5). Custom requires a description. **Use my materials** defaults on; **Smart suggestion** defaults on but only requests a hint on click. No personal scenario facts are prefilled. Consent is required before Start practice opens a microphone.
+
+Start opens the existing bounded microphone/AudioWorklet/socket pipeline with `options.transcribeOnly:true` and conversation mode. The recognition-only channel never generates an automatic reply or performs retrieval. It remains paused while the partner question/audio or a hint is playing. An existing `transcribe_only` error remains nonfatal for this channel as required by `practice-v1.md`; the UI never sends `response.request` during practice.
+
+The stateless HTTP flow is:
+
+1. `/api/practice/turn` receives the chosen settings and in-memory alternating history; the opening request has empty history.
+2. The returned English question is shown, Korean enrichment loads independently, and a partner voice clip is attempted **only after the user started practice**. If playback is blocked/unavailable, the visible Listen to question button retries. **Answer by voice** stops any playback, resumes the microphone and begins collecting recognized finals; it is an explicit gesture, never a surprise recording transition.
+3. **Done answering** joins unique final transcript segments (maximum 800 characters); while a partial is still arriving it stays disabled. **Skip question** sends an empty answer. No guessed/unfinished transcript is submitted and long answers are not silently truncated.
+4. `/api/practice/feedback` shows corrected English and easier English (each can be listened to), Korean feedback/points and clarity 1–5. This is feedback about recognized wording, **not pronunciation, accent, intelligence or a grade of the person**.
+5. Next question sends the bounded updated history. When the server returns `done:true`, `/api/practice/summary` shows Korean strengths/improvements and reusable English/Korean phrases with listen buttons; microphone tracks are released. Stop / restart clears the entire round.
+
+History, answers, feedback and hints live only in memory, never localStorage/sessionStorage. Switching modes, Stop, source end, or unload cancels pending work and audio; there is no persistence or automatic reconnect. Ordinary mic system-mute warnings remain visible via the existing source lifecycle. Practice uses the browser-default microphone; meeting mode retains the selectable input device. Only one mode captures at a time.
+
+Failed practice requests are explicit and retryable without duplicating history; 429 `Retry-After` is honored for turn/feedback/summary retries, hints and speech. Stop/restart remains available while requests are pending. Hint failures do not block submitting an otherwise valid answer. Requests are bounded at 16KiB and all outputs are schema-checked: unknown fields, wrong types, unexpected turn/done order, invalid Korean/chunks, excess source/point/phrase counts and overlong English fail closed. Extremely long full-round histories can hit the 16KiB contract cap: restart with shorter answers rather than silently discarding history. Sources are inert titles, never uploaded instructions.
+
+### Coach validation and limitations
+
+`npm test` now runs the existing Node test suite (`npm run test:core`) followed by **Vitest** (`npm run test:coach`). Coach Vitest cases live in `tests/VoiceAssistant.Web.Tests/coach`; they cover strict clients, pronunciation rendering using jsdom, stale/cancelled enrichment, single-clip Blob cleanup, blocked playback, practice history/skip/retry/summary and recognition-only session behavior. Tests make no real identity-provider/Speech/OpenAI calls.
+
+The Playwright 1.61.1 `coach.spec.js` mocks assist/practice HTTP routes and uses an isolated synthetic Chromium microphone for a full round. It checks streamed English before enrichment, stale/error omission, speaker clicks, hints, feedback, summary, 429 retry, stop cleanup and 390px overflow. Set `VOICE_ASSISTANT_COACH_SCREENSHOTS` to an absolute directory outside the repository to capture original meeting/practice desktop and mobile screens from those fixtures. Screens are visibly local Fake examples, not real coaching acceptance evidence. An additional real-local-Fake integration test is explicit opt-in with `VOICE_ASSISTANT_PRACTICE_E2E=1` after the backend endpoints land (alongside existing backend test flags).
+
+This frontend does not choose Azure neural voice names; those are the backend contract/runtime responsibility. No live voice/translation quality, tenant sign-in, physical-room recording, or Azure practice semantics are claimed from mocked/offline tests. The overlay is a responsive browser page, not an OS always-on-top window. Enrichment network requests do not delay English rendering, but no end-to-end live latency improvement is asserted.
+
 ## Build and run
 
 Developer prerequisites: Node 22.12+ (validated with 22.23.2), npm, modern Chromium browser for screen/tab audio support.
@@ -75,7 +113,7 @@ Audio availability depends on the browser, OS, selected surface, and user's audi
 
 The live source converts only audio tracks with a fixed-memory AudioWorklet: mono downmix, 127-tap low-pass FIR anti-alias filter, continuous fractional resampling to 16 kHz, clipped signed little-endian PCM16. It sends 640-byte/20ms frames without a WAV header, only after `session.ready`. Video is never sent. Fifty recyclable transferable buffers cap the worklet queue at one second (32,000 bytes), tolerating short UI-thread stalls without losing samples; no growing per-sample arrays are used. Worklet starvation and WebSocket `bufferedAmount` exceeding 32,000 bytes still stop visibly rather than accumulating unbounded audio or silently losing speech. Buffer capacity is not a fixed delay: frames are sent immediately while the UI thread is responsive.
 
-Pause while speaking drops audio locally and cancels suggestions. Epoch-tagged worklet frames prevent already-queued pre-pause buffers being uploaded after resume; DSP history is reset to avoid retaining paused speech. Pause leaves the shared tracks open; **Stop** releases them. Already-uploaded audio cannot be recalled. Browser throttling/suspension can interrupt capture; keep the page available. No automatic reconnect, recording, TTS, Teams posting, or external source-link navigation is performed.
+Pause while speaking drops audio locally and cancels suggestions. Epoch-tagged worklet frames prevent already-queued pre-pause buffers being uploaded after resume; DSP history is reset to avoid retaining paused speech. Pause leaves the shared tracks open; **Stop** releases them. Already-uploaded audio cannot be recalled. Browser throttling/suspension can interrupt capture; keep the page available. No automatic reconnect, recording, Teams posting, or external source-link navigation is performed. Read-aloud is explicit-click only in meetings; practice partner playback is attempted only after starting a practice round.
 
 ## In-person use
 

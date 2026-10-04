@@ -38,21 +38,25 @@ export class MeetingSession {
         if (e.type !== "session.ready") throw new Error("Expected session.ready before any transcript or audio.");
         clearTimeout(this.handshake);
         this.ready = true;
+        // Practice starts recognition-only but must not upload while the partner is speaking.
+        if (this.options?.transcribeOnly) this.paused = true;
         this.source.start(buffer => {
           if (this.isReady && !this.paused) this.transport.audio(buffer);
         }, error => this.fail(error));
+        if (this.paused) this.source.pause(true);
         this.status("Connected · audio streaming");
       } else if (e.type === "session.ready") throw new Error("Unexpected duplicate session.ready.");
       this.event(e);
       if (e.type === "error" && e.code === "session_time_limit")
         this.stopStatus = "Stopped · Session time limit reached – click Start to continue";
-      if (e.type === "error" && !e.retryable) this.fail(new Error(`${e.code}: ${e.message}`));
+      if (e.type === "error" && !e.retryable && !(this.options?.transcribeOnly && e.code === "transcribe_only"))
+        this.fail(new Error(`${e.code}: ${e.message}`));
     } catch (error) { this.fail(asError(error)); }
   }
   pause(value: boolean): void {
     if (!this.isReady) return;
     this.paused = value; this.source.pause(value);
-    if (value) this.command("response.cancel");
+    if (value && !this.options?.transcribeOnly) this.command("response.cancel");
     this.status(value ? "Paused · dropping audio locally" : "Connected · audio streaming");
   }
   request(): void { if (!this.paused) this.command("response.request"); }
