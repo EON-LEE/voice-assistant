@@ -1,0 +1,26 @@
+{
+  "parentCommit": "ca538b3",
+  "tag": "overlay-20261005",
+  "deployed": {
+    "materialsHttp": 200,
+    "rootHttp": 200,
+    "assetsHttp200": true,
+    "overlayRendered": "desktop 1100x800 and mobile 390x844, no document scroll, backdrop-filter blur(18px), no page errors"
+  },
+  "date": "2026-10-05",
+  "local": {
+    "e2ePublishedStatic": "54 passed, 4 skipped (injected-auth only)",
+    "nodeAndVitest": "91 + 45 passed",
+    "api": "562 passed",
+    "e2eViteFake": "58 passed"
+  },
+  "image": "eonvoice20260920.azurecr.io/voice-assistant@sha256:e96aba7198ffc7537bebc9c41dcdfa2f5d01e2ac9a1a7816315a39bc62d8da74",
+  "notVerified": [
+    "live authenticated API re-run after overlay deploy (admin Graph token expired; API code unchanged since practice2 live pass)",
+    "native Document Picture-in-Picture on real Chrome/Edge and OS always-on-top",
+    "real microphone",
+    "interactive Entra sign-in",
+    "human quality judgment of Korean/Hangul/coaching",
+    "true see-through over other apps (browser cannot; needs desktop wrapper)"
+  ]
+}
