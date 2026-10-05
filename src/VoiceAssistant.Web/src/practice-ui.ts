@@ -23,17 +23,17 @@ export class PracticeUI {
   private readonly enrich: EnrichmentRequests;
   private readonly client: CoachClient;
   constructor(private readonly auth: BrowserAuth, private readonly audio: CoachAudio, private readonly workletUrl: string,
-    private readonly activity: (active: boolean, status: string) => void) {
+    private readonly activity: (active: boolean, status: string) => void, private readonly root: ParentNode = document) {
     this.client = new CoachClient((path, init) => auth.coachRequest(path, init), () => this.fake);
     this.enrich = new EnrichmentRequests(this.client, (kind, value) => {
       if (kind === "question") renderEnrichment(this.el("practice-question-ko"), null, value);
       else renderEnrichment(this.el("practice-hint-ko"), this.el("practice-pronunciation"), value);
     });
     this.round = new PracticeRound(this.client, view => this.render(view), question => this.partner(question));
-    for (const button of document.querySelectorAll<HTMLButtonElement>("[data-scenario]")) {
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-scenario]")) {
       button.addEventListener("click", () => {
         this.scenario = button.dataset.scenario as PracticeSettings["scenario"]["kind"];
-        for (const item of document.querySelectorAll("[data-scenario]")) item.setAttribute("aria-pressed", String(item === button));
+        for (const item of this.root.querySelectorAll("[data-scenario]")) item.setAttribute("aria-pressed", String(item === button));
       });
     }
     this.el("practice-consent").addEventListener("change", () => this.render(this.round.view));
@@ -229,7 +229,7 @@ export class PracticeUI {
     const element = document.createElement(tag); element.textContent = value; if (lang) element.lang = lang; host.append(element);
   }
   private showError(message: string): void { this.el("practice-error").textContent = message; this.el("practice-error").hidden = !message; }
-  private el<T extends HTMLElement = HTMLElement>(id: string): T { return document.getElementById(id)! as T; }
+  private el<T extends HTMLElement = HTMLElement>(id: string): T { return this.root.querySelector(`#${id}`)! as T; }
   private button(id: string): HTMLButtonElement { return this.el<HTMLButtonElement>(id); }
   private input(id: string): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement { return this.el(id); }
   private check(id: string): HTMLInputElement { return this.el<HTMLInputElement>(id); }

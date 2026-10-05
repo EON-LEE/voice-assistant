@@ -1,3 +1,4 @@
+import { openSettings, closeSheet, setConnectionMode, startMeeting, stopMeeting, setPause, confirmConsent } from '../overlay-helpers.js';
 import { test, expect } from '@playwright/test';
 
 const limits = { maxDocuments: 300, maxChunks: 5000, maxFileBytes: 5242880, maxCharactersPerDocument: 400000 };
@@ -94,12 +95,12 @@ test('personal reference placeholder URLs render as titles only (mocked WS)', as
       ]) socket.send(JSON.stringify(event));
     });
   });
-  await page.goto('/'); await page.getByTestId('mode').selectOption('synthetic'); await page.getByTestId('start').click();
+  await page.goto('/'); await setConnectionMode(page, 'synthetic'); await startMeeting(page);
   await expect(page.locator('#sources')).toContainText('My original notes (My meeting materials)');
   await expect(page.locator('#sources')).not.toContainText('my-materials.invalid');
   await page.getByTestId('pin').click();
   await expect(page.locator('#pinned-sources')).not.toContainText('my-materials.invalid');
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 test('real localhost Fake materials stores lists and deletes original notes', async ({ page }) => {
   test.skip(process.env.VOICE_ASSISTANT_KNOWLEDGE_E2E !== '1', 'Requires integrated local Fake knowledge endpoints.');
@@ -145,7 +146,7 @@ test('materials open in a new noopener tab without interrupting active meeting (
   await page.routeWebSocket('**/api/meeting*', socket => socket.onMessage(message => {
     if (typeof message === 'string' && JSON.parse(message).type === 'session.start') socket.send(JSON.stringify({ type: 'session.ready' }));
   }));
-  await page.goto('/'); await page.getByTestId('mode').selectOption('synthetic'); await page.getByTestId('start').click();
+  await page.goto('/'); await setConnectionMode(page, 'synthetic'); await startMeeting(page);
   await expect(page.getByTestId('pause')).toBeEnabled();
   // Context routes cover the new page's first request, which occurs before a page-scoped route can be installed.
   await context.route('**/api/client-config', route => route.fulfill({ json: { mode: 'Fake', webSocketPath: '/api/meeting' } }));
@@ -153,14 +154,14 @@ test('materials open in a new noopener tab without interrupting active meeting (
     documents: [], limits, usage: { documents: 0, chunks: 0 }, extensions: ['.txt'],
   } }));
   const next = context.waitForEvent('page');
-  await page.locator('#manage-materials').click();
+  await openSettings(page); await page.locator('#manage-materials').click();
   const materials = await next;
   await expect(materials).toHaveURL(/\/materials\.html$/);
   await expect(materials.locator('#material-files')).toBeEnabled();
   expect(await materials.evaluate(() => window.opener === null)).toBe(true);
   expect(new URL(page.url()).pathname).toBe('/');
   await expect(page.getByTestId('stop')).toBeEnabled();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   await materials.close();
 });
 

@@ -1,3 +1,4 @@
+import { openSettings, closeSheet, setConnectionMode, startMeeting, stopMeeting, setPause, confirmConsent } from '../overlay-helpers.js';
 import { test, expect } from '@playwright/test';
 
 const answer = 'Let me confirm the remaining dependencies before committing to a date.';
@@ -102,9 +103,9 @@ async function mockBackend(page) {
 
 async function prepareLive(page) {
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('live');
+  await setConnectionMode(page, 'live');
   await expect(page.locator('#auth-status')).toContainText(/fake|development|ready|local/i);
-  await page.locator('#consent').check();
+  await confirmConsent(page);
 }
 
 test('offline demo never requests media, identity, or backend access', async ({ page }) => {
@@ -112,7 +113,7 @@ test('offline demo never requests media, identity, or backend access', async ({ 
   const traffic = await mockBackend(page);
   await page.goto('/');
   await expect(page.getByTestId('mode')).toHaveValue('demo');
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect.poll(() => page.locator('#demo-audio').evaluate(audio =>
     audio.currentTime > 0 && !audio.paused && !audio.muted && audio.volume > 0
   )).toBe(true);
@@ -124,7 +125,7 @@ test('offline demo never requests media, identity, or backend access', async ({ 
   const pinned = await page.getByTestId('pinned-reply').textContent();
   await page.getByTestId('suggest').click();
   await expect(page.getByTestId('pinned-reply')).toHaveText(pinned ?? '');
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   await expect(page.locator('#demo-audio')).not.toHaveAttribute('src', /.+/);
   expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
   expect(await page.evaluate(() => window.__microphoneCalls)).toBe(0);
@@ -135,12 +136,12 @@ test('denied audio sharing is visible and never falls back to microphone', async
   await mockCapture(page, 'denied');
   await mockBackend(page);
   await prepareLive(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('error')).toBeVisible();
   await expect(page.getByTestId('error')).toContainText(/denied|permission|cancel|notallowed/i);
   expect(await page.evaluate(() => window.__microphoneCalls)).toBe(0);
   await expect(page.locator('#consent')).not.toBeChecked();
-  await page.locator('#consent').check();
+  await confirmConsent(page);
   await expect(page.getByTestId('start')).toBeEnabled();
 });
 
@@ -148,19 +149,19 @@ test('stopping the audible demo prevents late replies and allows a clean replay'
   await mockCapture(page);
   const traffic = await mockBackend(page);
   await page.goto('/');
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect.poll(() => page.locator('#demo-audio').evaluate(audio => audio.currentTime > 0)).toBe(true);
-  await page.getByTestId('pause').check();
+  await setPause(page, true);
   await expect.poll(() => page.locator('#demo-audio').evaluate(audio => audio.paused)).toBe(true);
-  await page.getByTestId('pause').uncheck();
+  await setPause(page, false);
   await expect.poll(() => page.locator('#demo-audio').evaluate(audio => !audio.paused)).toBe(true);
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   await expect(page.getByTestId('status')).toContainText('Stopped');
   await expect(page.locator('#demo-audio')).not.toHaveAttribute('src', /.+/);
   await expect(page.locator('#reply-status')).not.toHaveText('Complete');
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.locator('#reply-status')).toHaveText('Complete', { timeout: 10_000 });
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   expect(traffic).toEqual({ frames: 0, config: 0, tickets: 0, sockets: 0 });
   expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
 });
@@ -170,7 +171,7 @@ test('blocked demo playback reports an error without faking a completed answer',
     HTMLMediaElement.prototype.play = async () => { throw new DOMException('Blocked', 'NotAllowedError'); };
   });
   await page.goto('/');
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('error')).toContainText('Demo audio could not play');
   await expect(page.getByTestId('start')).toBeEnabled();
   await expect(page.locator('#reply-status')).not.toHaveText('Complete');
@@ -180,11 +181,11 @@ test('live mode does not capture before explicit consent and start', async ({ pa
   await mockCapture(page);
   await mockBackend(page);
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('live');
+  await setConnectionMode(page, 'live');
   await expect(page.locator('#auth-status')).toContainText(/fake|development|ready|local/i);
   await expect(page.locator('#consent')).not.toBeChecked();
   expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
-  await page.locator('#consent').check();
+  await confirmConsent(page);
   expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
   expect(await page.evaluate(() => window.__microphoneCalls)).toBe(0);
 });
@@ -193,7 +194,7 @@ test('sharing without audio stops the captured video and explains the problem', 
   await mockCapture(page, 'video');
   await mockBackend(page);
   await prepareLive(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('error')).toBeVisible();
   await expect(page.getByTestId('error')).toContainText(/audio/i);
   expect(await page.evaluate(() => window.__capturedTracks.every(track => track.readyState === 'ended'))).toBe(true);
@@ -205,16 +206,16 @@ test('shared synthetic media passes through the real worklet and releases every 
   const traffic = await mockBackend(page);
   await prepareLive(page);
   expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('transcript')).toContainText('Friday');
   expect(traffic.frames).toBeGreaterThan(0);
   await page.getByTestId('suggest').click();
   await expect(page.getByTestId('reply')).toHaveText(answer);
   await page.getByTestId('pin').click();
   await expect(page.getByTestId('pinned-reply')).toContainText(answer);
-  await page.getByTestId('pause').check();
+  await setPause(page, true);
   await expect(page.getByTestId('pause')).toBeChecked();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   await expect.poll(() => page.evaluate(() =>
     window.__capturedTracks.length === 2 &&
     window.__capturedTracks.every(track => track.readyState === 'ended')
@@ -226,7 +227,7 @@ test('ending screen sharing cleans up the session and remaining audio track', as
   await mockCapture(page);
   await mockBackend(page);
   await prepareLive(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('transcript')).toContainText('Friday');
   await page.evaluate(() => {
     const track = window.__capturedTracks.find(item => item.kind === 'video');
@@ -237,7 +238,7 @@ test('ending screen sharing cleans up the session and remaining audio track', as
     window.__capturedTracks.every(track => track.readyState === 'ended')
   )).toBe(true);
   await expect(page.locator('#consent')).not.toBeChecked();
-  await page.locator('#consent').check();
+  await confirmConsent(page);
   await expect(page.getByTestId('start')).toBeEnabled();
 });
 
@@ -245,7 +246,7 @@ test('real audio worklet survives a short main-thread stall without discarding t
   await mockCapture(page);
   const traffic = await mockBackend(page);
   await prepareLive(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('transcript')).toContainText('Friday');
   const before = traffic.frames;
   await page.evaluate(() => {
@@ -255,7 +256,7 @@ test('real audio worklet survives a short main-thread stall without discarding t
   await expect.poll(() => traffic.frames).toBeGreaterThan(before + 12);
   await expect(page.getByTestId('stop')).toBeEnabled();
   await expect(page.getByTestId('error')).toBeHidden();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 
 test('backend disconnect stops capture and never claims a successful reply', async ({ page }) => {
@@ -269,13 +270,13 @@ test('backend disconnect stops capture and never claims a successful reply', asy
     });
   });
   await prepareLive(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('error')).toBeVisible();
   await expect.poll(() => page.evaluate(() =>
     window.__capturedTracks.every(track => track.readyState === 'ended')
   )).toBe(true);
   await expect(page.locator('#consent')).not.toBeChecked();
-  await page.locator('#consent').check();
+  await confirmConsent(page);
   await expect(page.getByTestId('start')).toBeEnabled();
 });
 
@@ -285,7 +286,7 @@ test('mobile-width layout does not require horizontal scrolling', async ({ page 
   expect(await page.evaluate(() =>
     document.documentElement.scrollWidth <= window.innerWidth
   )).toBe(true);
-  await expect(page.getByTestId('start')).toBeVisible();
+  await expect(page.locator('#coach-toggle')).toBeVisible();
 });
 
 test('no relevant references is distinct from a grounded or failed search', async ({ page }) => {
@@ -307,25 +308,25 @@ test('no relevant references is distinct from a grounded or failed search', asyn
     });
   });
   await prepareLive(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.locator('#sources')).toContainText('No relevant references');
   await expect(page.locator('#sources')).toContainText('transcript only');
   await expect(page.locator('#sources li')).toHaveCount(1);
   await expect(page.getByTestId('error')).toBeHidden();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 
 test('explicit synthetic mode connects to the actual local API', async ({ page }) => {
   test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires the explicit local Fake API.');
   await mockCapture(page);
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('synthetic');
-  await page.getByTestId('start').click();
+  await setConnectionMode(page, 'synthetic');
+  await startMeeting(page);
   await expect(page.getByTestId('transcript')).not.toBeEmpty();
   await expect(page.getByTestId('suggest')).toBeEnabled();
   await page.getByTestId('suggest').click();
   await expect(page.getByTestId('reply')).toContainText(/confirm/i);
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   expect(await page.evaluate(() => window.__captureCalls)).toBe(0);
 });
 
@@ -333,11 +334,11 @@ test('shared media worklet reaches the actual local API and returns a reply', as
   test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires the explicit local Fake API.');
   await mockCapture(page);
   await prepareLive(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('suggest')).toBeEnabled();
   await page.getByTestId('suggest').click();
   await expect(page.getByTestId('reply')).toContainText(/confirm/i);
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   await expect.poll(() => page.evaluate(() =>
     window.__capturedTracks.length === 2 &&
     window.__capturedTracks.every(track => track.readyState === 'ended')

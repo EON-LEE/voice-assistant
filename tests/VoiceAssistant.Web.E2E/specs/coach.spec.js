@@ -1,3 +1,4 @@
+import { openSettings, closeSheet, setConnectionMode, startMeeting, stopMeeting, setPause, confirmConsent } from '../overlay-helpers.js';
 import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -38,8 +39,8 @@ async function socket(page) {
   return { commands, frames: () => frames, send: event => connected.send(JSON.stringify(event)) };
 }
 async function meeting(page) {
-  await page.goto('/'); await page.getByTestId('mode').selectOption('synthetic');
-  await page.getByTestId('start').click(); await expect(page.getByTestId('pause')).toBeEnabled();
+  await page.goto('/'); await setConnectionMode(page, 'synthetic');
+  await startMeeting(page); await expect(page.getByTestId('pause')).toBeEnabled();
 }
 async function shot(page, name) {
   if (!process.env.VOICE_ASSISTANT_COACH_SCREENSHOTS) return;
@@ -73,7 +74,7 @@ test('meeting English streams before assist completes, aligned Hangul and click-
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await shot(page, 'coach-meeting-mobile.png');
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   await expect(page.locator('#question-ko')).toBeHidden();
 });
 
@@ -98,7 +99,7 @@ test('stale enrichment cannot replace a newer turn and failures leave English vi
   await expect(page.locator('#question-ko')).toBeHidden();
   await expect(page.locator('#reply-ko')).toBeHidden();
   await expect(page.getByTestId('error')).toBeHidden();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 
 async function practiceApi(page) {
@@ -212,7 +213,7 @@ test('invalid pronunciation stays omitted while speech failure exposes retry wit
   await expect(page.locator('#audio-status')).toContainText('unavailable');
   await page.locator('#reply-listen').click();
   await expect.poll(() => calls.filter(call => call.path === 'speak').length).toBe(2);
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 
 test('real localhost Fake practice and enrich/speak complete a recognition-only round', async ({ page }) => {

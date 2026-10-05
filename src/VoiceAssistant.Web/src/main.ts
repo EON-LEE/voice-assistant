@@ -1,5 +1,6 @@
 import "./style.css";
 import "./coach.css";
+import "./overlay.css";
 import workletUrl from "./audio.worklet.ts?worker&url";
 import demoAudioUrl from "./assets/demo-original.wav?url";
 import { BrowserAuth } from "./auth.js";
@@ -9,18 +10,16 @@ import { MeetingSession } from "./session.js";
 import { ReplyState, type Reply } from "./state.js";
 import { DemoTransport, SocketTransport, asError, isLoopback } from "./transport.js";
 import { createStartMessage, parsePhrases, validateOptions, type SessionOptions } from "./options.js";
-import { RenderScheduler } from "./render-scheduler.js";
+import { OwnerWindowClock, RenderScheduler } from "./render-scheduler.js";
+import { Overlay } from "./overlay.js";
 import { referenceText } from "./materials.js";
 import { CoachClient, type Rate } from "./coach-client.js";
 import { CoachAudio } from "./coach-audio.js";
 import { EnrichmentRequests, renderEnrichment } from "./enrichment.js";
 import { PracticeUI } from "./practice-ui.js";
 
-function element<T extends HTMLElement>(id: string): T {
-  const value = document.getElementById(id);
-  if (!value) throw new Error(`Missing UI element: ${id}`);
-  return value as T;
-}
+const overlay = new Overlay(document.querySelector<HTMLElement>(".coach-shell")!);
+function element<T extends HTMLElement>(id: string): T { return overlay.get<T>(id); }
 const mode = element<HTMLSelectElement>("mode");
 const start = element<HTMLButtonElement>("start");
 const stop = element<HTMLButtonElement>("stop");
@@ -41,10 +40,12 @@ let configGeneration = 0;
 let transcriptDirty = true;
 let renderedReply: Reply | null | undefined;
 let renderedPinned: Reply | null | undefined;
-const scheduler = new RenderScheduler(renderContent);
+const scheduler = new RenderScheduler(renderContent, new OwnerWindowClock(() => overlay.ownerWindow));
 let coachMode: "meeting" | "practice" = "meeting";
 let elapsedStarted = 0;
-let elapsedTimer: ReturnType<typeof setInterval> | undefined;
+let elapsedTimer: number | undefined;
+let elapsedWindow = overlay.ownerWindow;
+let clockActive = false;
 let assistTurn: string | undefined;
 const coachClient = new CoachClient((path, init) => auth.coachRequest(path, init), () => auth.isFake);
 const clip = new CoachAudio(coachClient, new Audio(), audio => {
@@ -61,19 +62,33 @@ const enrichment = new EnrichmentRequests(coachClient, (kind, value) => {
   }
 });
 const practice = new PracticeUI(auth, clip, workletUrl, (active, status) => {
-  if (coachMode === "practice") updateCoachActivity(active, status);
+  if (coachMode === "practice") {
+    const starting = active && !clockActive;
+    updateCoachActivity(active, status);
+    if (starting) overlay.close();
+  }
+}, overlay.card);
+function tickElapsed(): void {
+  const seconds = Math.floor((Date.now() - elapsedStarted) / 1000);
+  element("elapsed").textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+overlay.onWindowChanged(() => {
+  scheduler.flush();
+  if (elapsedTimer !== undefined) elapsedWindow.clearInterval(elapsedTimer);
+  elapsedWindow = overlay.ownerWindow;
+  elapsedTimer = clockActive ? elapsedWindow.setInterval(tickElapsed, 1000) : undefined;
+  if (clockActive) tickElapsed();
 });
 function updateCoachActivity(active: boolean, status: string): void {
   const toggle = element<HTMLButtonElement>("coach-toggle");
   toggle.textContent = active ? "■" : "▶"; toggle.setAttribute("aria-label", active ? "Stop session" : "Start session");
   element("coach-status").textContent = status;
-  if (active && !elapsedTimer) {
+  if (active && !clockActive) {
     elapsedStarted = Date.now(); element("elapsed").textContent = "00:00";
-    elapsedTimer = setInterval(() => {
-      const seconds = Math.floor((Date.now() - elapsedStarted) / 1000);
-      element("elapsed").textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-    }, 1000);
-  } else if (!active && elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = undefined; }
+    elapsedWindow = overlay.ownerWindow; elapsedTimer = elapsedWindow.setInterval(tickElapsed, 1000);
+  } else if (!active && elapsedTimer !== undefined) { elapsedWindow.clearInterval(elapsedTimer); elapsedTimer = undefined; }
+  clockActive = active;
+  overlay.card.classList.toggle("session-active", active);
 }
 for (const id of ["mode", "start", "stop", "suggest", "pause", "pin", "transcript", "reply", "status", "error", "consent", "signin"])
   element(id).dataset.testid = id;
@@ -83,6 +98,7 @@ if (!isLoopback(location.hostname)) mode.querySelector<HTMLOptionElement>('optio
 function error(message: string): void {
   element("error").textContent = message;
   element("error").hidden = !message;
+  overlay.reportError(message);
 }
 function canSuggest(): boolean {
   return !!session?.isReady && !pause.checked && state.turns.at(-1)?.final === true;
@@ -151,6 +167,7 @@ function renderContent(): void {
     renderedReply = state.current;
   }
   if (renderedPinned !== state.pinned) {
+    element("pinned").closest<HTMLElement>(".pinned-panel")!.hidden = !state.pinned;
     element("pinned").textContent = state.pinned?.text || "Keep a useful answer here. New suggestions will not replace it.";
     sourceList("pinned-sources", state.pinned);
     renderedPinned = state.pinned;
@@ -216,10 +233,12 @@ mode.addEventListener("change", () => { consent.checked = false; void configureM
 for (const id of ["meeting-chip", "practice-chip"]) element(id).addEventListener("click", () => {
   const next = id === "meeting-chip" ? "meeting" : "practice";
   if (coachMode === next) return;
+  error("");
   clip.stop(); enrichment.reset(); assistTurn = undefined;
   if (next === "practice") { void session?.stop(); scheduler.flush(); }
   else void practice.stop();
   coachMode = next;
+  overlay.setMode(next === "practice");
   element("meeting-view").hidden = next !== "meeting";
   element("practice-view").hidden = next !== "practice";
   element("meeting-chip").setAttribute("aria-pressed", String(next === "meeting"));
@@ -229,8 +248,10 @@ for (const id of ["meeting-chip", "practice-chip"]) element(id).addEventListener
 });
 element("coach-toggle").addEventListener("click", () => {
   if (coachMode === "practice") {
-    if (practice.active) void practice.stop(); else element<HTMLButtonElement>("practice-start").click();
-  } else if (session) stop.click(); else start.click();
+    if (practice.active) void practice.stop(); else overlay.open("practice");
+  } else if (session) stop.click();
+  else if (start.disabled) overlay.revealMeetingSettings();
+  else start.click();
 });
 element("reply-listen").addEventListener("click", () => {
   if (!state.current?.complete || element<HTMLButtonElement>("reply-listen").disabled) return;
@@ -257,7 +278,7 @@ start.addEventListener("click", () => {
   let options: SessionOptions | undefined;
   if (selectedMode !== "demo") {
     try { options = readOptions(); createStartMessage(options); }
-    catch (e) { error(asError(e).message); return; }
+    catch (e) { error(asError(e).message); overlay.revealMeetingSettings(); return; }
   }
   error(""); scheduler.cancel(); clip.stop(); enrichment.reset(); assistTurn = undefined; state.reset(); transcriptDirty = true; pause.checked = false;
   const shared = {
@@ -327,14 +348,15 @@ start.addEventListener("click", () => {
     }, e => error(e.message), options);
   // No await before this call: getDisplayMedia and AudioContext.resume need this gesture.
   void session.start();
+  overlay.close();
   render();
 });
 stop.addEventListener("click", () => { clip.stop(); enrichment.reset(); scheduler.flush(); void session?.stop(); render(); });
 pause.addEventListener("change", () => { state.pause(pause.checked); session?.pause(pause.checked); render(); });
-document.addEventListener("keydown", event => {
+overlay.card.addEventListener("keydown", event => {
   if (coachMode !== "meeting" || event.key.toLowerCase() !== "p" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || pause.disabled) return;
   const target = event.target;
-  if (target instanceof HTMLElement && (target.closest("input,textarea,select,button") || target.isContentEditable)) return;
+  if (target && "closest" in target && ((target as HTMLElement).closest("input,textarea,select,button") || (target as HTMLElement).isContentEditable)) return;
   event.preventDefault(); pause.checked = !pause.checked; pause.dispatchEvent(new Event("change"));
 });
 suggest.addEventListener("click", () => {
@@ -344,5 +366,5 @@ suggest.addEventListener("click", () => {
 cancel.addEventListener("click", () => { clip.stop(); enrichment.clear("reply"); state.cancel(); session?.cancel(); render(); });
 pin.addEventListener("click", () => { state.pin(); render(); });
 element("unpin").addEventListener("click", () => { state.pinned = null; render(); });
-window.addEventListener("pagehide", () => { clearInterval(elapsedTimer); clip.stop(); enrichment.reset(); scheduler.cancel(); void practice.stop(); void session?.stop(); });
+window.addEventListener("pagehide", () => { if (elapsedTimer !== undefined) elapsedWindow.clearInterval(elapsedTimer); clip.stop(); enrichment.reset(); scheduler.cancel(); void practice.stop(); void session?.stop(); });
 void configureMode();

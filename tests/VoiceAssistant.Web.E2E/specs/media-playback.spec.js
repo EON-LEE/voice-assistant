@@ -1,3 +1,4 @@
+import { openSettings, closeSheet, setConnectionMode, startMeeting, stopMeeting, setPause, confirmConsent } from '../overlay-helpers.js';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -107,9 +108,9 @@ async function mediaFixture(page) {
 
 async function prepare(page) {
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('live');
+  await setConnectionMode(page, 'live');
   await expect(page.locator('#auth-status')).toContainText('LOCAL FAKE');
-  await page.getByTestId('consent').check();
+  await confirmConsent(page);
 }
 
 test('original offline speech fixture has documented canonical PCM and silence', () => {
@@ -133,8 +134,8 @@ test('HTMLMediaElement original speech -> native worklet -> actual Fake API, twe
   await mediaFixture(page);
   await prepare(page);
   for (let cycle = 0; cycle < 20; cycle++) {
-    if (cycle) await page.getByTestId('consent').check();
-    await page.getByTestId('start').click();
+    if (cycle) await confirmConsent(page);
+    await startMeeting(page);
     await expect(page.getByTestId('suggest')).toBeEnabled();
     await expect(page.getByTestId('status')).toContainText('LOCAL FAKE');
     if (cycle === 0) {
@@ -144,7 +145,7 @@ test('HTMLMediaElement original speech -> native worklet -> actual Fake API, twe
     }
     await page.getByTestId('suggest').click();
     await expect(page.getByTestId('reply')).toContainText(/confirm/i);
-    await page.getByTestId('stop').click();
+    await stopMeeting(page);
     await expect(page.getByTestId('stop')).toBeDisabled();
     await expect.poll(() => page.evaluate(() =>
       window.__mediaTest.tracks.every(t => t.readyState === 'ended') &&
@@ -168,15 +169,15 @@ test('rapid mode switching ignores late configuration failures and keeps demo ex
     await delayed; await route.fulfill({ status: 503, json: { error: 'unavailable' } });
   });
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('live');
-  await page.getByTestId('mode').selectOption('synthetic');
-  await page.getByTestId('mode').selectOption('demo');
+  await setConnectionMode(page, 'live');
+  await setConnectionMode(page, 'synthetic');
+  await setConnectionMode(page, 'demo');
   release();
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('suggest')).toBeEnabled({ timeout: 10000 });
   await expect(page.getByTestId('status')).toContainText('DEMO');
   await expect(page.getByTestId('error')).toBeHidden();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 
 test('transcripts replies and citation strings stay inert text', async ({ page }) => {
@@ -198,30 +199,30 @@ test('transcripts replies and citation strings stay inert text', async ({ page }
     });
   });
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('synthetic');
-  await page.getByTestId('start').click();
+  await setConnectionMode(page, 'synthetic');
+  await startMeeting(page);
   await expect(page.getByTestId('transcript')).toContainText(hostile);
   await page.getByTestId('suggest').click();
   await expect(page.getByTestId('reply')).toHaveText(hostile);
   await page.getByTestId('pin').click();
   expect(await page.locator('#transcript img, #reply script, #sources a, #pinned img').count()).toBe(0);
   expect(await page.evaluate(() => window.__injected)).toBeUndefined();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 
 test('media mute fails visibly and a new explicit share recovers', async ({ page }) => {
   test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires local Fake API.');
   await mediaFixture(page); await prepare(page);
-  await page.getByTestId('start').click();
+  await startMeeting(page);
   await expect(page.getByTestId('suggest')).toBeEnabled();
   await page.evaluate(() => window.__mediaTest.tracks.find(t => t.kind === 'audio').dispatchEvent(new Event('mute')));
   await expect(page.getByTestId('error')).toContainText('unavailable');
   await expect(page.getByTestId('stop')).toBeDisabled();
-  await page.getByTestId('consent').check();
-  await page.getByTestId('start').click();
+  await confirmConsent(page);
+  await startMeeting(page);
   await expect(page.getByTestId('suggest')).toBeEnabled();
   await expect(page.getByTestId('error')).toBeHidden();
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });
 
 test('a newer partial turn blocks suggestion requests until that turn is final', async ({ page }) => {
@@ -241,19 +242,19 @@ test('a newer partial turn blocks suggestion requests until that turn is final',
     });
   });
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('synthetic');
-  await page.getByTestId('start').click();
+  await setConnectionMode(page, 'synthetic');
+  await startMeeting(page);
   await expect(page.getByTestId('suggest')).toBeEnabled();
   activeSocket.send(JSON.stringify({ type: 'transcript.partial', turnId: 'b', revision: 1, text: 'A newer question' }));
   await expect(page.getByTestId('transcript')).toContainText('A newer question');
   await expect.soft(page.getByTestId('suggest')).toBeDisabled();
   await page.getByTestId('suggest').dispatchEvent('click');
-  await page.getByTestId('pause').check(); // Round trip through UI ensures the click handler has completed.
+  await setPause(page, true); // Round trip through UI ensures the click handler has completed.
   expect.soft(requests).toBe(0);
-  await page.getByTestId('pause').uncheck();
+  await setPause(page, false);
   activeSocket.send(JSON.stringify({ type: 'transcript.final', turnId: 'b', revision: 2, text: 'A newer question finished.' }));
   await expect(page.getByTestId('suggest')).toBeEnabled();
   await page.getByTestId('suggest').click();
   await expect.poll(() => requests).toBe(1);
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
 });

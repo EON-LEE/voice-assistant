@@ -1,3 +1,4 @@
+import { openSettings, closeSheet, setConnectionMode, startMeeting, stopMeeting, setPause, confirmConsent } from '../overlay-helpers.js';
 import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 
@@ -27,11 +28,11 @@ async function observe(page) {
 }
 async function choose(page) {
   await page.goto('/');
-  await page.getByTestId('mode').selectOption('live');
+  await setConnectionMode(page, 'live');
   await page.locator('#audio-source').selectOption('microphone');
   await expect(page.locator('#consent-label')).toContainText("room's audio");
-  await page.getByTestId('consent').check();
-  await page.getByTestId('start').click();
+  await confirmConsent(page);
+  await startMeeting(page);
 }
 async function mockServer(page) {
   await page.route('**/api/client-config', route => route.fulfill({ json: { mode: 'Fake', webSocketPath: '/api/meeting' } }));
@@ -72,7 +73,7 @@ test('synthetic browser microphone uses real getUserMedia/worklet, mute recovery
   await expect(page.getByTestId('stop')).toBeEnabled();
   await page.evaluate(() => window.__mic.tracks[0].dispatchEvent(new Event('unmute')));
   await expect(page.locator('#microphone-warning')).toBeHidden();
-  await page.locator('h1').click(); await page.keyboard.press('p');
+  await page.locator('#coach-question').click(); await page.keyboard.press('p');
   await expect(page.getByTestId('pause')).toBeChecked();
   await page.keyboard.press('p'); await expect(page.getByTestId('pause')).not.toBeChecked();
   server.limit();
@@ -97,7 +98,7 @@ test('real synthetic microphone reaches localhost Fake API and stop releases all
   await expect(page.getByTestId('suggest')).toBeEnabled();
   await expect.poll(() => page.evaluate(() => window.__mic.nonzero)).toBeGreaterThan(0);
   await page.getByTestId('suggest').click(); await expect(page.getByTestId('reply')).toContainText(/confirm/i);
-  await page.getByTestId('stop').click();
+  await stopMeeting(page);
   await expect(page.getByTestId('stop')).toBeDisabled();
   expect(await page.evaluate(() => window.__mic.tracks.every(track => track.readyState === 'ended'))).toBe(true);
   expect(await page.evaluate(() => window.__mic.calls.length)).toBe(1);
