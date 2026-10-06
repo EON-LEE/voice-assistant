@@ -69,6 +69,7 @@ public partial class PracticeWindow : Window
         InitializeComponent();
         if (IsDemo)
         {
+            MaterialsBox.IsChecked = false;
             Title = "Practice preview — offline demo";
             AuthText.Text = "OFFLINE DEMO PREVIEW — canned questions and sample feedback only. No sign-in, network, Search, TTS, or microphone.";
             MicText.Text = "No microphone used in offline demo";

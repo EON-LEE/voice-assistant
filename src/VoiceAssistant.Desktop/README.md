@@ -62,7 +62,20 @@ Grounding is shown distinctly: `grounded` means owner-authorized matching source
 
 ## Separate practice window
 
-Practice cannot run while meeting capture owns the microphone. Select a scenario, difficulty, optional topic, question count, and optional personal-material grounding; then confirm practice-specific microphone consent and choose a physical microphone.
+Practice cannot run while meeting capture owns the microphone. Select a scenario, difficulty, optional topic and question count; then confirm practice-specific microphone consent and choose a physical microphone.
+
+**Use my uploaded materials (Azure AI Search)** is enabled by default in live
+practice. Sign in with the same account that uploaded the documents, and check
+the **My materials** tab before starting. Both partner questions and optional
+reply suggestions request owner-authorized material grounding. Matching source
+titles and grounding status appear in the conversation; no match is not proof
+that the documents were used. You can explicitly turn material use off.
+
+Portable means **no installation**, not no internet. Personal-material AI
+practice requires internet and Entra sign-in because the documents and inference
+are in Azure. Offline preview is only a fixed UI sample, not personal-material
+practice; its material checkbox is off and disabled. No local RAG or anonymous
+access is introduced.
 
 **Start practice** opens an authenticated `transcribeOnly` meeting socket. It does not request or generate meeting replies and does not run Search on microphone audio. Each partner question is displayed first. **Listen to question** explicitly requests Azure TTS and holds microphone upload paused. Select **Answer by voice** to send the user's speech for recognition; partial text is marked as partial and only finalized recognition enables **Done with final answer**. **Skip this question** submits empty-answer feedback. Optional reply suggestions include grounding status and source titles. Feedback includes corrected/easier English, Korean coaching, clarity of recognized words (not a person-rating or pronunciation score), and an approximate Korean reading guide. **Next question** continues the server contract through the final summary. Retry and Stop are available for provider errors and session cleanup.
 

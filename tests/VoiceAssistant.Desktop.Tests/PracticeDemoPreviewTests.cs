@@ -27,6 +27,9 @@ public sealed class PracticeDemoPreviewTests
                     var identity = new NativeIdentity(settings);
                     api = new AuthenticatedApiClient(settings, identity);
                     main = new MainWindow(settings, identity, api);
+                    var livePractice = new PracticeWindow(settings, identity, api);
+                    Assert.True(((CheckBox)livePractice.FindName("MaterialsBox")).IsChecked);
+                    await livePractice.CloseForOwnerAsync();
                     main.Show();
                     ((Button)main.FindName("DemoPreviewButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     demoMain = (MainWindow)typeof(MainWindow).GetField("demoPreview",
@@ -41,6 +44,8 @@ public sealed class PracticeDemoPreviewTests
                     Assert.False(Control<ComboBox>("DeviceBox").IsEnabled);
                     Assert.False(Control<Button>("MicTestButton").IsEnabled);
                     Assert.False(Control<CheckBox>("ConsentBox").IsEnabled);
+                    Assert.False(Control<CheckBox>("MaterialsBox").IsEnabled);
+                    Assert.False(Control<CheckBox>("MaterialsBox").IsChecked);
 
                     Control<Button>("StartButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert.Contains("OFFLINE DEMO", Control<TextBlock>("StatusText").Text);
