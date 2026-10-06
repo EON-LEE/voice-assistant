@@ -29,9 +29,14 @@ public sealed class DesktopUiTests
                     Assert.True(Control<Button>("StartButton").IsEnabled);
                     Assert.False(Control<Button>("StopButton").IsEnabled);
                     Assert.NotNull(Control<ComboBox>("DeviceBox").ItemsSource);
-                    Assert.True(Control<CheckBox>("ConsentBox").IsEnabled);
+                    Assert.False(Control<CheckBox>("ConsentBox").IsEnabled);
+                    Assert.False(Control<ComboBox>("DeviceBox").IsEnabled);
+                    Assert.False(Control<Button>("MicTestButton").IsEnabled);
+                    Assert.False(Control<TabItem>("MaterialsTab").IsEnabled);
+                    Assert.Contains("OFFLINE DEMO", Control<TextBlock>("AuthStatus").Text);
+                    Assert.Equal("Start offline overlay preview", Control<Button>("StartButton").Content);
                     Assert.False(window.Topmost);
-                    Assert.Equal("Stopped — no audio capture", Control<TextBlock>("StatusText").Text);
+                    Assert.Contains("OFFLINE DEMO", Control<TextBlock>("StatusText").Text);
                     Assert.False(Control<Button>("RequestButton").IsEnabled);
                     var overlay = (OverlayWindow)typeof(MainWindow).GetField("overlay",
                         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)!;
@@ -42,6 +47,13 @@ public sealed class DesktopUiTests
                     Assert.True(overlay.Topmost);
                     Assert.Equal(0, ((SolidColorBrush)overlay.Background).Color.A);
                     Assert.False(overlay.IsVisible);
+                    overlay.ShowMeetingState(false, "", "", "Offline canned response", true, demo: true);
+                    Assert.Contains("OFFLINE DEMO", ((TextBlock)overlay.FindName("CaptureStatus")).Text);
+                    Control<Button>("ShowOverlayButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert.True(overlay.IsVisible);
+                    overlay.Hide();
+                    Control<Button>("ShowOverlayButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert.True(overlay.IsVisible);
                     overlay.ShowMeetingState(true, "Can you confirm?", "Yes, I can.", "Grounded", true,
                         "네, 확인하겠습니다.", "Yes (예) · I can (아이 캔)");
                     Assert.True(Control<Button>("StartButton").IsEnabled);

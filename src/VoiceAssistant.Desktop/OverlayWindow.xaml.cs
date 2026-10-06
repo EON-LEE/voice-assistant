@@ -12,11 +12,13 @@ public partial class OverlayWindow : Window
     }
 
     public void ShowMeetingState(bool capturing, string question, string answer, string grounding, bool topmost,
-        string korean = "", string reading = "", bool demo = false)
+        string korean = "", string reading = "", bool demo = false, bool paused = false)
     {
-        CaptureStatus.Text = demo && capturing ? "DEMO · NO MICROPHONE CAPTURE"
+        CaptureStatus.Text = demo ? "OFFLINE DEMO · NO MICROPHONE OR NETWORK"
+            : capturing && paused ? "MICROPHONE PAUSED · AUDIO DROPPED"
             : capturing ? "● ROOM MICROPHONE ACTIVE" : "MICROPHONE OFF";
-        CaptureStatus.Foreground = capturing ? Brushes.LightGreen : Brushes.LightGray;
+        CaptureStatus.Foreground = demo || capturing && paused ? Brushes.Gold
+            : capturing ? Brushes.LightGreen : Brushes.LightGray;
         QuestionText.Text = string.IsNullOrWhiteSpace(question) ? "Waiting for a room question…" : question;
         AnswerText.Text = string.IsNullOrWhiteSpace(answer) ? "Listening for a reply…" : answer;
         GroundingText.Text = grounding;

@@ -10,13 +10,15 @@ public partial class App : Application
         try
         {
             string path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
-            if (e.Args.Length != 0)
+            bool demo = e.Args.Length == 1 && e.Args[0] == "--demo";
+            if (e.Args.Length != 0 && !demo)
             {
                 if (e.Args.Length != 2 || e.Args[0] != "--settings")
-                    throw new ArgumentException("Usage: VoiceAssistant.Desktop.exe [--settings <nonsecret-settings.json>]");
+                    throw new ArgumentException("Usage: VoiceAssistant.Desktop.exe [--demo | --settings <nonsecret-settings.json>]");
                 path = Path.GetFullPath(e.Args[1]);
             }
             var settings = ClientSettings.Load(path);
+            if (demo) settings = settings with { Mode = ConnectionMode.Demo };
             settings.Validate();
             var identity = new VoiceAssistant.Desktop.Protocol.NativeIdentity(settings);
             var api = new VoiceAssistant.Desktop.Protocol.AuthenticatedApiClient(settings, identity);

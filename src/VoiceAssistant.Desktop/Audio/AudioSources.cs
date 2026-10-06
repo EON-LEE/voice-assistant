@@ -118,21 +118,31 @@ public static class MicrophoneLevelCheck
         var lease = AudioSessionCoordinator.TryAcquire()
             ?? throw new InvalidOperationException("Another meeting or practice session is using the microphone.");
         MicrophoneAudioSource? source = null;
+        var failed = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnFailed(Exception exception) => failed.TrySetResult(exception);
         try
         {
             source = new MicrophoneAudioSource(endpointId);
             source.LevelChanged += onLevel;
+            source.Failed += OnFailed;
             source.Start();
-            await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            var duration = Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            if (await Task.WhenAny(duration, failed.Task) == failed.Task)
+                throw await failed.Task;
+            await duration;
         }
         finally
         {
-            if (source is not null)
+            try
             {
-                source.LevelChanged -= onLevel;
-                await source.DisposeAsync();
+                if (source is not null)
+                {
+                    source.LevelChanged -= onLevel;
+                    source.Failed -= OnFailed;
+                    await source.DisposeAsync();
+                }
             }
-            lease.Dispose();
+            finally { lease.Dispose(); }
         }
     }
 }

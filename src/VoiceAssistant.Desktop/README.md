@@ -14,6 +14,14 @@ dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj
 dotnet test .\tests\VoiceAssistant.Desktop.Tests\VoiceAssistant.Desktop.Tests.csproj -c Release
 ```
 
+To inspect the complete main overlay and separate practice window without sign-in or hardware, click **Offline demo preview** in the main window, or launch the explicit offline profile:
+
+```powershell
+dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -- --demo
+```
+
+For the portable published executable, run `VoiceAssistant.Desktop.exe --demo`. The separate preview window uses canned meeting/practice text and synthetic meeting frames only; it makes no network requests, opens no microphone, and does not use Azure speech, Search, or TTS. Every preview surface is labeled **OFFLINE DEMO**. It does not alter the signed-in production window, and a failed live connection never switches to the preview.
+
 For a self-contained Windows build, publish with the repository's `scripts\desktop\Publish.ps1` when available, or use:
 
 ```powershell
@@ -23,7 +31,7 @@ dotnet publish .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -c Rel
 
 The shipped `appsettings.json` points to the configured Azure service. Opening the app does not sign in or capture audio. Choose **Sign in with Microsoft** for system-browser authentication, or **Use device code** to display a temporary Microsoft verification code and URL. Complete sign-in before starting a live meeting or practice round. Tokens are acquired silently from the current process's MSAL cache when possible; expired authorization requires an explicit sign-in again.
 
-An explicit **Demo** configuration is offline, synthetic, and not representative of a live service. It cannot silently replace a failed live connection.
+`--demo` is an explicit offline preview mode. It cannot silently replace a failed live connection.
 
 ## Native Entra and meeting connection
 

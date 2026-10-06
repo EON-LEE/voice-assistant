@@ -49,8 +49,9 @@ public sealed record ClientSettings
                 !string.IsNullOrEmpty(authority.Fragment) || authority.AbsolutePath != "/")
                 throw new InvalidOperationException("Authority must be an HTTPS Entra authority host (without a tenant path).");
             if (!Guid.TryParse(TenantId, out _) || !Guid.TryParse(ClientId, out _) ||
-                string.IsNullOrWhiteSpace(Scope) || Scope.Contains("YOUR-", StringComparison.Ordinal))
-                throw new InvalidOperationException("Configure TenantId, public ClientId, and delegated API Scope before using Production.");
+                string.IsNullOrWhiteSpace(Scope) || Scope.Contains("YOUR-", StringComparison.Ordinal) ||
+                !Scope.EndsWith("/Meeting.Access", StringComparison.Ordinal))
+                throw new InvalidOperationException("Configure TenantId, public ClientId, and the delegated Meeting.Access scope before using Production.");
             if (!Uri.TryCreate(Origin, UriKind.Absolute, out var origin) || origin.Scheme != "https" ||
                 Origin != origin.GetLeftPart(UriPartial.Authority) || origin.UserInfo.Length != 0)
                 throw new InvalidOperationException("Origin must exactly match the API's configured canonical HTTPS application origin.");

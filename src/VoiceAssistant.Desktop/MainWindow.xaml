@@ -9,6 +9,8 @@
       <Button x:Name="SignInButton" DockPanel.Dock="Right" Content="Sign in with Microsoft" Click="SignIn_Click" Padding="14,7"/>
       <Button x:Name="DeviceCodeButton" DockPanel.Dock="Right" Content="Use device code" Click="DeviceCode_Click"
               Padding="12,7" Margin="0,0,8,0"/>
+      <Button x:Name="DemoPreviewButton" DockPanel.Dock="Right" Content="Offline demo preview"
+              Click="DemoPreview_Click" Padding="12,7" Margin="0,0,8,0"/>
       <StackPanel>
         <TextBlock Text="In-person English Coach" FontSize="25" FontWeight="SemiBold"/>
         <TextBlock x:Name="AuthStatus" Text="Sign in before using live features." Foreground="#4C596A" Margin="0,4,0,0"/>
@@ -38,6 +40,7 @@
                 <WrapPanel Margin="0,12,0,0">
                   <Button x:Name="StartButton" Content="Start meeting overlay" Click="Start_Click" Padding="12,7" Margin="0,0,8,0"/>
                   <Button x:Name="StopButton" Content="Stop and release microphone" Click="Stop_Click" IsEnabled="False" Padding="12,7" Margin="0,0,8,0"/>
+                  <Button x:Name="ShowOverlayButton" Content="Show overlay" Click="ShowOverlay_Click" Padding="12,7" Margin="0,0,8,0"/>
                   <CheckBox x:Name="PauseBox" Content="Pause while I speak" IsEnabled="False" VerticalAlignment="Center"
                             Checked="Pause_Changed" Unchecked="Pause_Changed" Margin="8,0"/>
                   <CheckBox x:Name="TopmostBox" Content="Overlay always on top" IsChecked="True"
@@ -110,7 +113,7 @@
           </StackPanel>
         </ScrollViewer>
       </TabItem>
-      <TabItem Header="My materials">
+      <TabItem x:Name="MaterialsTab" Header="My materials">
         <Grid Margin="14">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <StackPanel>
