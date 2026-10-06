@@ -10,22 +10,28 @@ public interface IAudioSource : IAsyncDisposable
     void Start();
 }
 
-public sealed record RenderEndpoint(string Id, string Name);
+public interface IAudioLevelSource
+{
+    event Action<double>? LevelChanged;
+}
 
-public sealed class LoopbackAudioSource : IAudioSource
+public sealed record CaptureEndpoint(string Id, string Name);
+
+public sealed class MicrophoneAudioSource : IAudioSource, IAudioLevelSource
 {
     private readonly MMDevice device;
-    private readonly WasapiLoopbackCapture capture;
+    private readonly WasapiCapture capture;
     private readonly Pcm16Converter converter;
     private bool disposing;
     public event Action<byte[]>? Data;
     public event Action<Exception>? Failed;
+    public event Action<double>? LevelChanged;
 
-    public static IReadOnlyList<RenderEndpoint> ListEndpoints()
+    public static IReadOnlyList<CaptureEndpoint> ListEndpoints()
     {
         using var enumerator = new MMDeviceEnumerator();
-        var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
-        var endpoints = new List<RenderEndpoint>();
+        var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+        var endpoints = new List<CaptureEndpoint>();
         foreach (var endpoint in devices)
         {
             using (endpoint) endpoints.Add(new(endpoint.ID, endpoint.FriendlyName));
@@ -33,15 +39,15 @@ public sealed class LoopbackAudioSource : IAudioSource
         return endpoints;
     }
 
-    public LoopbackAudioSource(string endpointId)
+    public MicrophoneAudioSource(string endpointId)
     {
         using var enumerator = new MMDeviceEnumerator();
         device = enumerator.GetDevice(endpointId);
         try
         {
-            if (device.DataFlow != DataFlow.Render)
-                throw new InvalidOperationException("Only output/render endpoints are allowed; microphone capture is disabled.");
-            capture = new WasapiLoopbackCapture(device);
+            if (device.DataFlow != DataFlow.Capture)
+                throw new InvalidOperationException("Only physical capture/microphone endpoints are allowed.");
+            capture = new WasapiCapture(device);
             try { converter = new Pcm16Converter(capture.WaveFormat); }
             catch { capture.Dispose(); throw; }
         }
@@ -56,8 +62,13 @@ public sealed class LoopbackAudioSource : IAudioSource
     {
         try
         {
-            byte[] pcm = converter.Convert(e.Buffer.AsSpan(0, e.BytesRecorded));
-            if (pcm.Length != 0) Data?.Invoke(pcm);
+            var pcm = converter.Convert(e.Buffer.AsSpan(0, e.BytesRecorded));
+            if (pcm.Length == 0) return;
+            int peak = 0;
+            for (var i = 0; i < pcm.Length; i += 2)
+                peak = Math.Max(peak, Math.Abs((int)System.Buffers.Binary.BinaryPrimitives.ReadInt16LittleEndian(pcm.AsSpan(i))));
+            LevelChanged?.Invoke(peak / 32768d);
+            Data?.Invoke(pcm);
         }
         catch (Exception ex) { Failed?.Invoke(ex); }
     }
@@ -65,7 +76,7 @@ public sealed class LoopbackAudioSource : IAudioSource
     private void OnStopped(object? sender, StoppedEventArgs e)
     {
         if (!disposing)
-            Failed?.Invoke(e.Exception ?? new IOException("The selected output device stopped capturing. Check the device and start again."));
+            Failed?.Invoke(e.Exception ?? new IOException("The selected microphone stopped capturing. Check the device and start again."));
     }
 
     public ValueTask DisposeAsync()
@@ -78,6 +89,51 @@ public sealed class LoopbackAudioSource : IAudioSource
             finally { device.Dispose(); }
         }
         return ValueTask.CompletedTask;
+    }
+}
+
+public static class AudioSessionCoordinator
+{
+    private static int active;
+    public static IDisposable? TryAcquire()
+    {
+        if (Interlocked.CompareExchange(ref active, 1, 0) != 0) return null;
+        return new Lease();
+    }
+    private sealed class Lease : IDisposable
+    {
+        private int disposed;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0) Interlocked.Exchange(ref active, 0);
+        }
+    }
+}
+
+public static class MicrophoneLevelCheck
+{
+    public static async Task RunLocallyAsync(string endpointId, Action<double> onLevel,
+        CancellationToken cancellationToken)
+    {
+        var lease = AudioSessionCoordinator.TryAcquire()
+            ?? throw new InvalidOperationException("Another meeting or practice session is using the microphone.");
+        MicrophoneAudioSource? source = null;
+        try
+        {
+            source = new MicrophoneAudioSource(endpointId);
+            source.LevelChanged += onLevel;
+            source.Start();
+            await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+        }
+        finally
+        {
+            if (source is not null)
+            {
+                source.LevelChanged -= onLevel;
+                await source.DisposeAsync();
+            }
+            lease.Dispose();
+        }
     }
 }
 

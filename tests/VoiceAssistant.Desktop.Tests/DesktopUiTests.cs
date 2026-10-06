@@ -1,52 +1,51 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
+using VoiceAssistant.Desktop.Protocol;
 
 namespace VoiceAssistant.Desktop.Tests;
 
 public sealed class DesktopUiTests
 {
     [Fact]
-    public async Task WpfDemoStartsOnlyOnClickAndPinRemainsSeparateFromNewReply()
+    public async Task WpfStartsWithoutCaptureAndUsesSeparateTranslucentResizableOverlay()
     {
         var result = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
             var dispatcher = Dispatcher.CurrentDispatcher;
-            dispatcher.BeginInvoke(async () =>
+            dispatcher.BeginInvoke(() =>
             {
                 MainWindow? window = null;
                 try
                 {
-                    window = new MainWindow(new ClientSettings());
+                    var settings = new ClientSettings();
+                    var identity = new NativeIdentity(settings);
+                    var api = new AuthenticatedApiClient(settings, identity);
+                    window = new MainWindow(settings, identity, api);
                     T Control<T>(string name) where T : FrameworkElement => (T)window.FindName(name);
-                    void Click(string name) => Control<Button>(name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert.True(Control<Button>("StartButton").IsEnabled);
                     Assert.False(Control<Button>("StopButton").IsEnabled);
-                    Assert.Null(Control<ComboBox>("DeviceBox").ItemsSource);
+                    Assert.NotNull(Control<ComboBox>("DeviceBox").ItemsSource);
+                    Assert.True(Control<CheckBox>("ConsentBox").IsEnabled);
                     Assert.False(window.Topmost);
-                    Assert.Equal("", Control<TextBox>("TranscriptBox").Text);
-                    Click("StartButton");
-                    await Until(() => Control<Button>("RequestButton").IsEnabled);
-                    Assert.Contains("[final]", Control<TextBox>("TranscriptBox").Text);
-                    Click("RequestButton");
-                    await Until(() => Control<TextBlock>("ReplyStatus").Text == "Complete");
-                    Click("PinButton");
-                    string pinned = Control<TextBox>("PinnedBox").Text;
-                    Assert.NotEmpty(pinned);
-                    Click("CancelButton");
-                    Assert.Empty(Control<TextBox>("ReplyBox").Text);
-                    Assert.Equal(pinned, Control<TextBox>("PinnedBox").Text);
-                    Click("RequestButton");
-                    await Until(() => Control<TextBlock>("ReplyStatus").Text == "Complete");
-                    Assert.Equal(pinned, Control<TextBox>("PinnedBox").Text);
-                    Control<CheckBox>("PauseBox").IsChecked = true;
-                    await Until(() => !Control<Button>("RequestButton").IsEnabled);
-                    Click("StopButton");
-                    await Until(() => Control<Button>("StartButton").IsEnabled);
-                    Assert.Equal(pinned, Control<TextBox>("PinnedBox").Text);
-                    Assert.False(Control<Button>("StopButton").IsEnabled);
+                    Assert.Equal("Stopped — no audio capture", Control<TextBlock>("StatusText").Text);
+                    Assert.False(Control<Button>("RequestButton").IsEnabled);
+                    var overlay = (OverlayWindow)typeof(MainWindow).GetField("overlay",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)!;
+                    Assert.Equal(420, overlay.Width);
+                    Assert.Equal(260, overlay.Height);
+                    Assert.True(overlay.AllowsTransparency);
+                    Assert.Equal(ResizeMode.CanResizeWithGrip, overlay.ResizeMode);
+                    Assert.True(overlay.Topmost);
+                    Assert.Equal(0, ((SolidColorBrush)overlay.Background).Color.A);
+                    Assert.False(overlay.IsVisible);
+                    overlay.ShowMeetingState(true, "Can you confirm?", "Yes, I can.", "Grounded", true,
+                        "네, 확인하겠습니다.", "Yes (예) · I can (아이 캔)");
+                    Assert.True(Control<Button>("StartButton").IsEnabled);
+                    api.Dispose();
                     result.TrySetResult();
                 }
                 catch (Exception ex) { result.TrySetException(ex); }
@@ -61,9 +60,4 @@ public sealed class DesktopUiTests
         Assert.True(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
-    private static async Task Until(Func<bool> condition)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (!condition()) await Task.Delay(10, timeout.Token);
-    }
 }

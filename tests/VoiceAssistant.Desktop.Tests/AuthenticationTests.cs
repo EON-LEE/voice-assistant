@@ -13,7 +13,7 @@ public sealed class AuthenticationTests
         var handler = new RecordingHandler(_ =>
             new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent($$"""{"ticket":"0123456789012345678901234567890123456789012","expiresAt":"{{expires}}"}""")
+                Content = JsonContent($$"""{"ticket":"0123456789012345678901234567890123456789012","expiresAt":"{{expires}}"}""")
             });
         var settings = new ClientSettings { Mode = ConnectionMode.Production };
         using var api = new AuthenticatedApiClient(settings, new FakeTokenProvider(), handler);
@@ -35,7 +35,7 @@ public sealed class AuthenticationTests
     {
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("""{"correctedEnglish":"I can help.","easierEnglish":"I can help.","feedbackKo":"잘했어요.","points":[],"clarity":4}""")
+            Content = JsonContent("""{"correctedEnglish":"I can help.","easierEnglish":"I can help.","feedbackKo":"잘했어요.","points":[],"clarity":4}""")
         });
         var settings = new ClientSettings { Mode = ConnectionMode.Production };
         using var api = new AuthenticatedApiClient(settings, new FakeTokenProvider(), handler);
@@ -49,6 +49,37 @@ public sealed class AuthenticationTests
         Assert.Equal("/api/practice/feedback", handler.Path);
         Assert.NotNull(handler.Body);
         Assert.Contains("\"question\":\"Can you help?\"", handler.Body);
+    }
+
+    [Fact]
+    public async Task TicketResponseBodyIsBoundedBeforeJsonParsing()
+    {
+        var handler = new RecordingHandler(_ =>
+        {
+            var content = new StringContent($$"""{"ticket":"{{new string('a', 65540)}}","expiresAt":"{{DateTimeOffset.UtcNow.AddSeconds(20):O}}"}""");
+            content.Headers.ContentType = new("application/json");
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+        using var api = new AuthenticatedApiClient(new ClientSettings { Mode = ConnectionMode.Production },
+            new FakeTokenProvider(), handler);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => api.GetMeetingSocketAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task OversizedErrorBodyDoesNotReplaceSafeStatusErrorOrReadUnboundedJson()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent(new string('x', 100000))
+        });
+        using var api = new AuthenticatedApiClient(new ClientSettings { Mode = ConnectionMode.Production },
+            new FakeTokenProvider(), handler);
+
+        var error = await Assert.ThrowsAsync<ApiRequestException>(() =>
+            api.PostJsonAsync("/api/practice/feedback", new { question = "q" }, CancellationToken.None));
+        Assert.Equal("provider_unavailable", error.Code);
+        Assert.DoesNotContain(new string('x', 20), error.Message);
     }
 
     [Fact]
@@ -81,6 +112,13 @@ public sealed class AuthenticationTests
             Assert.False(interactive);
             return Task.FromResult("test-access-token");
         }
+    }
+
+    private static StringContent JsonContent(string value)
+    {
+        var content = new StringContent(value);
+        content.Headers.ContentType = new("application/json");
+        return content;
     }
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler

@@ -28,7 +28,9 @@ public sealed class AuthenticatedApiClient : IDisposable
         using var request = await CreateRequestAsync(HttpMethod.Post, ticketUri, cancellationToken);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
-        using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+        RequireJson(response);
+        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = JsonDocument.Parse(await ReadBoundedAsync(responseStream, 65536, cancellationToken));
         var root = document.RootElement;
         string ticket = root.GetProperty("ticket").GetString() ?? "";
         DateTimeOffset expiry = root.GetProperty("expiresAt").GetDateTimeOffset();
@@ -49,6 +51,7 @@ public sealed class AuthenticatedApiClient : IDisposable
         request.Content.Headers.ContentType = new("application/json") { CharSet = "utf-8" };
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
+        RequireJson(response);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         byte[] responseBytes = await ReadBoundedAsync(stream, 65536, cancellationToken);
         return JsonDocument.Parse(responseBytes, new JsonDocumentOptions { MaxDepth = 16 });
@@ -133,13 +136,20 @@ public sealed class AuthenticatedApiClient : IDisposable
         };
         try
         {
-            using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken),
-                cancellationToken: cancellationToken);
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = JsonDocument.Parse(await ReadBoundedAsync(stream, 8192, cancellationToken));
             if (document.RootElement.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
                 code = error.GetString() ?? code;
         }
         catch (JsonException) { }
+        catch (InvalidDataException) { }
         throw new ApiRequestException(code, response.Headers.RetryAfter?.Delta);
+    }
+
+    private static void RequireJson(HttpResponseMessage response)
+    {
+        if (response.Content.Headers.ContentType?.MediaType != "application/json")
+            throw new InvalidDataException("The service returned an invalid JSON response.");
     }
 
     public void Dispose() => http.Dispose();
