@@ -1,0 +1,216 @@
+{
+  "runId": "practice2d1006",
+  "startedAt": "2026-10-06T12:55:26.980Z",
+  "steps": [
+    {
+      "name": "enrich variety 1",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 7717,
+        "text": "I will send the report by Friday.",
+        "ko": "아이 윌 센드 더 리포트 바이 프라이데이"
+      }
+    },
+    {
+      "name": "enrich variety 2",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 4577,
+        "text": "The launch is on November 14, at 2 a.m.",
+        "ko": "더 런치 이즈 온 노벰버 포틴, 앳 투 에이엠."
+      }
+    },
+    {
+      "name": "enrich variety 3",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2906,
+        "text": "We reduce the risk with a staged rollout: 5 percent first, then 25 percent.",
+        "ko": "위 리듀스 더 리스크 위드 어 스테이지드 롤아웃 파이브 퍼센트 퍼스트 덴 트웬티 파이브 퍼센트"
+      }
+    },
+    {
+      "name": "enrich variety 4",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 4080,
+        "text": "I'm not sure. Let me check and get back to you.",
+        "ko": "아임 낫 슈어 렛 미 체크 앤드 겟 백 투 유"
+      }
+    },
+    {
+      "name": "enrich variety 5",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2797,
+        "text": "Latency is the delay for one request; throughput is how many requests we handle.",
+        "ko": "레이턴시는 더 딜레이 포 원 리퀘스트 스루풋은 하우 매니 리퀘스트스 위 핸들."
+      }
+    },
+    {
+      "name": "enrich variety 6",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1516,
+        "text": "Thanks for the question!",
+        "ko": "땡스 포 더 퀘스천"
+      }
+    },
+    {
+      "name": "enrich variety 7",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2759,
+        "text": "Our API supports 99.9% uptime and rolls back after 10 minutes.",
+        "ko": "아워 에이피아이 서포트스 나인티 나인 점 나인 퍼센트 업타임 앤 롤즈 백 애프터 텐 미닛츠"
+      }
+    },
+    {
+      "name": "enrich variety 8",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2060,
+        "text": "Could you share the Q3 numbers with the team?",
+        "ko": "쿠드 유 셰어 더 큐 쓰리 넘버즈 위드 더 팀"
+      }
+    },
+    {
+      "name": "enrich variety 9",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1674,
+        "text": "It helps the system grow and stay reliable.",
+        "ko": "잇 헬프스 더 시스템 그로우 앤드 스테이 리라이어블"
+      }
+    },
+    {
+      "name": "enrich variety 10",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1601,
+        "text": "Priya Nair owns the checklist.",
+        "ko": "프리야 나이어 체크리스트를 가지고 있어요."
+      }
+    },
+    {
+      "name": "enrich variety all ok",
+      "ok": true,
+      "detail": {
+        "okCount": 10,
+        "total": 10,
+        "meanMs": 3169,
+        "maxMs": 7717
+      }
+    },
+    {
+      "name": "note created",
+      "ok": true,
+      "detail": {
+        "status": 201
+      }
+    },
+    {
+      "name": "grounded practice turn",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2423,
+        "grounding": "grounded",
+        "sources": [
+          {
+            "title": "Zephyr rollout meeting notes"
+          }
+        ],
+        "text": "I would keep the rollout in small steps and watch the error rate closely. Should we start with 5 percent first?"
+      }
+    },
+    {
+      "name": "grounded suggest uses notes",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2156,
+        "grounding": "grounded",
+        "text": "I think the launch window is Thursday 14 November, from 02:00 to 04:00 UTC, and Priya Nair owns the checklist."
+      }
+    },
+    {
+      "name": "ungrounded suggest does not leak notes",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "grounding": "disabled",
+        "text": "I need to check that detail. I would focus on clear goals and small, safe steps."
+      }
+    },
+    {
+      "name": "transcribeOnly: final transcript, no response",
+      "ok": true,
+      "detail": {
+        "types": [
+          "session.ready",
+          "transcript.partial",
+          "transcript.final",
+          "error"
+        ],
+        "final": "Can you tell us what the main risk is for the Zephyr rollout and how you plan to reduce it?"
+      }
+    },
+    {
+      "name": "transcribeOnly: manual request rejected, session alive",
+      "ok": true,
+      "detail": {
+        "err": {
+          "type": "error",
+          "code": "transcribe_only",
+          "message": "This session only transcribes speech.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "meeting reply grounded in notes",
+      "ok": true,
+      "detail": {
+        "q": "Why did the team choose a staged rollout instead of releasing everything at once?",
+        "text": "To limit blast radius and reduce risk if something goes wrong. They can catch issues early, then expand safely.",
+        "grounding": "grounded"
+      }
+    },
+    {
+      "name": "meeting enrich chain (question+reply in parallel)",
+      "ok": true,
+      "detail": {
+        "qMs": 2286,
+        "rMs": 3582,
+        "qKo": "왜 팀은 한 번에 전부 출시하는 대신 단계적 롤아웃을 선택했나요?",
+        "rKo": "문제가 생겼을 때 영향 범위를 줄이고 위험을 낮추기 위해서입니다. 문제를 빨리 찾아내고, 그다음에 안전하게 범위를 넓힐 수 있습니다."
+      }
+    },
+    {
+      "name": "note deleted",
+      "ok": true,
+      "detail": {
+        "status": 204
+      }
+    }
+  ],
+  "enrich": {
+    "okCount": 10,
+    "total": 10,
+    "meanMs": 3169,
+    "maxMs": 7717
+  },
+  "finishedAt": "2026-10-06T12:56:54.230Z",
+  "ok": true
+}

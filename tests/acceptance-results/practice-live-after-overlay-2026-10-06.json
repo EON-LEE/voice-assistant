@@ -1,0 +1,194 @@
+{
+  "runId": "practice1006a",
+  "startedAt": "2026-10-06T12:57:17.826Z",
+  "steps": [
+    {
+      "name": "enrich reply",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2480,
+        "korean": "가장 큰 리스크는 느린 데이터베이스 마이그레이션이어서, 우리는 일찍 시작합니다.",
+        "pronunciation": [
+          {
+            "en": "The main risk",
+            "ko": "더 메인 리스크"
+          },
+          {
+            "en": "is a slow",
+            "ko": "이즈 어 슬로우"
+          },
+          {
+            "en": "database migration,",
+            "ko": "데이터베이스 마이그레이션"
+          },
+          {
+            "en": "so we start early.",
+            "ko": "쏘 위 스타트 얼리"
+          }
+        ]
+      }
+    },
+    {
+      "name": "enrich question",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1804,
+        "korean": "롤아웃의 가장 큰 리스크는 무엇인가요?"
+      }
+    },
+    {
+      "name": "speak coach/normal",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1319,
+        "bytes": 27360,
+        "type": "audio/mpeg"
+      }
+    },
+    {
+      "name": "speak partner/slow",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 764,
+        "bytes": 32688,
+        "type": "audio/mpeg"
+      }
+    },
+    {
+      "name": "partner opening",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2322,
+        "text": "I think we should start with the main goals and the smallest safe steps. What is the first thing we should plan?",
+        "words": 22
+      }
+    },
+    {
+      "name": "suggest",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2867,
+        "text": "I would start with the main goal and one small first step. Then I would check risks and who needs to join."
+      }
+    },
+    {
+      "name": "feedback",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 2810,
+        "body": {
+          "correctedEnglish": "I think the main risk is that moving the database will be slow. We should start early.",
+          "easierEnglish": "I think the database move may be slow. We should start early.",
+          "feedbackKo": "의미는 잘 전달됐고, 위험과 시작 시점을 말한 점도 좋습니다. 다만 문장 순서를 조금 더 자연스럽게 하면 더 분명해집니다.",
+          "points": [
+            {
+              "tag": "grammar",
+              "ko": "the database moving is slow 대신 moving the database will be slow가 자연스러워요."
+            },
+            {
+              "tag": "vocabulary",
+              "ko": "main risk는 좋고, database move처럼 짧게 말하면 더 쉬워요."
+            },
+            {
+              "tag": "clarity",
+              "ko": "start early는 좋지만, 무엇을 먼저 할지 한 번 더 구체적으로 말하면 더 분명해져요."
+            }
+          ],
+          "clarity": 4
+        }
+      }
+    },
+    {
+      "name": "partner second question",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1825,
+        "text": "I agree. I would check the main goal and the first small step, then look at the database risk; what should we plan next?"
+      }
+    },
+    {
+      "name": "partner closing done",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "text": "Thanks for practicing with me. See you next time."
+      }
+    },
+    {
+      "name": "summary",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 3154,
+        "body": {
+          "headlineKo": "좋은 시작이에요. 핵심 목표와 가장 작은 안전한 단계로 말했고, 위험도 분명하게 잡았어요.",
+          "strengthsKo": [
+            "main goals와 smallest safe steps처럼 구조가 분명해요.",
+            "main risk를 먼저 말해 초점이 잘 잡혔어요.",
+            "짧고 직접적으로 말해서 회의에서 이해하기 쉬워요."
+          ],
+          "improveKo": [
+            "the database moving is slow보다 a slow database move가 더 자연스러워요.",
+            "start early만으로도 되지만, 무엇을 먼저 시작하는지 더 분명하면 좋아요."
+          ],
+          "phrases": [
+            {
+              "en": "I think we should start with the main goals.",
+              "ko": "저는 우리가 핵심 목표부터 시작해야 한다고 생각해요."
+            },
+            {
+              "en": "The main risk is a slow database move.",
+              "ko": "가장 큰 위험은 느린 데이터베이스 이전이에요."
+            },
+            {
+              "en": "We start early.",
+              "ko": "우리는 일찍 시작해요."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "strict schema rejects unknown field",
+      "ok": true,
+      "detail": {
+        "status": 400
+      }
+    },
+    {
+      "name": "unauthenticated rejected",
+      "ok": true,
+      "detail": {
+        "status": 401
+      }
+    },
+    {
+      "name": "bad origin rejected",
+      "ok": true,
+      "detail": {
+        "status": 403
+      }
+    }
+  ],
+  "timings": {
+    "enrichReplyMs": 2480,
+    "enrichQuestionMs": 1804,
+    "speak_coachMs": 1319,
+    "speak_partnerMs": 764,
+    "turn1Ms": 2322,
+    "suggestMs": 2867,
+    "feedbackMs": 2810,
+    "turn2Ms": 1825,
+    "summaryMs": 3154
+  },
+  "completedAt": "2026-10-06T12:57:38.346Z",
+  "ok": true
+}
