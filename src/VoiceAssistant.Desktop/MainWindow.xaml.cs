@@ -291,8 +291,9 @@ public partial class MainWindow : Window
                 changingPause = false;
                 state.Pause(true);
                 ConsentBox.IsChecked = false;
-                StartButton.IsEnabled = DeviceBox.IsEnabled = SignInButton.IsEnabled = true;
-                RefreshButton.IsEnabled = ConsentBox.IsEnabled = true;
+                StartButton.IsEnabled = true;
+                SignInButton.IsEnabled = settings.Mode == ConnectionMode.Production;
+                DeviceBox.IsEnabled = RefreshButton.IsEnabled = ConsentBox.IsEnabled = !IsDemo;
                 StopButton.IsEnabled = PauseBox.IsEnabled = RequestButton.IsEnabled = CancelButton.IsEnabled = false;
                 StatusText.Text = IsDemo ? "OFFLINE DEMO — no sign-in, network, or microphone."
                     : "Stopped — no audio capture";

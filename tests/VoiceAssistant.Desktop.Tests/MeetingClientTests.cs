@@ -97,20 +97,21 @@ public sealed class MeetingClientTests
     }
 
     [Fact]
-    public async Task ExplicitDemoCanCompleteReplyWithoutAnyDevicesOrNetwork()
+    public async Task ExplicitDemoAutoRepliesToFinalTranscriptAndAllowsRetryWithoutDevicesOrNetwork()
     {
         var client = new MeetingClient(new DemoMeetingTransport());
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var transcript = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource<ServerEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retried = new TaskCompletionSource<ServerEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         Task run = client.RunAsync(new(), () => new SyntheticAudioSource(), e =>
         {
-            if (e.Type == "transcript.final") transcript.TrySetResult();
-            if (e.Type == "response.completed") completed.TrySetResult(e);
+            if (e.Type != "response.completed") return;
+            if (e.ResponseId == "demo-1") completed.TrySetResult(e);
+            if (e.ResponseId == "demo-2") retried.TrySetResult(e);
         }, _ => { }, timeout.Token);
-        await transcript.Task.WaitAsync(timeout.Token);
-        await client.RequestResponseAsync(timeout.Token);
         Assert.Equal("Yes, I can share an update by Friday.", (await completed.Task.WaitAsync(timeout.Token)).Text);
+        await client.RequestResponseAsync(timeout.Token);
+        Assert.Equal("Yes, I can share an update by Friday.", (await retried.Task.WaitAsync(timeout.Token)).Text);
         await client.StopAsync();
         await run;
     }

@@ -39,12 +39,7 @@ public sealed class DemoMeetingTransport : IMeetingTransport
                     await events.Writer.WriteAsync(new("error", Text: "Wait for the demo transcript.", Code: "no_transcript", Retryable: true), token);
                     break;
                 }
-                string id = $"demo-{++responseNumber}";
-                await events.Writer.WriteAsync(new("response.started", "demo-turn", ResponseId: id), token);
-                await events.Writer.WriteAsync(new("response.delta", "demo-turn", Text: "Yes, I can ", ResponseId: id), token);
-                await events.Writer.WriteAsync(new("response.delta", "demo-turn", Text: "share an update by Friday.", ResponseId: id), token);
-                await events.Writer.WriteAsync(new("response.completed", "demo-turn",
-                    Text: "Yes, I can share an update by Friday.", ResponseId: id, Sources: []), token);
+                await WriteCannedReplyAsync(token);
                 break;
             case "response.cancel":
                 await events.Writer.WriteAsync(new("response.cancelled", "demo-turn", ResponseId: $"demo-{responseNumber}"), token);
@@ -62,6 +57,17 @@ public sealed class DemoMeetingTransport : IMeetingTransport
         transcriptSent = true;
         await events.Writer.WriteAsync(new("transcript.partial", "demo-turn", 1, "Can you share"), token);
         await events.Writer.WriteAsync(new("transcript.final", "demo-turn", 2, "Can you share an update by Friday?"), token);
+        await WriteCannedReplyAsync(token);
+    }
+
+    private async Task WriteCannedReplyAsync(CancellationToken token)
+    {
+        string id = $"demo-{++responseNumber}";
+        await events.Writer.WriteAsync(new("response.started", "demo-turn", ResponseId: id), token);
+        await events.Writer.WriteAsync(new("response.delta", "demo-turn", Text: "Yes, I can ", ResponseId: id), token);
+        await events.Writer.WriteAsync(new("response.delta", "demo-turn", Text: "share an update by Friday.", ResponseId: id), token);
+        await events.Writer.WriteAsync(new("response.completed", "demo-turn",
+            Text: "Yes, I can share an update by Friday.", ResponseId: id, Sources: []), token);
     }
 
     public async Task<ServerEvent> ReceiveAsync(CancellationToken token) => await events.Reader.ReadAsync(token);

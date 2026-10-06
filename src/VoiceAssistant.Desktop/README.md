@@ -20,7 +20,7 @@ To inspect the complete main overlay and separate practice window without sign-i
 dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -- --demo
 ```
 
-For the portable published executable, run `VoiceAssistant.Desktop.exe --demo`. The separate preview window uses canned meeting/practice text and synthetic meeting frames only; it makes no network requests, opens no microphone, and does not use Azure speech, Search, or TTS. Every preview surface is labeled **OFFLINE DEMO**. It does not alter the signed-in production window, and a failed live connection never switches to the preview.
+For the portable published executable, run `VoiceAssistant.Desktop.exe --demo`. The separate preview window uses canned meeting/practice text and synthetic meeting frames only; it makes no network requests, opens no microphone, and does not use Azure speech, Search, or TTS. Starting the meeting preview shows a synthetic final question and then a canned reply automatically; **Generate reply again** replays it. Sign-in, microphone, consent, and refresh controls stay disabled before and after the preview runs. Every preview surface is labeled **OFFLINE DEMO**. It does not alter the signed-in production window, and a failed live connection never switches to the preview.
 
 For a self-contained Windows build, publish with the repository's `scripts\desktop\Publish.ps1` when available, or use:
 
