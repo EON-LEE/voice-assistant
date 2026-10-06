@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-07",
+  "status": "portable-preview-ready-live-acceptance-blocked",
+  "implementationCommits": ["9224600", "dcdab35", "cb8086c", "ccb5d23"],
+  "verification": {
+    "releaseDesktopTests": { "passed": 54, "failed": 0, "skipped": 1, "skipReason": "Opt-in external backend test" },
+    "publish": "Self-contained Windows x64 succeeded; whole folder required",
+    "launchers": ["Open-Meeting-Coach.cmd", "Preview-Offline.cmd"],
+    "actualUi": [
+      "Published main setup window launched and accessibility tree inspected.",
+      "Offline demo opened without sign-in or microphone.",
+      "420x260 overlay opened, clearly labeled offline; scripted transcript and requested answer were displayed.",
+      "1040x820 separate practice preview opened.",
+      "Practice Start, sample answer, Done, feedback, Next, Skip and final summary were exercised through UI controls.",
+      "Final revised executable launched and offline preview entry opened.",
+      "Regression tests cover automatic demo reply and disabled live controls after Stop."
+    ]
+  },
+  "notVerified": [
+    "Native interactive Entra login and token acquisition.",
+    "Native live Azure ticket, WebSocket, Search, practice and TTS workflows.",
+    "Physical microphone capture: no active microphone was detected.",
+    "Visual transparency, focus, slide navigation, drag and resize above an actual PowerPoint presentation."
+  ],
+  "boundaries": {
+    "installerUsed": false,
+    "microphoneCaptured": false,
+    "demoUsesNetwork": false,
+    "demoUsesAzureSearch": false,
+    "mockOrCannedIsLiveEvidence": false
+  }
+}
