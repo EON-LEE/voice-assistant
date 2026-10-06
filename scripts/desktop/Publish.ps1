@@ -29,5 +29,12 @@ cd /d "%~dp0"
 start "" "%~dp0VoiceAssistant.Desktop.exe"
 '@
 [IO.File]::WriteAllText((Join-Path $output 'Open-Meeting-Coach.cmd'), $launcher, [Text.Encoding]::ASCII)
+$demoLauncher = @'
+@echo off
+cd /d "%~dp0"
+start "" "%~dp0VoiceAssistant.Desktop.exe" --demo
+'@
+[IO.File]::WriteAllText((Join-Path $output 'Preview-Offline.cmd'), $demoLauncher, [Text.Encoding]::ASCII)
 Write-Output "Published: $executable"
 Write-Output "Double-click Open-Meeting-Coach.cmd in $output. Launching does not grant microphone consent."
+Write-Output 'Preview-Offline.cmd opens clearly labeled canned previews without sign-in, network, or microphone capture.'

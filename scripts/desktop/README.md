@@ -12,6 +12,10 @@ does not need to install the .NET runtime. Copy the **whole output folder** and
 double-click `Open-Meeting-Coach.cmd`. A single executable without its companion
 files is not a complete distribution.
 
+Double-click `Preview-Offline.cmd` to inspect the overlay and practice with
+clearly labeled canned content. This mode needs no sign-in or microphone and
+does not use Azure services. It is not a substitute for live acceptance.
+
 For a machine that already has the .NET 8 Windows Desktop runtime:
 
 ```powershell
