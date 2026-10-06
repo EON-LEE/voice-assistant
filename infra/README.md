@@ -203,6 +203,20 @@ names, request URLs with tokens, or credentials.
    Use authorization code + PKCE, **no client secret**, with the SPA redirect URI
    equal to the final browser HTTPS origin (`location.origin`). Do not enable
    implicit flow as a workaround. Entra registration/consent is outside this IaC.
+   The Windows in-person client requires a **separate native public-client
+   registration**: single-tenant, `http://localhost` in its public-client redirect
+   list, the same delegated `Meeting.Access` permission, and approved consent or
+   API preauthorization. Do not substitute the SPA client ID or configure a
+   client secret. Validate existing registrations without modifying them:
+
+   ```powershell
+   .\scripts\infra\Test-NativeEntra.ps1 -TenantId <tenant-guid> `
+     -ApiClientId <api-client-guid> -NativeClientId <native-client-guid>
+   ```
+
+   This registration check does not demonstrate a user's interactive login.
+   The native client must obtain its own token, request the same API session
+   ticket as the browser, and supply the configured allowed HTTPS Origin.
 3. Build the integrated repository's API Dockerfile from repository root and push
    to the approved existing ACR using your approved image-publishing procedure:
    `docker build -f .\src\VoiceAssistant.Api\Dockerfile -t <registry>.azurecr.io/voice-assistant:<version> .`
