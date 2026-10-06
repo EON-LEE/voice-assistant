@@ -1,8 +1,37 @@
 # voice-assistant
 
-An Azure-hosted, installation-free web meeting assistant that listens to shared English meeting audio
-and displays short English replies for the user to read aloud. It does not speak,
-send Teams messages, or make commitments on the user's behalf.
+An Azure-backed English meeting coach that displays short replies for the user
+to read aloud. The in-person Windows client uses a physical microphone and a
+translucent topmost overlay; the existing installation-free browser client
+supports shared meeting audio. Neither sends meeting messages or makes
+commitments on the user's behalf. Read-aloud playback is explicitly requested.
+
+## In-person Windows client (portable)
+
+The Windows client separates meeting setup/transcripts, the compact overlay,
+and practice into separate windows. It uses Entra public-client authentication
+and the same Azure Speech, Azure OpenAI and owner-authorized Azure AI Search
+API as the browser. This workflow does not capture Teams or system playback.
+Audio requires explicit consent and Start; launching the app does not capture.
+
+Publish a self-contained **portable folder**, without an installer:
+
+```powershell
+.\scripts\desktop\Publish.ps1 -OutputDirectory C:\Apps\MeetingCoach
+```
+
+Choose a new or empty folder outside the repository, keep all companion files,
+and double-click `Open-Meeting-Coach.cmd`. See
+[publishing instructions](scripts/desktop/README.md) and
+[native client instructions](src/VoiceAssistant.Desktop/README.md).
+
+The native implementation is undergoing acceptance. A successful build or
+offline test is not proof of interactive Entra login, physical microphone
+recognition, a complete live practice round, or focus/transparency above
+PowerPoint. The browser's glass styling and Picture-in-Picture do not make
+PowerPoint visible through a browser window.
+
+## Existing browser application
 
 Deployed application: https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io
 
@@ -50,7 +79,7 @@ are possible later alternatives, not prerequisites for displaying text replies.
 | Wire contract | `contracts` | Versioned client/server message definitions |
 | Azure infrastructure | `infra` | Parameterized deployment and prerequisites |
 | Component tests | `tests` | Offline provider, protocol, and state tests |
-| Optional legacy desktop | `src/VoiceAssistant.Desktop` | Preserved prototype; not required for the web product |
+| Portable Windows client | `src/VoiceAssistant.Desktop` | Physical microphone, translucent meeting overlay and separate practice |
 
 The browser, API, and infrastructure components are integrated from parallel
 worktrees. Passing offline tests is not evidence of a successful Azure
