@@ -85,6 +85,31 @@ public sealed class StateAndProtocolTests
         Assert.True(Parse("""{"type":"error","code":"busy","message":"Try later","retryable":true}""").Retryable);
     }
 
+    [Fact]
+    public void ParsesGroundingAndRouteMetadataForVisibleSearchState()
+    {
+        var completed = Parse("""{"type":"response.completed","responseId":"r","turnId":"t","text":"yes","sources":[],"grounding":"no_matches","responseRoute":"knowledge","retrievalPrefetched":false}""");
+        var state = new ReplyState();
+        state.Apply(new("transcript.final", "t", 1, "Question?"));
+        state.Apply(new("response.started", "t", ResponseId: "r"));
+        state.Apply(completed);
+        Assert.Equal("no_matches", state.Current!.Grounding);
+        Assert.Equal("knowledge", state.Current.ResponseRoute);
+        Assert.False(state.Current.RetrievalPrefetched);
+    }
+
+    [Fact]
+    public void ProductionSettingsRequireCanonicalAllowedOriginAndConfirmedProfile()
+    {
+        var settings = new ClientSettings { Mode = ConnectionMode.Production };
+        Assert.Equal("https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io", settings.Origin);
+        Assert.Equal("https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io/", settings.ApiBase.AbsoluteUri);
+        Assert.Throws<InvalidOperationException>(() =>
+            (settings with { Origin = "https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io/" }).Validate());
+        Assert.Throws<InvalidOperationException>(() =>
+            (settings with { ProfileName = "Ari", ProfileConfirmed = false }).Validate());
+    }
+
     [Theory]
     [InlineData("""{"type":"transcript.partial","turnId":"t","text":"x","revision":-1}""")]
     [InlineData("""{"type":"response.delta","turnId":"t","text":"x"}""")]

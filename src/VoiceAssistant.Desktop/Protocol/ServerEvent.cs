@@ -3,10 +3,12 @@ using System.Text.Json;
 namespace VoiceAssistant.Desktop.Protocol;
 
 public sealed record ReplySource(string Title, string Url, string? UpdatedAt);
+public sealed record GroundingInfo(string? Grounding, string? ResponseRoute, bool? RetrievalPrefetched);
 public sealed record ServerEvent(
     string Type, string? TurnId = null, int Revision = 0, string? Text = null,
     string? ResponseId = null, IReadOnlyList<ReplySource>? Sources = null,
-    string? Code = null, bool Retryable = false)
+    string? Code = null, bool Retryable = false, string? Grounding = null,
+    string? ResponseRoute = null, bool? RetrievalPrefetched = null)
 {
     public static ServerEvent Parse(ReadOnlySpan<byte> json)
     {
@@ -46,7 +48,15 @@ public sealed record ServerEvent(
                         ? updated.GetString() : null;
                     sources.Add(new(title, url, updatedAt));
                 }
-                return new(type, Required("turnId"), Text: Required("text"), ResponseId: Required("responseId"), Sources: sources);
+                string? grounding = root.TryGetProperty("grounding", out var groundingValue) ? groundingValue.GetString() : null;
+                string? route = root.TryGetProperty("responseRoute", out var routeValue) ? routeValue.GetString() : null;
+                bool? prefetched = root.TryGetProperty("retrievalPrefetched", out var prefetchedValue)
+                    ? prefetchedValue.GetBoolean() : null;
+                if (grounding is not null && grounding is not ("disabled" or "grounded" or "unavailable" or "no_matches") ||
+                    route is not null && route is not ("transcript" or "profile" or "knowledge"))
+                    throw new InvalidDataException("Response grounding metadata is invalid.");
+                return new(type, Required("turnId"), Text: Required("text"), ResponseId: Required("responseId"),
+                    Sources: sources, Grounding: grounding, ResponseRoute: route, RetrievalPrefetched: prefetched);
             case "error":
                 if (!root.TryGetProperty("retryable", out var retryable) ||
                     retryable.ValueKind is not (JsonValueKind.True or JsonValueKind.False))

@@ -53,7 +53,7 @@ public sealed class WebSocketTests
             catch (Exception ex) { serverDone.TrySetException(ex); }
         });
         await app.StartAsync(timeout.Token);
-        var client = new MeetingClient(new WebSocketMeetingTransport());
+        var client = new MeetingClient(new TicketedMeetingTransport());
         var final = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var events = new List<ServerEvent>();
@@ -98,7 +98,7 @@ public sealed class WebSocketTests
             catch (WebSocketException) { }
         });
         await app.StartAsync(timeout.Token);
-        await using var transport = new WebSocketMeetingTransport();
+        await using var transport = new TicketedMeetingTransport();
         await transport.ConnectAsync(Settings(app), timeout.Token);
         if (failure == "disconnect")
             await Assert.ThrowsAsync<IOException>(() => transport.ReceiveAsync(timeout.Token));
@@ -111,7 +111,7 @@ public sealed class WebSocketTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var transcript = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource<ServerEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var client = new MeetingClient(new WebSocketMeetingTransport());
+        var client = new MeetingClient(new TicketedMeetingTransport());
         Task run = client.RunAsync(new() { Mode = ConnectionMode.Development, Endpoint = endpoint },
             () => new SyntheticAudioSource(), e =>
             {
@@ -146,7 +146,12 @@ public sealed class WebSocketTests
     }
 
     private static ClientSettings Settings(WebApplication app) =>
-        new() { Mode = ConnectionMode.Development, Endpoint = app.Urls.Single().Replace("http:", "ws:") + "/api/meeting" };
+        new()
+        {
+            Mode = ConnectionMode.Development,
+            Endpoint = app.Urls.Single().Replace("http:", "ws:") + "/api/meeting",
+            Origin = "http://localhost:5173"
+        };
 
     private static Task Send(WebSocket socket, string text, CancellationToken token) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, token);

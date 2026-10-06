@@ -33,9 +33,10 @@ public sealed class MeetingClient
         Task? receiver = null;
         try
         {
+            lock (audioGate) paused = settings.TranscribeOnly;
             onStatus(settings.Mode == ConnectionMode.Production ? "Signing in / connecting..." : "Connecting...");
             await transport.ConnectAsync(settings, lifetime.Token);
-            await transport.SendTextAsync(StartMessage, lifetime.Token);
+            await transport.SendTextAsync(BuildStartMessage(settings), lifetime.Token);
             using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token))
             {
                 handshake.CancelAfter(TimeSpan.FromSeconds(15));
@@ -44,6 +45,7 @@ public sealed class MeetingClient
                 if (first.Type != "session.ready") throw new InvalidDataException("Expected session.ready before audio.");
                 onEvent(first);
             }
+
             source = createAudio();
             source.Data += QueueAudio;
             source.Failed += FailAudio;
@@ -83,6 +85,34 @@ public sealed class MeetingClient
                 while (audio.Reader.TryRead(out _)) { }
             }
         }
+    }
+
+    public static string BuildStartMessage(ClientSettings settings)
+    {
+        if (settings.Mode != ConnectionMode.Production && !settings.TranscribeOnly) return StartMessage;
+        var options = new Dictionary<string, object?>
+        {
+            ["responseMode"] = settings.ResponseMode,
+            ["topic"] = settings.Topic,
+            ["transcribeOnly"] = settings.TranscribeOnly
+        };
+        if (settings.ProfileConfirmed)
+        {
+            options["profileConfirmed"] = true;
+            options["profile"] = new Dictionary<string, string?>
+            {
+                ["name"] = settings.ProfileName,
+                ["role"] = settings.ProfileRole,
+                ["project"] = settings.ProfileProject
+            };
+        }
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "session.start",
+            protocolVersion = 1,
+            audio = new { encoding = "pcm_s16le", sampleRate = 16000, channels = 1 },
+            options
+        });
     }
 
     private static async Task ObserveShutdownAsync(Task? task, Action<ServerEvent> onEvent)

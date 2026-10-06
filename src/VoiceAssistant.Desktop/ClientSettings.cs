@@ -8,11 +8,19 @@ public enum ConnectionMode { Demo, Development, Production }
 public sealed record ClientSettings
 {
     public ConnectionMode Mode { get; init; } = ConnectionMode.Demo;
-    public string Endpoint { get; init; } = "ws://localhost:8080/api/meeting";
+    public string Endpoint { get; init; } = "wss://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io/api/meeting";
+    public string Origin { get; init; } = "https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io";
     public string Authority { get; init; } = "https://login.microsoftonline.com";
-    public string TenantId { get; init; } = "YOUR-TENANT-ID";
-    public string ClientId { get; init; } = "YOUR-PUBLIC-CLIENT-ID";
-    public string Scope { get; init; } = "api://YOUR-API-CLIENT-ID/Meeting.Access";
+    public string TenantId { get; init; } = "2573db8c-dfe5-4805-9e28-a0859692e705";
+    public string ClientId { get; init; } = "6c67aee7-0c67-48aa-9dce-40db347c5a7f";
+    public string Scope { get; init; } = "api://4546bd70-1872-4a1d-bdcd-d09377e365e4/Meeting.Access";
+    public string ResponseMode { get; init; } = "balanced";
+    public string Topic { get; init; } = "";
+    public string ProfileName { get; init; } = "";
+    public string ProfileRole { get; init; } = "";
+    public string ProfileProject { get; init; } = "";
+    public bool ProfileConfirmed { get; init; }
+    public bool TranscribeOnly { get; init; }
 
     public static ClientSettings Load(string path) =>
         JsonSerializer.Deserialize<ClientSettings>(File.ReadAllText(path), new JsonSerializerOptions
@@ -43,7 +51,27 @@ public sealed record ClientSettings
             if (!Guid.TryParse(TenantId, out _) || !Guid.TryParse(ClientId, out _) ||
                 string.IsNullOrWhiteSpace(Scope) || Scope.Contains("YOUR-", StringComparison.Ordinal))
                 throw new InvalidOperationException("Configure TenantId, public ClientId, and delegated API Scope before using Production.");
+            if (!Uri.TryCreate(Origin, UriKind.Absolute, out var origin) || origin.Scheme != "https" ||
+                Origin != origin.GetLeftPart(UriPartial.Authority) || origin.UserInfo.Length != 0)
+                throw new InvalidOperationException("Origin must exactly match the API's configured canonical HTTPS application origin.");
+            if (!origin.Host.Equals(endpoint.Host, StringComparison.OrdinalIgnoreCase) || origin.Port != 443 || endpoint.Port != 443)
+                throw new InvalidOperationException("Production Origin and WSS endpoint must use the same HTTPS host on port 443.");
+            if (ResponseMode is not ("balanced" or "grounded" or "conversation"))
+                throw new InvalidOperationException("ResponseMode must be balanced, grounded, or conversation.");
+            if (Topic.Length > 300 || ProfileName.Length > 100 || ProfileRole.Length > 160 || ProfileProject.Length > 300 ||
+                (!ProfileConfirmed && (ProfileName.Length != 0 || ProfileRole.Length != 0 || ProfileProject.Length != 0)))
+                throw new InvalidOperationException("Profile values must be within the documented limits and explicitly confirmed.");
         }
         return endpoint;
+    }
+
+    public Uri ApiBase
+    {
+        get
+        {
+            var endpoint = Validate();
+            return new UriBuilder(endpoint.Scheme == "wss" ? Uri.UriSchemeHttps : Uri.UriSchemeHttp,
+                endpoint.Host, endpoint.IsDefaultPort ? -1 : endpoint.Port).Uri;
+        }
     }
 }

@@ -3,7 +3,8 @@ using VoiceAssistant.Desktop.Protocol;
 namespace VoiceAssistant.Desktop;
 
 public sealed record TranscriptTurn(string TurnId, int Revision, string Text, bool IsFinal);
-public sealed record ReplySnapshot(string ResponseId, string TurnId, string Text, IReadOnlyList<ReplySource> Sources, bool Complete);
+public sealed record ReplySnapshot(string ResponseId, string TurnId, string Text, IReadOnlyList<ReplySource> Sources, bool Complete,
+    string? Grounding = null, string? ResponseRoute = null, bool? RetrievalPrefetched = null);
 
 /// <summary>UI-thread-owned bounded state; pinned answers are immutable snapshots.</summary>
 public sealed class ReplyState
@@ -84,7 +85,15 @@ public sealed class ReplyState
                 if (message.Type == "response.cancelled") { Current = null; return; }
                 Current = message.Type == "response.delta"
                     ? Current with { Text = Limit(Current.Text + message.Text) }
-                    : Current with { Text = Limit(message.Text!), Sources = (message.Sources ?? []).ToArray(), Complete = true };
+                    : Current with
+                    {
+                        Text = Limit(message.Text!),
+                        Sources = (message.Sources ?? []).ToArray(),
+                        Complete = true,
+                        Grounding = message.Grounding,
+                        ResponseRoute = message.ResponseRoute,
+                        RetrievalPrefetched = message.RetrievalPrefetched
+                    };
                 return;
         }
     }
