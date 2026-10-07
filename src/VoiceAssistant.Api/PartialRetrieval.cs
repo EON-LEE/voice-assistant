@@ -24,10 +24,11 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     private int starts;
     private bool closed;
 
-    private sealed class Candidate(string turnId, string text, CancellationToken lifetime)
+    private sealed class Candidate(string turnId, string text, string query, CancellationToken lifetime)
     {
         internal string TurnId { get; } = turnId;
         internal string Text { get; } = text;
+        internal string Query { get; } = query;
         internal CancellationTokenSource Cancellation { get; } = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         internal TaskCompletionSource<RetrievalOutcome> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Started { get; set; }
@@ -60,6 +61,7 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     internal void Update(Transcript partial, IReadOnlyList<ConversationTurn>? history = null)
     {
         var text = ResponseRouting.Normalize(partial.Text);
+        var query = RetrievalQuery.Build(partial.Text, history);
         lock (gate)
         {
             if (closed) return;
@@ -69,21 +71,22 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                 turn = partial.TurnId;
                 starts = 0;
             }
-            if (candidate is { Cancelled: false } same && same.TurnId == partial.TurnId && same.Text == text) return;
+            if (candidate is { Cancelled: false } same && same.TurnId == partial.TurnId && same.Text == text && same.Query == query) return;
             candidate?.Cancel();
             candidate = null;
             if (starts >= 3 || !ResponseRouting.Substantive(text) || ResponseRouting.Select(partial.Text, options, history) != "knowledge") return;
-            candidate = new(partial.TurnId, text, lifetime.Token);
+            candidate = new(partial.TurnId, text, query, lifetime.Token);
             changed.Writer.TryWrite(true);
         }
     }
 
-    internal Task<RetrievalOutcome>? Take(string turnId, string finalText, string route)
+    internal Task<RetrievalOutcome>? Take(string turnId, string finalText, string route, IReadOnlyList<ConversationTurn>? history = null)
     {
         lock (gate)
         {
             if (!closed && route == "knowledge" && candidate is { Started: true, Cancelled: false } match &&
-                match.TurnId == turnId && match.Text == ResponseRouting.Normalize(finalText))
+                match.TurnId == turnId && match.Text == ResponseRouting.Normalize(finalText) &&
+                match.Query == RetrievalQuery.Build(finalText, history))
             {
                 if (match.Selected && match.Result.Task.IsCompletedSuccessfully && match.Result.Task.Result.Failure is not null)
                 {
@@ -127,7 +130,7 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                         current.Cancellation.CancelAfter(TimeSpan.FromSeconds(10));
                     }
                     // Keep a noncooperative cancelled provider occupying this single worker; don't spawn replacements.
-                    var operation = RetrieveAsync(current.Text, current.Cancellation.Token);
+                    var operation = RetrieveAsync(current.Query, current.Cancellation.Token);
                     var outcome = await operation.WaitAsync(lifetime.Token);
                     current.Result.TrySetResult(outcome);
                 }

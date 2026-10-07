@@ -18,6 +18,10 @@ public partial class MainWindow : Window
     private readonly AuthenticatedApiClient api;
     private readonly SemaphoreSlim stopGate = new(1, 1);
     private readonly ReplyState state = new();
+    private readonly Dictionary<string, string> suggestedReplies = [];
+    private readonly Dictionary<string, string> meetingTranslations = [];
+    private readonly Dictionary<string, string[]> replyTranslations = [];
+    private readonly HashSet<string> translatingResponses = [];
     private readonly OverlayWindow overlay = new();
     private readonly HashSet<Task> enrichmentTasks = [];
     private MainWindow? demoPreview;
@@ -36,6 +40,8 @@ public partial class MainWindow : Window
     private Task? readingTask;
     private CancellationTokenSource? microphoneTestLifetime;
     private Task? microphoneTestTask;
+    private bool overlayPrimary;
+    private bool connectingAccount;
 
     public MainWindow(ClientSettings settings, NativeIdentity identity, AuthenticatedApiClient api)
     {
@@ -43,6 +49,22 @@ public partial class MainWindow : Window
         this.identity = identity;
         this.api = api;
         InitializeComponent();
+        Title = "Live Coach — Settings and materials";
+        SignInButton.Visibility = DeviceCodeButton.Visibility = Visibility.Collapsed;
+        ConsentBox.Visibility = ProfileConfirmBox.Visibility = KoreanBox.Visibility =
+            PauseBox.Visibility = TopmostBox.Visibility = Visibility.Collapsed;
+        StartButton.ToolTip = "Start sends microphone audio to Azure. Inform participants and obtain their permission before starting.";
+        overlay.SettingsRequested += ShowSettings;
+        overlay.StartRequested += () =>
+        {
+            Start_Click(this, new RoutedEventArgs());
+            UpdateOverlay();
+        };
+        overlay.PauseRequested += () => PauseBox.IsChecked = PauseBox.IsChecked != true;
+        overlay.RetryRequested += () => Request_Click(this, new RoutedEventArgs());
+        overlay.TranslationRequested += RetryTranslations;
+        overlay.StopRequested += () => Stop_Click(this, new RoutedEventArgs());
+        overlay.ExitRequested += async () => await CloseForOwnerAsync();
         if (IsDemo) DeviceBox.ItemsSource = Array.Empty<CaptureEndpoint>();
         else RefreshEndpoints();
         AuthStatus.Text = settings.Mode == ConnectionMode.Demo
@@ -58,7 +80,7 @@ public partial class MainWindow : Window
         MicTestButton.IsEnabled = !IsDemo;
         KoreanBox.IsEnabled = !IsDemo;
         ReadButton.IsEnabled = !IsDemo;
-        StartButton.Content = IsDemo ? "Start offline overlay preview" : "Start meeting overlay";
+        StartButton.Content = IsDemo ? "Start offline overlay preview" : "Start live — send microphone audio to Azure";
         StatusText.Text = IsDemo ? "OFFLINE DEMO — no sign-in, network, or microphone." : StatusText.Text;
         if (IsDemo) MaterialsStatus.Text = "Personal materials are available only in authenticated production mode.";
         if (settings.Mode == ConnectionMode.Production)
@@ -67,6 +89,34 @@ public partial class MainWindow : Window
             ModeBox.SelectedIndex = mode;
             TopicBox.Text = settings.Topic;
         }
+        KoreanBox.IsChecked = true;
+        KoreanBox.IsEnabled = false;
+    }
+
+    public void ShowPrimaryOverlay()
+    {
+        overlayPrimary = true;
+        UpdateOverlay();
+        overlay.Show();
+    }
+
+    private void ShowSettings()
+    {
+        overlay.Topmost = false;
+        Show();
+        Activate();
+    }
+
+    private void RetryTranslations()
+    {
+        if (IsDemo || lifetime is not { IsCancellationRequested: false } active) return;
+        if (ErrorText.Text.StartsWith("Korean assist unavailable:", StringComparison.Ordinal) ||
+            ErrorText.Text.StartsWith("Meeting translation unavailable:", StringComparison.Ordinal))
+            ErrorText.Text = "";
+        foreach (var turn in state.Turns.TakeLast(3).Where(turn => turn.IsFinal))
+            TrackEnrichment(EnrichTranscriptAsync(turn.TurnId, turn.Text, active.Token));
+        if (state.Display is { Complete: true } reply && !translatingResponses.Contains(reply.ResponseId))
+            TrackEnrichment(EnrichReplyAsync(reply, active.Token));
     }
 
     private bool IsDemo => settings.Mode == ConnectionMode.Demo;
@@ -127,9 +177,9 @@ public partial class MainWindow : Window
 
     private async void MicTest_Click(object sender, RoutedEventArgs e)
     {
-        if (testingMicrophone || ConsentBox.IsChecked != true || DeviceBox.SelectedItem is not CaptureEndpoint device)
+        if (testingMicrophone || DeviceBox.SelectedItem is not CaptureEndpoint device)
         {
-            ErrorText.Text = "Select a microphone and confirm participant consent before the local level check.";
+            ErrorText.Text = "Select a microphone before the local level check. No audio is sent.";
             return;
         }
         testingMicrophone = true;
@@ -184,21 +234,35 @@ public partial class MainWindow : Window
 
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
-        if (HasActiveSession || testingMicrophone) return;
-        if (!IsDemo && !identity.IsSignedIn)
-        {
-            ErrorText.Text = "Sign in with Microsoft before starting the meeting session.";
-            return;
-        }
-        if (!IsDemo && ConsentBox.IsChecked != true)
-        {
-            ErrorText.Text = "Confirm participant consent before starting microphone capture.";
-            return;
-        }
+        if (HasActiveSession || testingMicrophone || connectingAccount) return;
         if (!IsDemo && DeviceBox.SelectedItem is not CaptureEndpoint)
         {
             ErrorText.Text = "Select an active physical microphone.";
+            UpdateOverlay();
             return;
+        }
+        if (!IsDemo && !identity.IsSignedIn)
+        {
+            connectingAccount = true;
+            StartButton.IsEnabled = false;
+            ErrorText.Text = "";
+            StatusText.Text = "Connecting your Microsoft account — no microphone capture yet.";
+            try
+            {
+                await identity.SignInAsync();
+                AuthStatus.Text = "Account connected. Uploaded materials remain protected under your account.";
+            }
+            catch (Exception ex)
+            {
+                ErrorText.Text = $"Account connection did not finish: {ex.Message}";
+                UpdateOverlay();
+                return;
+            }
+            finally
+            {
+                connectingAccount = false;
+                StartButton.IsEnabled = true;
+            }
         }
         var lease = AudioSessionCoordinator.TryAcquire();
         if (lease is null)
@@ -230,6 +294,10 @@ public partial class MainWindow : Window
 
         audioLease = lease;
         state.ResetSession();
+        suggestedReplies.Clear();
+        meetingTranslations.Clear();
+        replyTranslations.Clear();
+        translatingResponses.Clear();
         ErrorText.Text = "";
         lifetime = new CancellationTokenSource();
         client = IsDemo ? new MeetingClient(new DemoMeetingTransport())
@@ -241,6 +309,8 @@ public partial class MainWindow : Window
             IsDemo ? "Offline canned preview — no Search" : "Grounding pending",
             TopmostBox.IsChecked == true, demo: IsDemo);
         if (!overlay.IsVisible) overlay.Show();
+        ShowOverlayButton.Content = "Hide overlay";
+        if (overlayPrimary) Hide();
         running = RunMeetingAsync(meetingSettings, (DeviceBox.SelectedItem as CaptureEndpoint)?.Id, lifetime.Token);
         await running;
     }
@@ -265,13 +335,18 @@ public partial class MainWindow : Window
                 status => Dispatcher.BeginInvoke(() =>
                 {
                     StatusText.Text = status;
-                    overlay.ShowMeetingState(client?.IsReady == true, LatestQuestion(), state.Current?.Text ?? state.Pinned?.Text ?? "",
-                        GroundingLabel(state.Current), TopmostBox.IsChecked == true, KoreanText.Text, ReadingText.Text,
-                        IsDemo, PauseBox.IsChecked == true);
+                    UpdateOverlay();
                 }), token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception ex) { await Dispatcher.InvokeAsync(() => ErrorText.Text = $"Session ended: {ex.Message} Start again to reconnect."); }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                ErrorText.Text = $"Session ended: {ex.Message} Start again to reconnect.";
+                UpdateOverlay();
+            });
+        }
         finally
         {
             await Dispatcher.InvokeAsync(() =>
@@ -297,9 +372,7 @@ public partial class MainWindow : Window
                 StopButton.IsEnabled = PauseBox.IsEnabled = RequestButton.IsEnabled = CancelButton.IsEnabled = false;
                 StatusText.Text = IsDemo ? "OFFLINE DEMO — no sign-in, network, or microphone."
                     : "Stopped — no audio capture";
-                overlay.ShowMeetingState(false, LatestQuestion(), state.Pinned?.Text ?? "",
-                    IsDemo ? "Offline canned response — not a live Search result" : "Microphone released",
-                    TopmostBox.IsChecked == true, demo: IsDemo);
+                UpdateOverlay();
                 running = null;
             });
         }
@@ -307,51 +380,148 @@ public partial class MainWindow : Window
 
     private void ApplyMeetingEvent(ServerEvent message)
     {
-        if (message.Type is "response.started" or "transcript.partial" or "transcript.final")
-        {
-            KoreanText.Text = "";
-            ReadingText.Text = "";
-        }
         state.Apply(message);
+        if (IsDemo && message.Type == "transcript.final" && message.TurnId == "demo-turn")
+            meetingTranslations[message.TurnId] = "금요일까지 진행 상황을 공유해 주실 수 있나요? (고정 데모 예시)";
+        if (message.Type == "transcript.final" && !IsDemo && KoreanBox.IsChecked == true &&
+            lifetime is { IsCancellationRequested: false } transcriptLifetime)
+            TrackEnrichment(EnrichTranscriptAsync(message.TurnId!, message.Text!, transcriptLifetime.Token));
+        if (message.Type == "response.completed" && state.Current is { Complete: true } completed)
+        {
+            if (IsDemo && completed.TurnId == "demo-turn")
+                replyTranslations[completed.ResponseId] =
+                [
+                    "네, 금요일까지 진행 상황을 공유할 수 있습니다. (고정 데모 예시)",
+                    "짧은 진행 상황을 준비해서 금요일까지 보내겠습니다. (고정 데모 예시)"
+                ];
+            suggestedReplies[completed.TurnId] = completed.Text;
+            var retained = state.Turns.Select(turn => turn.TurnId).ToHashSet(StringComparer.Ordinal);
+            foreach (var stale in suggestedReplies.Keys.Where(turnId => !retained.Contains(turnId)).ToArray())
+                suggestedReplies.Remove(stale);
+            StatusText.Text = "Suggested reply ready — listening for the next meeting utterance.";
+        }
+        else if (message.Type == "transcript.partial")
+            StatusText.Text = "Hearing the meeting — preparing a suggestion when this utterance ends.";
+        else if (message.Type == "transcript.final")
+            StatusText.Text = "Meeting utterance recognized — preparing your suggested reply.";
         Render();
-        overlay.ShowMeetingState(client?.IsReady == true, LatestQuestion(),
-            state.Current?.Text ?? state.Pinned?.Text ?? "Listening for a reply…",
-            GroundingLabel(state.Current), TopmostBox.IsChecked == true, KoreanText.Text, ReadingText.Text,
-            IsDemo, PauseBox.IsChecked == true);
         if (message.Type == "response.completed" && !IsDemo && closeTask is null &&
             lifetime is { IsCancellationRequested: false } activeLifetime &&
             KoreanBox.IsChecked == true && state.Current is { Complete: true } reply)
-            enrichmentTasks.Add(EnrichReplyAsync(reply.Text, activeLifetime.Token));
+            TrackEnrichment(EnrichReplyAsync(reply, activeLifetime.Token));
     }
 
-    private async Task EnrichReplyAsync(string text, CancellationToken cancellationToken)
+    private void TrackEnrichment(Task task)
+    {
+        enrichmentTasks.Add(task);
+        _ = task.ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() => enrichmentTasks.Remove(task))),
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    private async Task EnrichTranscriptAsync(string turnId, string text, CancellationToken cancellationToken)
     {
         try
         {
-            using var document = await api.PostJsonAsync("/api/assist/enrich", new { kind = "reply", text }, cancellationToken);
+            using var document = await api.PostJsonAsync("/api/assist/enrich",
+                new { kind = "question", text }, cancellationToken);
+            string korean = document.RootElement.GetProperty("korean").GetString() ?? "";
+            if (string.IsNullOrWhiteSpace(korean)) throw new InvalidDataException("The translation response is empty.");
             await Dispatcher.InvokeAsync(() =>
             {
-                if (state.Current?.Text != text) return;
-                KoreanText.Text = document.RootElement.GetProperty("korean").GetString() ?? "";
-                var pronunciation = document.RootElement.GetProperty("pronunciation");
-                ReadingText.Text = pronunciation.ValueKind == JsonValueKind.Array
-                    ? string.Join(" · ", pronunciation.EnumerateArray().Select(item =>
-                        $"{item.GetProperty("en").GetString()} ({item.GetProperty("ko").GetString()})"))
-                    : "";
+                if (cancellationToken.IsCancellationRequested || !state.Turns.Any(turn => turn.TurnId == turnId)) return;
+                meetingTranslations[turnId] = korean;
+                RenderConversation();
                 UpdateOverlay();
             });
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch (Exception ex) { await Dispatcher.InvokeAsync(() => ErrorText.Text = $"Korean assist unavailable: {ex.Message}"); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!state.Turns.Any(turn => turn.TurnId == turnId)) return;
+                meetingTranslations[turnId] = "번역 취소됨 · 세션 종료";
+                RenderConversation();
+                UpdateOverlay();
+            });
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (cancellationToken.IsCancellationRequested) return;
+                meetingTranslations[turnId] = "한국어 번역을 가져오지 못했습니다.";
+                ErrorText.Text = $"Meeting translation unavailable: {ex.Message}";
+                RenderConversation();
+                UpdateOverlay();
+            });
+        }
+    }
+
+    private async Task EnrichReplyAsync(ReplySnapshot reply, CancellationToken cancellationToken)
+    {
+        if (!translatingResponses.Add(reply.ResponseId)) return;
+        var answers = reply.Answers;
+        replyTranslations[reply.ResponseId] = answers.Select(_ => "한국어 번역 중…").ToArray();
+        UpdateOverlay();
+        try
+        {
+            await Task.WhenAll(answers.Select(async (answer, index) =>
+            {
+                try
+                {
+                    using var document = await api.PostJsonAsync("/api/assist/enrich",
+                        new { kind = "reply", text = answer }, cancellationToken);
+                    var korean = document.RootElement.GetProperty("korean").GetString();
+                    if (string.IsNullOrWhiteSpace(korean)) throw new InvalidDataException("The translation response is empty.");
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (cancellationToken.IsCancellationRequested ||
+                            !replyTranslations.TryGetValue(reply.ResponseId, out var translations)) return;
+                        translations[index] = korean;
+                        Render();
+                    });
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!replyTranslations.TryGetValue(reply.ResponseId, out var translations)) return;
+                        translations[index] = "번역 취소됨 · 세션 종료";
+                        Render();
+                    });
+                }
+                catch (Exception ex)
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (cancellationToken.IsCancellationRequested ||
+                            !replyTranslations.TryGetValue(reply.ResponseId, out var translations)) return;
+                        translations[index] = "한국어 번역 실패 · 우클릭 메뉴에서 재시도";
+                        ErrorText.Text = $"Korean assist unavailable: {ex.Message}";
+                        Render();
+                    });
+                }
+            }));
+        }
+        finally
+        {
+            translatingResponses.Remove(reply.ResponseId);
+            var retained = new[] { state.Current?.ResponseId, state.LastCompleted?.ResponseId, state.Pinned?.ResponseId };
+            foreach (var stale in replyTranslations.Keys.Where(id => !retained.Contains(id) &&
+                         !translatingResponses.Contains(id)).ToArray())
+                replyTranslations.Remove(stale);
+        }
     }
 
     private void Render()
     {
-        TranscriptBox.Text = string.Join(Environment.NewLine + Environment.NewLine,
-            state.Turns.Select(turn => $"[{(turn.IsFinal ? "final" : "partial")}] {turn.Text}"));
-        ReplyBox.Text = state.Current?.Text ?? "";
-        GroundingText.Text = GroundingLabel(state.Current);
-        SourcesText.Text = FormatSources(state.Current);
+        RenderConversation();
+        ReplyBox.Text = state.Display?.Text ?? "";
+        GroundingText.Text = GroundingLabel(state.Display);
+        SourcesText.Text = FormatSources(state.Display);
+        KoreanText.Text = state.Display is { } displayed &&
+            replyTranslations.TryGetValue(displayed.ResponseId, out var translations) ? translations[0] :
+            state.Display is null ? "" : IsDemo ? "오프라인 예시 · 실제 번역 요청 없음" : "한국어 번역 준비 중…";
         PinnedBox.Text = state.Pinned?.Text ?? "";
         PinnedSourcesText.Text = FormatSources(state.Pinned);
         PinButton.IsEnabled = !string.IsNullOrWhiteSpace(state.Current?.Text);
@@ -363,9 +533,83 @@ public partial class MainWindow : Window
         UpdateOverlay();
     }
 
-    private void UpdateOverlay() => overlay.ShowMeetingState(client?.IsReady == true, LatestQuestion(),
-        state.Current?.Text ?? state.Pinned?.Text ?? "Listening for a reply…", GroundingLabel(state.Current),
-        TopmostBox.IsChecked == true, KoreanText.Text, ReadingText.Text, IsDemo, PauseBox.IsChecked == true);
+    private void RenderConversation()
+    {
+        ConversationPanel.Children.Clear();
+        var turns = state.Turns.TakeLast(12).ToArray();
+        var retained = turns.Select(turn => turn.TurnId).ToHashSet(StringComparer.Ordinal);
+        foreach (var stale in meetingTranslations.Keys.Where(turnId => !retained.Contains(turnId)).ToArray())
+            meetingTranslations.Remove(stale);
+        foreach (var turn in turns)
+        {
+            var content = new StackPanel();
+            content.Children.Add(new TextBlock
+            {
+                Text = turn.IsFinal ? "MEETING · RECOGNIZED ENGLISH" : "MEETING · LIVE TRANSCRIPT",
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                Foreground = new System.Windows.Media.SolidColorBrush(
+                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#536579"))
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = turn.Text,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 15,
+                Margin = new Thickness(0, 4, 0, 0)
+            });
+            if (KoreanBox.IsChecked == true && !IsDemo && turn.IsFinal)
+                content.Children.Add(new TextBlock
+                {
+                    Text = meetingTranslations.TryGetValue(turn.TurnId, out var translation)
+                        ? translation : "한국어 번역 중…",
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 14,
+                    Foreground = new System.Windows.Media.SolidColorBrush(
+                        (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#174A7E")),
+                    Margin = new Thickness(0, 4, 0, 0)
+                });
+            ConversationPanel.Children.Add(new Border
+            {
+                Background = new System.Windows.Media.SolidColorBrush(
+                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#F1F4F8")),
+                BorderBrush = new System.Windows.Media.SolidColorBrush(
+                    (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#D8DFE9")),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(10),
+                Margin = new Thickness(0, 0, 0, 8),
+                Child = content
+            });
+        }
+    }
+
+    private void UpdateOverlay()
+    {
+        var displayed = state.Display;
+        overlay.ShowMeetingState(client?.IsReady == true, LatestQuestion(),
+            displayed?.Text ?? "", IsDemo ? "고정 데모 예시 · 실제 문서 검색 아님" : displayed?.Grounding switch
+            {
+                "grounded" => "근거 있음 · 내 업로드 문서",
+                "no_matches" => "문서 근거 없음 · 사실 확인 필요",
+                "unavailable" => "문서 검색 실패 · 사실 답변에 의존하지 마세요",
+                "disabled" => "이번 답변은 문서 검색을 사용하지 않음",
+                _ => "문서 근거 상태는 답변 완료 후 표시됩니다"
+            },
+            !IsVisible && TopmostBox.IsChecked == true, KoreanText.Text, "", IsDemo, PauseBox.IsChecked == true);
+        overlay.ShowConversation(state.Turns, meetingTranslations, IsDemo);
+        var translations = displayed is not null && replyTranslations.TryGetValue(displayed.ResponseId, out var values)
+            ? values : IsDemo && displayed is not null
+                ? displayed.Answers.Select(_ => "오프라인 예시 · 실제 번역 요청 없음").ToArray() : [];
+        var question = state.Turns.FirstOrDefault(turn => turn.TurnId == displayed?.TurnId)?.Text ??
+            (displayed is null ? "" : "이전 대화");
+        overlay.ShowSuggestions(displayed, translations, state.Turns.LastOrDefault()?.TurnId ?? "", question,
+            client?.IsReady == true && (state.Current is { Complete: false } ||
+                state.Turns.LastOrDefault()?.IsFinal == true && displayed?.TurnId != state.Turns.LastOrDefault()?.TurnId),
+            ErrorText.Text, "이전 대화 맥락 기본 연결 · 추천은 실제 발화로 기억하지 않음");
+        overlay.SetSessionControls(HasActiveSession, client?.IsReady == true, PauseBox.IsChecked == true,
+            !IsDemo && lifetime is { IsCancellationRequested: false });
+    }
 
     private string GroundingLabel(ReplySnapshot? reply)
     {
@@ -454,8 +698,15 @@ public partial class MainWindow : Window
 
     private void ShowOverlay_Click(object sender, RoutedEventArgs e)
     {
+        if (overlay.IsVisible)
+        {
+            overlay.Hide();
+            ShowOverlayButton.Content = "Show overlay";
+            return;
+        }
         UpdateOverlay();
-        if (!overlay.IsVisible) overlay.Show();
+        overlay.Show();
+        ShowOverlayButton.Content = "Hide overlay";
     }
 
     private async void Read_Click(object sender, RoutedEventArgs e)
@@ -512,7 +763,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Practice_Click(object sender, RoutedEventArgs e)
+    private async void Practice_Click(object sender, RoutedEventArgs e)
     {
         if (HasActiveSession)
         {
@@ -521,8 +772,7 @@ public partial class MainWindow : Window
         }
         if (!identity.IsSignedIn && !IsDemo)
         {
-            ErrorText.Text = "Sign in before starting a practice round.";
-            return;
+            if (!await ConnectAccountForFeatureAsync()) return;
         }
         if (practice is { IsVisible: true }) { practice.Activate(); return; }
         practice = new PracticeWindow(settings, identity, api);
@@ -532,6 +782,32 @@ public partial class MainWindow : Window
 
     private async void MaterialsRefresh_Click(object sender, RoutedEventArgs e) => await RefreshMaterialsAsync();
 
+    private async Task<bool> ConnectAccountForFeatureAsync()
+    {
+        if (IsDemo || identity.IsSignedIn) return true;
+        if (connectingAccount)
+        {
+            ErrorText.Text = "Account connection is already in progress.";
+            UpdateOverlay();
+            return false;
+        }
+        connectingAccount = true;
+        try
+        {
+            await identity.SignInAsync();
+            AuthStatus.Text = "Account connected. Uploaded materials remain protected under your account.";
+            return closeTask is null;
+        }
+        catch (Exception ex)
+        {
+            ErrorText.Text = $"Account connection did not finish: {ex.Message}";
+            MaterialsStatus.Text = ErrorText.Text;
+            UpdateOverlay();
+            return false;
+        }
+        finally { connectingAccount = false; }
+    }
+
     private async Task RefreshMaterialsAsync()
     {
         if (IsDemo)
@@ -539,11 +815,7 @@ public partial class MainWindow : Window
             MaterialsStatus.Text = "Personal materials are unavailable in offline demo mode.";
             return;
         }
-        if (!identity.IsSignedIn && !IsDemo)
-        {
-            MaterialsStatus.Text = "Sign in before accessing your personal materials.";
-            return;
-        }
+        if (!await ConnectAccountForFeatureAsync()) return;
         try
         {
             using var response = await api.SendKnowledgeAsync(HttpMethod.Get, "/api/knowledge", null, CancellationToken.None);
@@ -562,6 +834,7 @@ public partial class MainWindow : Window
     private async void Upload_Click(object sender, RoutedEventArgs e)
     {
         if (IsDemo) { MaterialsStatus.Text = "Uploads are unavailable in offline demo mode."; return; }
+        if (!await ConnectAccountForFeatureAsync()) return;
         var picker = new OpenFileDialog { Title = "Select a material to upload", CheckFileExists = true, Multiselect = false };
         if (picker.ShowDialog(this) != true) return;
         try
@@ -582,6 +855,7 @@ public partial class MainWindow : Window
     private async void AddNotes_Click(object sender, RoutedEventArgs e)
     {
         if (IsDemo) { MaterialsStatus.Text = "Notes are unavailable in offline demo mode."; return; }
+        if (!await ConnectAccountForFeatureAsync()) return;
         var dialog = new NotesWindow { Owner = this };
         if (dialog.ShowDialog() != true) return;
         try
@@ -616,6 +890,12 @@ public partial class MainWindow : Window
     {
         if (closeTask is not null) { e.Cancel = true; return; }
         e.Cancel = true;
+        if (overlayPrimary)
+        {
+            Hide();
+            UpdateOverlay();
+            return;
+        }
         Dispatcher.BeginInvoke(new Action(async () =>
         {
             closeTask ??= FinishCloseAsync();
@@ -638,7 +918,7 @@ public partial class MainWindow : Window
         if (practice is { IsVisible: true })
             await practice.CloseForOwnerAsync();
         await StopSessionAsync();
-        overlay.Close();
+        overlay.CloseAfterCleanup();
         api.Dispose();
         Closing -= Window_Closing;
         Close();

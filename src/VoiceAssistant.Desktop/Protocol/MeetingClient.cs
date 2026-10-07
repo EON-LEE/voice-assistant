@@ -93,6 +93,7 @@ public sealed class MeetingClient
         var options = new Dictionary<string, object?>
         {
             ["responseMode"] = settings.ResponseMode,
+            ["endSilenceMs"] = settings.EndSilenceMs,
             ["topic"] = settings.Topic,
             ["transcribeOnly"] = settings.TranscribeOnly
         };

@@ -14,7 +14,8 @@ public sealed record ClientSettings
     public string TenantId { get; init; } = "2573db8c-dfe5-4805-9e28-a0859692e705";
     public string ClientId { get; init; } = "6c67aee7-0c67-48aa-9dce-40db347c5a7f";
     public string Scope { get; init; } = "api://4546bd70-1872-4a1d-bdcd-d09377e365e4/Meeting.Access";
-    public string ResponseMode { get; init; } = "balanced";
+    public string ResponseMode { get; init; } = "grounded";
+    public int EndSilenceMs { get; init; } = 500;
     public string Topic { get; init; } = "";
     public string ProfileName { get; init; } = "";
     public string ProfileRole { get; init; } = "";
@@ -59,6 +60,8 @@ public sealed record ClientSettings
                 throw new InvalidOperationException("Production Origin and WSS endpoint must use the same HTTPS host on port 443.");
             if (ResponseMode is not ("balanced" or "grounded" or "conversation"))
                 throw new InvalidOperationException("ResponseMode must be balanced, grounded, or conversation.");
+            if (EndSilenceMs is < 350 or > 1500)
+                throw new InvalidOperationException("EndSilenceMs must be between 350 and 1500.");
             if (Topic.Length > 300 || ProfileName.Length > 100 || ProfileRole.Length > 160 || ProfileProject.Length > 300 ||
                 (!ProfileConfirmed && (ProfileName.Length != 0 || ProfileRole.Length != 0 || ProfileProject.Length != 0)))
                 throw new InvalidOperationException("Profile values must be within the documented limits and explicitly confirmed.");

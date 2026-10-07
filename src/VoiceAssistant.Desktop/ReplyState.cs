@@ -4,7 +4,11 @@ namespace VoiceAssistant.Desktop;
 
 public sealed record TranscriptTurn(string TurnId, int Revision, string Text, bool IsFinal);
 public sealed record ReplySnapshot(string ResponseId, string TurnId, string Text, IReadOnlyList<ReplySource> Sources, bool Complete,
-    string? Grounding = null, string? ResponseRoute = null, bool? RetrievalPrefetched = null);
+    string? Grounding = null, string? ResponseRoute = null, bool? RetrievalPrefetched = null,
+    IReadOnlyList<string>? Suggestions = null)
+{
+    public IReadOnlyList<string> Answers => Suggestions ?? (string.IsNullOrWhiteSpace(Text) ? [] : [Text]);
+}
 
 /// <summary>UI-thread-owned bounded state; pinned answers are immutable snapshots.</summary>
 public sealed class ReplyState
@@ -19,6 +23,8 @@ public sealed class ReplyState
     public IReadOnlyList<TranscriptTurn> Turns => turns;
     public ReplySnapshot? Current { get; private set; }
     public ReplySnapshot? Pinned { get; private set; }
+    public ReplySnapshot? LastCompleted { get; private set; }
+    public ReplySnapshot? Display => Current is { Text.Length: > 0 } ? Current : LastCompleted ?? Pinned;
     public string? Error { get; private set; }
 
     public void ResetSession()
@@ -27,6 +33,7 @@ public sealed class ReplyState
         seenResponses.Clear();
         responseOrder.Clear();
         Current = null;
+        LastCompleted = null;
         latestTurn = null;
         suppressedTurn = null;
         suppressAll = false;
@@ -92,8 +99,10 @@ public sealed class ReplyState
                         Complete = true,
                         Grounding = message.Grounding,
                         ResponseRoute = message.ResponseRoute,
-                        RetrievalPrefetched = message.RetrievalPrefetched
+                        RetrievalPrefetched = message.RetrievalPrefetched,
+                        Suggestions = message.Suggestions?.ToArray()
                     };
+                if (Current.Complete) LastCompleted = Current;
                 return;
         }
     }

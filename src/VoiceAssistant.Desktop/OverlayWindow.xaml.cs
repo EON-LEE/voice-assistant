@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -6,17 +7,40 @@ namespace VoiceAssistant.Desktop;
 
 public partial class OverlayWindow : Window
 {
+    private bool closingAfterCleanup;
     public OverlayWindow()
     {
         InitializeComponent();
+        MaxHeight = SystemParameters.WorkArea.Height;
+        Height = Math.Min(Height, MaxHeight);
+        MinHeight = Math.Min(MinHeight, MaxHeight);
+        Closing += (_, e) =>
+        {
+            if (closingAfterCleanup || ExitRequested is null) return;
+            e.Cancel = true;
+            ExitRequested.Invoke();
+        };
+    }
+
+    public event Action? SettingsRequested;
+    public event Action? StartRequested;
+    public event Action? PauseRequested;
+    public event Action? RetryRequested;
+    public event Action? TranslationRequested;
+    public event Action? StopRequested;
+    public event Action? ExitRequested;
+    public void CloseAfterCleanup()
+    {
+        closingAfterCleanup = true;
+        Close();
     }
 
     public void ShowMeetingState(bool capturing, string question, string answer, string grounding, bool topmost,
         string korean = "", string reading = "", bool demo = false, bool paused = false)
     {
-        CaptureStatus.Text = demo ? "OFFLINE DEMO · NO MICROPHONE OR NETWORK"
-            : capturing && paused ? "MICROPHONE PAUSED · AUDIO DROPPED"
-            : capturing ? "● ROOM MICROPHONE ACTIVE" : "MICROPHONE OFF";
+        CaptureStatus.Text = demo ? "OFFLINE DEMO · 고정 예시 · 마이크 / 네트워크 없음"
+            : capturing && paused ? "마이크 일시정지 · 오디오 전송 중지"
+            : capturing ? "● 듣는 중 · 영어 · 이전 대화 맥락 연결" : "마이크 꺼짐 · 우클릭으로 설정 및 시작";
         CaptureStatus.Foreground = demo || capturing && paused ? Brushes.Gold
             : capturing ? Brushes.LightGreen : Brushes.LightGray;
         QuestionText.Text = string.IsNullOrWhiteSpace(question) ? "Waiting for a room question…" : question;
@@ -27,23 +51,81 @@ public partial class OverlayWindow : Window
         Topmost = topmost;
     }
 
+    public void ShowConversation(IReadOnlyList<TranscriptTurn> turns, IReadOnlyDictionary<string, string> translations,
+        bool demo)
+    {
+        ConversationPanel.Children.Clear();
+        if (turns.Count == 0)
+        {
+            QuestionText.Text = "영어 대화를 기다리고 있어요.";
+            ConversationPanel.Children.Add(QuestionText);
+            return;
+        }
+        foreach (var turn in turns.TakeLast(3))
+        {
+            var bubble = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+            bubble.Children.Add(new TextBlock
+            {
+                Text = turn.Text, TextWrapping = TextWrapping.Wrap, FontSize = 15,
+                Foreground = turn.IsFinal ? Brushes.White : Brushes.LightSteelBlue
+            });
+            bubble.Children.Add(new TextBlock
+            {
+                Text = !turn.IsFinal ? "듣는 중…" :
+                    translations.TryGetValue(turn.TurnId, out var translation) ? translation :
+                    demo ? "오프라인 예시 · 실제 번역 요청 없음" : "한국어 번역 중…",
+                TextWrapping = TextWrapping.Wrap, FontSize = 13,
+                Foreground = new SolidColorBrush(Color.FromRgb(180, 195, 216)),
+                Margin = new Thickness(0, 4, 0, 0)
+            });
+            ConversationPanel.Children.Add(bubble);
+        }
+        ConversationScroll.ScrollToEnd();
+    }
+
+    public void ShowSuggestions(ReplySnapshot? reply, IReadOnlyList<string> translations,
+        string latestTurnId, string question, bool generating, string error, string context)
+    {
+        var answers = reply?.Answers ?? [];
+        AnswerText.Text = answers.Count == 0 ? "대화가 인식되면 추천 답변이 여기에 표시됩니다." : answers[0];
+        KoreanText.Text = translations.Count > 0 ? translations[0] : reply is null
+            ? "영어 추천 답변의 한국어 뜻이 함께 표시됩니다." : "한국어 번역 준비 중…";
+        AlternativeCard.Visibility = answers.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        AlternativeText.Text = answers.Count > 1 ? answers[1] : "";
+        AlternativeKoreanText.Text = translations.Count > 1 ? translations[1] : "한국어 번역 준비 중…";
+        bool previous = reply is not null && (reply.TurnId != latestTurnId || generating && reply.Complete);
+        PrimaryLabel.Text = previous ? "01 · 이전 질문용 답변" : "01 · 우선 추천";
+        ContinuityText.Text = reply is null
+            ? generating ? "내 문서에서 근거를 찾아 답변 준비 중…" : "우클릭으로 설정 / 라이브 시작"
+            : $"{(previous ? "이전" : "현재")} 답변 기준: {question}" +
+              (generating ? "\n새 추천 답변 생성 중 · 기존 답변 유지" : "\n추천은 실제로 말한 내용이 아닙니다.");
+        ContextText.Text = context;
+        SessionError.Text = error;
+        SourcesText.Text = reply is null ? "" : string.Join(" · ", reply.Sources.Take(3).Select(source => source.Title)) +
+            (reply.Sources.Count > 3 ? $" · 외 {reply.Sources.Count - 3}개" : "");
+    }
+
+    public void SetSessionControls(bool active, bool ready, bool paused, bool canTranslate)
+    {
+        StartMenu.IsEnabled = !active;
+        StopMenu.IsEnabled = active;
+        PauseMenu.IsEnabled = RetryMenu.IsEnabled = ready;
+        TranslationMenu.IsEnabled = canTranslate;
+        PauseMenu.Header = paused ? "다시 듣기" : "내가 말할 동안 일시정지";
+    }
+
+    private void Settings_Click(object sender, RoutedEventArgs e) => SettingsRequested?.Invoke();
+    private void Start_Click(object sender, RoutedEventArgs e) => StartRequested?.Invoke();
+    private void Pause_Click(object sender, RoutedEventArgs e) => PauseRequested?.Invoke();
+    private void Retry_Click(object sender, RoutedEventArgs e) => RetryRequested?.Invoke();
+    private void Translation_Click(object sender, RoutedEventArgs e) => TranslationRequested?.Invoke();
+    private void Stop_Click(object sender, RoutedEventArgs e) => StopRequested?.Invoke();
+    private void Exit_Click(object sender, RoutedEventArgs e) => ExitRequested?.Invoke();
+
     private void DragPanel(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton == MouseButton.Left && e.ButtonState == MouseButtonState.Pressed)
             DragMove();
     }
 
-    private void Grow_Click(object sender, RoutedEventArgs e)
-    {
-        Width = Math.Min(800, Width + 80);
-        Height = Math.Min(700, Height + 50);
-    }
-
-    private void Close_Click(object sender, RoutedEventArgs e) => Hide();
-
-    private void Opacity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        Panel.Background = new SolidColorBrush(Color.FromArgb((byte)Math.Clamp((int)Math.Round(e.NewValue / 100 * 255), 0, 255),
-            26, 34, 48));
-    }
 }

@@ -86,6 +86,37 @@ public sealed class StateAndProtocolTests
     }
 
     [Fact]
+    public void CompletedSuggestionsRemainVisibleWhileNextTurnIsPreparingOrPaused()
+    {
+        var state = new ReplyState();
+        state.Apply(new("transcript.final", "one", 1, "Launch?"));
+        state.Apply(new("response.started", "one", ResponseId: "r1"));
+        state.Apply(new("response.completed", "one", Text: "Review first.", ResponseId: "r1",
+            Sources: [], Suggestions: ["Review first.", "We need a review before launch."]));
+        state.Apply(new("transcript.partial", "two", 1, "When?"));
+        Assert.Equal("r1", state.Display!.ResponseId);
+        Assert.Equal(2, state.Display.Answers.Count);
+        state.Apply(new("response.started", "two", ResponseId: "r2"));
+        Assert.Equal("r1", state.Display.ResponseId);
+        state.Apply(new("response.delta", "two", Text: "After", ResponseId: "r2"));
+        Assert.Equal("After", state.Display.Text);
+        Assert.Single(state.Display.Answers);
+        state.Pause(true);
+        Assert.Equal("r1", state.Display.ResponseId);
+        state.ResetSession();
+        Assert.Null(state.LastCompleted);
+    }
+
+    [Fact]
+    public void ParsesTwoSuggestionsAndLegacySingleAnswer()
+    {
+        var message = Parse("""{"type":"response.completed","responseId":"r","turnId":"t","text":"Review first.","sources":[],"suggestions":["Review first.","Let's review first."]}""");
+        Assert.Equal(2, message.Suggestions!.Count);
+        var legacy = Parse("""{"type":"response.completed","responseId":"r","turnId":"t","text":"yes","sources":[]}""");
+        Assert.Null(legacy.Suggestions);
+    }
+
+    [Fact]
     public void ParsesGroundingAndRouteMetadataForVisibleSearchState()
     {
         var completed = Parse("""{"type":"response.completed","responseId":"r","turnId":"t","text":"yes","sources":[],"grounding":"no_matches","responseRoute":"knowledge","retrievalPrefetched":false}""");
@@ -115,6 +146,9 @@ public sealed class StateAndProtocolTests
     [InlineData("""{"type":"response.delta","turnId":"t","text":"x"}""")]
     [InlineData("""{"type":"error","code":"bad","message":"bad"}""")]
     [InlineData("""{"type":"response.completed","turnId":"t","responseId":"r","text":"x"}""")]
+    [InlineData("""{"type":"response.completed","turnId":"t","responseId":"r","text":"x","sources":[],"suggestions":[]}""")]
+    [InlineData("""{"type":"response.completed","turnId":"t","responseId":"r","text":"x","sources":[],"suggestions":["wrong"]}""")]
+    [InlineData("""{"type":"response.completed","turnId":"t","responseId":"r","text":"x","sources":[],"suggestions":["x","a","b"]}""")]
     [InlineData("""{"type":"unknown"}""")]
     public void RejectsMalformedContractEvents(string json) => Assert.Throws<InvalidDataException>(() => Parse(json));
 

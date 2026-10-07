@@ -9,7 +9,7 @@ namespace VoiceAssistant.Desktop.Tests;
 public sealed class DesktopUiTests
 {
     [Fact]
-    public async Task WpfStartsWithoutCaptureAndUsesSeparateTranslucentResizableOverlay()
+    public async Task WpfStartsWithoutCaptureAndUsesFixedSeparateTranslucentOverlay()
     {
         var result = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
@@ -38,24 +38,50 @@ public sealed class DesktopUiTests
                     Assert.False(window.Topmost);
                     Assert.Contains("OFFLINE DEMO", Control<TextBlock>("StatusText").Text);
                     Assert.False(Control<Button>("RequestButton").IsEnabled);
+                    Assert.True(Control<CheckBox>("KoreanBox").IsChecked);
                     var overlay = (OverlayWindow)typeof(MainWindow).GetField("overlay",
                         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)!;
-                    Assert.Equal(420, overlay.Width);
-                    Assert.Equal(260, overlay.Height);
+                    Assert.Equal(550, overlay.Width);
+                    Assert.True(overlay.Height <= 740);
                     Assert.True(overlay.AllowsTransparency);
-                    Assert.Equal(ResizeMode.CanResizeWithGrip, overlay.ResizeMode);
+                    Assert.Equal(ResizeMode.NoResize, overlay.ResizeMode);
                     Assert.True(overlay.Topmost);
                     Assert.Equal(0, ((SolidColorBrush)overlay.Background).Color.A);
+                    Assert.DoesNotContain(VisualChildren(overlay), element => element is Button or Slider);
                     Assert.False(overlay.IsVisible);
                     overlay.ShowMeetingState(false, "", "", "Offline canned response", true, demo: true);
                     Assert.Contains("OFFLINE DEMO", ((TextBlock)overlay.FindName("CaptureStatus")).Text);
                     Control<Button>("ShowOverlayButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert.True(overlay.IsVisible);
-                    overlay.Hide();
+                    Control<Button>("ShowOverlayButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Assert.False(overlay.IsVisible);
                     Control<Button>("ShowOverlayButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert.True(overlay.IsVisible);
                     overlay.ShowMeetingState(true, "Can you confirm?", "Yes, I can.", "Grounded", true,
                         "네, 확인하겠습니다.", "Yes (예) · I can (아이 캔)");
+                    void Apply(ServerEvent message) => typeof(MainWindow).GetMethod("ApplyMeetingEvent",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                        .Invoke(window, [message]);
+                    Apply(new("transcript.final", "turn-1", 1, "Can you confirm the delivery date?"));
+                    Apply(new("response.started", "turn-1", ResponseId: "response-1"));
+                    Apply(new("response.delta", "turn-1", Text: "Yes, we expect Friday.", ResponseId: "response-1"));
+                    Apply(new("response.completed", "turn-1", Text: "Yes, we expect Friday.", ResponseId: "response-1", Sources: []));
+                    var bubbles = Control<StackPanel>("ConversationPanel");
+                    Assert.Single(bubbles.Children);
+                    var bubble = Assert.IsType<Border>(bubbles.Children[0]);
+                    var bubbleContent = Assert.IsType<StackPanel>(bubble.Child);
+                    var transcriptText = Assert.IsType<TextBlock>(bubbleContent.Children[1]);
+                    Assert.Equal("Can you confirm the delivery date?", transcriptText.Text);
+                    Assert.Contains("RECOGNIZED ENGLISH", Assert.IsType<TextBlock>(bubbleContent.Children[0]).Text);
+                    Assert.Equal("Yes, we expect Friday.", Control<TextBox>("ReplyBox").Text);
+                    Apply(new("response.started", "turn-1", ResponseId: "response-2"));
+                    Apply(new("response.completed", "turn-1", Text: "Review first.", ResponseId: "response-2",
+                        Sources: [], Suggestions: ["Review first.", "Let's review before launch."]));
+                    Assert.Equal(Visibility.Visible, ((Border)overlay.FindName("AlternativeCard")).Visibility);
+                    Assert.Equal("Let's review before launch.", ((TextBlock)overlay.FindName("AlternativeText")).Text);
+                    Apply(new("transcript.partial", "turn-2", 1, "And when?"));
+                    Assert.Equal("Review first.", ((TextBlock)overlay.FindName("AnswerText")).Text);
+                    Assert.Contains("이전", ((TextBlock)overlay.FindName("PrimaryLabel")).Text);
                     Assert.True(Control<Button>("StartButton").IsEnabled);
                     api.Dispose();
                     result.TrySetResult();
@@ -104,6 +130,18 @@ public sealed class DesktopUiTests
                     while (Control<TextBox>("ReplyBox").Text != "Yes, I can share an update by Friday." && DateTime.UtcNow < deadline)
                         await Task.Delay(25);
                     Assert.Equal("Yes, I can share an update by Friday.", Control<TextBox>("ReplyBox").Text);
+                    var overlay = (OverlayWindow)typeof(MainWindow).GetField("overlay",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)!;
+                    Assert.Equal(Visibility.Visible, ((Border)overlay.FindName("AlternativeCard")).Visibility);
+                    Assert.Contains("금요일", ((TextBlock)overlay.FindName("KoreanText")).Text);
+                    Assert.Contains("금요일", ((TextBlock)overlay.FindName("AlternativeKoreanText")).Text);
+                    overlay.UpdateLayout();
+                    var suggestionScroll = (ScrollViewer)overlay.FindName("SuggestionsScroll");
+                    var alternative = (Border)overlay.FindName("AlternativeCard");
+                    var bottom = alternative.TransformToAncestor(suggestionScroll)
+                        .Transform(new Point(0, alternative.ActualHeight)).Y;
+                    Assert.True(bottom <= suggestionScroll.ActualHeight,
+                        $"Both sample suggestions must fit without scrolling: bottom={bottom}, viewport={suggestionScroll.ActualHeight}.");
                     AssertLiveControlsDisabled();
                     Control<Button>("StopButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     deadline = DateTime.UtcNow.AddSeconds(5);
@@ -131,4 +169,13 @@ public sealed class DesktopUiTests
         Assert.True(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
+    private static IEnumerable<DependencyObject> VisualChildren(DependencyObject parent)
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            yield return child;
+            foreach (var descendant in VisualChildren(child)) yield return descendant;
+        }
+    }
 }

@@ -22,8 +22,9 @@ public partial class App : Application
             settings.Validate();
             var identity = new VoiceAssistant.Desktop.Protocol.NativeIdentity(settings);
             var api = new VoiceAssistant.Desktop.Protocol.AuthenticatedApiClient(settings, identity);
-            MainWindow = new MainWindow(settings, identity, api);
-            MainWindow.Show();
+            var controller = new MainWindow(settings, identity, api);
+            MainWindow = controller;
+            controller.ShowPrimaryOverlay();
         }
         catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or ArgumentException or InvalidOperationException)
         {

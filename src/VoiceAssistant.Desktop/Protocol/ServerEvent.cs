@@ -8,7 +8,7 @@ public sealed record ServerEvent(
     string Type, string? TurnId = null, int Revision = 0, string? Text = null,
     string? ResponseId = null, IReadOnlyList<ReplySource>? Sources = null,
     string? Code = null, bool Retryable = false, string? Grounding = null,
-    string? ResponseRoute = null, bool? RetrievalPrefetched = null)
+    string? ResponseRoute = null, bool? RetrievalPrefetched = null, IReadOnlyList<string>? Suggestions = null)
 {
     public static ServerEvent Parse(ReadOnlySpan<byte> json)
     {
@@ -55,8 +55,26 @@ public sealed record ServerEvent(
                 if (grounding is not null && grounding is not ("disabled" or "grounded" or "unavailable" or "no_matches") ||
                     route is not null && route is not ("transcript" or "profile" or "knowledge"))
                     throw new InvalidDataException("Response grounding metadata is invalid.");
+                IReadOnlyList<string>? suggestions = null;
+                if (root.TryGetProperty("suggestions", out var suggestionArray))
+                {
+                    if (suggestionArray.ValueKind != JsonValueKind.Array || suggestionArray.GetArrayLength() is < 1 or > 2)
+                        throw new InvalidDataException("Response suggestions must contain one or two English answers.");
+                    var values = new List<string>();
+                    foreach (var item in suggestionArray.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.String || item.GetString() is not { } value ||
+                            string.IsNullOrWhiteSpace(value) || value.Length > 8000)
+                            throw new InvalidDataException("Response suggestion is invalid.");
+                        values.Add(value);
+                    }
+                    if (values[0] != Required("text"))
+                        throw new InvalidDataException("The primary suggestion must match response text.");
+                    suggestions = values;
+                }
                 return new(type, Required("turnId"), Text: Required("text"), ResponseId: Required("responseId"),
-                    Sources: sources, Grounding: grounding, ResponseRoute: route, RetrievalPrefetched: prefetched);
+                    Sources: sources, Grounding: grounding, ResponseRoute: route, RetrievalPrefetched: prefetched,
+                    Suggestions: suggestions);
             case "error":
                 if (!root.TryGetProperty("retryable", out var retryable) ||
                     retryable.ValueKind is not (JsonValueKind.True or JsonValueKind.False))

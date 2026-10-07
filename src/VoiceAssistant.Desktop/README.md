@@ -1,6 +1,6 @@
 # In-person English Coach for Windows
 
-A native .NET 8 WPF app for consented, in-person meeting assistance and a separate English-practice window. It is **not a Teams client or bot**. Meeting mode captures the selected physical microphone only; it never captures speaker/output loopback, records audio, posts messages, advances slides, or installs global keyboard hooks.
+A native .NET 8 WPF app whose **main live surface is the overlay itself**: recognized English/Korean conversation above one or two English/Korean suggestions and document sources. Login, microphone consent and materials remain in a secondary settings window, accessed by right-clicking the overlay (or the keyboard context-menu key). It is **not a Teams client or bot**. Meeting mode captures the selected physical microphone only; it never captures speaker/output loopback, records audio, posts messages, advances slides, or installs global keyboard hooks.
 
 ## Run
 
@@ -14,7 +14,7 @@ dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj
 dotnet test .\tests\VoiceAssistant.Desktop.Tests\VoiceAssistant.Desktop.Tests.csproj -c Release
 ```
 
-To inspect the complete main overlay and separate practice window without sign-in or hardware, click **Offline demo preview** in the main window, or launch the explicit offline profile:
+To inspect the overlay and separate practice window without sign-in or hardware, open **Microphone settings / My materials** from the overlay's right-click menu, then click **Offline demo preview**, or launch the explicit offline profile:
 
 ```powershell
 dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -- --demo
@@ -29,7 +29,7 @@ dotnet publish .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -c Rel
   -o "$env:USERPROFILE\.copilot\session-state\<session-id>\files\desktop-publish"
 ```
 
-The shipped `appsettings.json` points to the configured Azure service. Opening the app does not sign in or capture audio. Choose **Sign in with Microsoft** for system-browser authentication, or **Use device code** to display a temporary Microsoft verification code and URL. Complete sign-in before starting a live meeting or practice round. Tokens are acquired silently from the current process's MSAL cache when possible; expired authorization requires an explicit sign-in again.
+The shipped `appsettings.json` points to the configured Azure service. Opening the app shows only the overlay and does not sign in or capture audio. Right-click for secondary settings. There are no separate login buttons: starting Live or requesting materials/practice connects the configured Microsoft account when needed, before accessing protected resources. Tokens are acquired silently from the current process's MSAL cache when possible; Microsoft may still require interactive authentication. This is not anonymous access, and authentication is not persisted across processes. Closing the secondary settings window returns to the overlay; **Exit application** in the overlay menu ends sessions and releases resources.
 
 `--demo` is an explicit offline preview mode. It cannot silently replace a failed live connection.
 
@@ -50,11 +50,22 @@ Supported settings include `Mode`, `Endpoint`, `Origin`, `Authority`, `TenantId`
 
 ## In-person meeting mode
 
-1. Sign in, select an active **physical microphone**, and check the participant-consent box.
-2. Review the topic, optional response mode, and any optional profile values. Balanced routing is the default; Grounded always retrieves from the caller's authorized materials; Conversation skips Search.
-3. Select **Start meeting overlay**. Microphone capture begins only after the server accepts the session. The main window shows a persistent active status and input-level meter.
-4. The separate approximately 420×260 overlay stays on top, has a transparent window/background-opacity slider, opaque high-contrast text, and can be moved from its header or resized. Its close button only hides it; use **Stop and release microphone** to end capture. There are no hotkeys that can steal PowerPoint navigation.
-5. Use the main window for the full transcript, source details, optional Korean translation/pronunciation guide, answer pinning, and personal materials. Completed answers stream into the overlay. **Read answer aloud** uses the authenticated Azure Speech endpoint and memory-only playback; microphone upload pauses during playback and resumes only if it was previously active.
+1. Select an active **physical microphone** in secondary settings. There are no login buttons or consent/translation checkboxes in the visible meeting flow. **Start Live** explicitly identifies microphone audio transmission to Azure and requires participant permission; it does not start on launch. If no account is connected, Start performs Microsoft authentication before capturing audio. API authentication and private-document owner filtering are not disabled. The current MSAL account cache is process-local, so a new process may need Microsoft authentication again.
+2. Review the topic and optional profile values. **Grounded (always search my materials)** is the default; it retrieves only from the signed-in account's authorized Azure AI Search documents. Balanced and Conversation are explicit alternatives.
+3. Select **Start meeting overlay**. Microphone capture begins only after the server accepts the session; the secondary settings window hides and the overlay remains the main surface.
+4. The fixed 550×740 overlay (height capped at the Windows work area) stays on top, has a translucent dark background and opaque text, and moves from its header. There are **no visible buttons, resize grip, close/expand controls, or opacity slider**. Its right-click menu provides setup, start, pause/resume, regenerate, translation retry, stop and application exit. There are no global hotkeys that can steal slide-navigation keys.
+5. Recognized speech and its Korean translation appear in the upper independent conversation scroller. The central answer cards show one primary English suggestion and, when supplied by the server, one alternative with its own Korean meaning. Korean display is mandatory for the live overlay. English streams without waiting for translation; completed options translate concurrently, keyed to response/option so late translations cannot overwrite another answer. Loading and failure states occupy the Korean area instead of leaving it blank; **Retry Korean translation** is available from the menu. Owner-authorized source names and grounding state stay below the cards.
+6. The last completed suggestion remains visible while a new utterance or regeneration is pending, on pause/cancel, and after stop, with its original question identified as previous/current. A new session clears it. Generated suggestions are never added to recognized transcript history. Before the first answer the card shows an honest waiting state, not an invented suggestion. Menu actions and consent remain explicit; the overlay does not auto-start capture.
+
+The native client uses a 500 ms end-of-speech silence threshold for faster turn completion; this can split a speaker's thought sooner than the 700 ms server default. Increase it in `appsettings.json` or a supplied settings file if your speakers pause mid-sentence.
+
+Conversation context is on by default. The API combines bounded recent recognized
+utterances with bounded excerpts of earlier actual speech for follow-up retrieval
+and answer generation. The excerpt buffer is not a semantic summary or a complete
+meeting archive; old details can be omitted. Retrieval prefetch and final retrieval
+use the same contextual query without an extra model call to rewrite each question.
+One model stream produces the primary reply and an optional alternative; existing
+servers without `suggestions` still display their single `text` reply.
 
 Pause discards queued and new audio locally and cancels the active suggestion. Stop sends `session.stop`, closes the socket, and releases the WASAPI capture device. The API enforces its session duration and per-user concurrency limits. Captured audio is not written to disk; Azure still processes audio/text submitted during an active session under the service's data policy.
 
@@ -87,6 +98,6 @@ The **My materials** tab lists, uploads, and deletes documents using the signed-
 
 ## Implementation and verification limits
 
-The desktop tests cover protocol event parsing and grounding metadata, ticket request bearer/Origin headers and URL construction, start-option serialization, PCM conversion, bounded streaming/lifecycle behavior, and WPF's no-capture startup plus overlay transparency/resizing properties. The optional external-backend test is skipped unless explicitly configured.
+The desktop tests cover protocol event parsing and grounding metadata, ticket request bearer/Origin headers and URL construction, grounded/500 ms start-option serialization, PCM conversion, bounded streaming/lifecycle behavior, and WPF's no-capture startup plus separated conversation/suggestion presentation and fixed translucent overlay. The optional external-backend test is skipped unless explicitly configured.
 
-The application builds and tests locally, but this implementation session has **not** completed an interactive Entra sign-in, an actual Azure meeting/practice round, a real-room microphone recognition run, or a visual PowerPoint overlay acceptance run. A connected physical microphone, participant consent, an interactive Microsoft sign-in, live Azure access/RBAC, and manual verification of transparency/topmost/drag/resize/focus behavior are still required for those claims. Synthetic tests are not proof of those live behaviors.
+The application builds and tests locally, and the API has separate live Azure/Search/practice acceptance evidence, but the desktop itself has **not** completed a live meeting from its native sign-in through the physical microphone. A connected physical microphone, participant consent, interactive native Microsoft sign-in, and manual verification of transparency/topmost/drag/focus behavior over PowerPoint are still required for those claims. Synthetic tests are not proof of those live behaviors.

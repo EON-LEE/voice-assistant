@@ -11,6 +11,10 @@ existing files. It publishes a self-contained Windows x64 app, so the recipient
 does not need to install the .NET runtime. Copy the **whole output folder** and
 double-click `Open-Meeting-Coach.cmd`. A single executable without its companion
 files is not a complete distribution.
+The app opens directly into the overlay, without starting audio capture.
+Right-click it for secondary settings/login/materials and session controls.
+Closing settings returns to the overlay; use the menu's application-exit action
+to stop sessions and release resources.
 
 Double-click `Preview-Offline.cmd` to inspect the overlay and practice with
 clearly labeled canned content. This mode needs no sign-in or microphone and

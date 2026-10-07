@@ -8,11 +8,16 @@ commitments on the user's behalf. Read-aloud playback is explicitly requested.
 
 ## In-person Windows client (portable)
 
-The Windows client separates meeting setup/transcripts, the compact overlay,
-and practice into separate windows. It uses Entra public-client authentication
+The Windows client's main live surface is the overlay: recognized English/Korean
+conversation, one or two persistent English/Korean suggested replies, and source
+information appear together. Right-click for secondary setup, login, materials,
+pause, stop or exit; there are no visible expand/close/opacity controls.
+It uses Entra public-client authentication
 and the same Azure Speech, Azure OpenAI and owner-authorized Azure AI Search
 API as the browser. This workflow does not capture Teams or system playback.
 Audio requires explicit consent and Start; launching the app does not capture.
+Earlier recognized conversation is used by default for follow-up retrieval and
+reply generation; AI suggestions are never treated as things the user said.
 
 Publish a self-contained **portable folder**, without an installer:
 

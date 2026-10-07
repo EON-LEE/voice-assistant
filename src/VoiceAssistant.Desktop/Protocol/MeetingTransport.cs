@@ -67,7 +67,8 @@ public sealed class DemoMeetingTransport : IMeetingTransport
         await events.Writer.WriteAsync(new("response.delta", "demo-turn", Text: "Yes, I can ", ResponseId: id), token);
         await events.Writer.WriteAsync(new("response.delta", "demo-turn", Text: "share an update by Friday.", ResponseId: id), token);
         await events.Writer.WriteAsync(new("response.completed", "demo-turn",
-            Text: "Yes, I can share an update by Friday.", ResponseId: id, Sources: []), token);
+            Text: "Yes, I can share an update by Friday.", ResponseId: id, Sources: [],
+            Suggestions: ["Yes, I can share an update by Friday.", "I'll prepare a short update and send it by Friday."]), token);
     }
 
     public async Task<ServerEvent> ReceiveAsync(CancellationToken token) => await events.Reader.ReadAsync(token);

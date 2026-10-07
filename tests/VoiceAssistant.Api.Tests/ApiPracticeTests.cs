@@ -10,6 +10,22 @@ namespace VoiceAssistant.Api.Tests;
 
 public sealed partial class ApiTests
 {
+    [Theory]
+    [InlineData("question", "What is the goal?", "목표가 무엇인가요?")]
+    [InlineData("reply", "Let me check.", "확인해 볼게요.")]
+    public async Task DesktopEnrichmentContractReturnsRootKoreanForEachKind(string kind, string text, string korean)
+    {
+        await using var host = await Host.StartAsync(azure: true, practiceModel: new EnrichmentContractModel());
+        using var client = host.Client;
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Token());
+        var response = await client.PostAsync("/api/assist/enrich", PracticeBody(JsonSerializer.Serialize(new { kind, text })));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(korean, json.RootElement.GetProperty("korean").GetString());
+        Assert.Equal(kind == "question" ? JsonValueKind.Null : JsonValueKind.Array,
+            json.RootElement.GetProperty("pronunciation").ValueKind);
+    }
+
     public static IEnumerable<object[]> PracticePayloads()
     {
         yield return ["/api/assist/enrich", """{"kind":"reply","text":"Let me check the goal."}"""];
@@ -237,6 +253,14 @@ public sealed partial class ApiTests
     }
 
     private static StringContent PracticeBody(string json) => new(json, Encoding.UTF8, "application/json");
+    private sealed class EnrichmentContractModel : IPracticeModel
+    {
+        public Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, CancellationToken cancellation) =>
+            Task.FromResult(request.Kind == "question"
+                ? """{"korean":"목표가 무엇인가요?","pronunciation":null}"""
+                : """{"korean":"확인해 볼게요.","pronunciation":[{"en":"Let me check.","ko":"렛 미 첵"}]}""");
+    }
+
     private sealed class FixedPracticeModel : IPracticeModel
     {
         public Exception? Failure { get; init; }

@@ -67,13 +67,25 @@ For a clear individual/group introduction request with any confirmed profile fie
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
 | `response.started` | `responseId: string`, `turnId: string` |
 | `response.delta` | `responseId`, `turnId`, `text: string` (append) |
-| `response.completed` | `responseId`, `turnId`, `text: string` (complete replacement), `sources: [{title,url,updatedAt}]`, `grounding`, `responseRoute: transcript\|profile\|knowledge`, `retrievalPrefetched: boolean` |
+| `response.completed` | `responseId`, `turnId`, `text: string` (complete replacement), `suggestions: string[]` (1–2 English replies, primary first), `sources: [{title,url,updatedAt}]`, `grounding`, `responseRoute: transcript\|profile\|knowledge`, `retrievalPrefetched: boolean` |
 | `response.cancelled` | `responseId`, `turnId` |
 | `error` | `code: string`, `message: string` (safe user-facing detail), `retryable: boolean` |
 
 `updatedAt` is an ISO timestamp or null if source metadata does not provide it. `grounding` is `disabled`, `grounded`, `no_matches`, or `unavailable`. Sources are relevance-filtered reference candidates, not verified citations or a guarantee that every generated statement is supported. Render as text, validate http(s) URLs, and show grounding status. Search failure emits `error` with `grounding_unavailable` followed by a deterministic refusal-like completion (`unavailable`, empty sources); the language model is **not** called. When a successful search yields no authorized relevant results, the real model can provide general conversational phrasing from the transcript alone (`no_matches`, empty sources), but must not invent company-specific knowledge or claim to have consulted supporting documents.
 
-Fake: >=640 nonzero audio bytes emit deterministic partial+final once per utterance. Further nonzero audio is ignored until >=16000 consecutive zero bytes (500 ms silence). All-zero audio never fabricates speech. Transcript: `Could you briefly explain the next steps?` Answer: `Let's confirm the goal, agree on the next action, and assign an owner.` Response uses three timed deltas. Fake is synthetic test behavior, not recognition.
+`suggestions` is additive: older clients may ignore it and continue reading `text`.
+The first suggestion equals `text`; `response.delta` still appends only primary plain text.
+Azure generates two independently speakable concise English wordings from the same transcript/evidence
+in **one** streamed model request, not an additional retrieval or model round trip. The internal newline
+separator and second wording are never streamed to the primary text. The prompt targets at most two
+short sentences / 25 words per option. A missing, duplicate, multiline, oversized or over-25-word
+alternative is discarded; deterministic profile replies and grounding failures have only one suggestion.
+Suggestions share completion-level grounding/sources; they are not individually verified citations.
+Korean translations are client enrichment, not part of this English API field. Neither primary nor
+alternative is inserted into conversation history: only actual finalized recognition segments are context.
+No suggestion implies the participant spoke it or committed to an action.
+
+Fake: >=640 nonzero audio bytes emit deterministic partial+final once per utterance. Further nonzero audio is ignored until >=16000 consecutive zero bytes (500 ms silence). All-zero audio never fabricates speech. Transcript: `Could you briefly explain the next steps?` Answer: `Let's confirm the goal, agree on the next action, and assign an owner.` Response uses three timed primary deltas; completion includes the synthetic alternative `Let's agree on the goal and next step, then choose an owner.` Fake is synthetic test behavior, not recognition.
 
 ## Grounding
 
@@ -81,10 +93,30 @@ The additive `responseRoute` describes the selected context path, not answer cor
 
 For knowledge routes only, partial text with at least20 characters and4 whitespace-separated words is eligible after250ms without a changed normalized partial. At most3 speculative retrievals start per utterance. There is one active speculative worker/candidate per socket/identity; revisions cancel obsolete work, and a noncooperative provider occupies that worker rather than spawning unbounded replacements. Reuse requires the **same turn and exact lowercase/whitespace-normalized text**. Punctuation, apostrophes, decimals, minus signs, dates, numbers and negations are preserved; a punctuation-only final change can intentionally miss the cache. No cross-user or cross-session cache exists; ACL uses the ticket-bound identity. Explicit cancel/stop invalidates speculative work. Matched retrieval failure remains visible as `grounding_unavailable`, never a success-shaped fallback. Unmatched speculative results are discarded and final retrieval runs normally.
 
+Retrieval is context-aware by default for knowledge routes. Without another model call, one shared
+query builder combines up to four preceding actual recognition segments plus up to three older
+recognition excerpts (350 normalized characters each) with the current segment (1536 normalized
+characters), in chronological order, within4096 characters total. The older query anchors select
+the earliest, middle and latest available segments preceding the four recent segments.
+Oversized segments preserve their beginning and end with an omission marker. This supplies topic words for
+follow-ups such as “When can we ship it?”; it is bounded context, not guaranteed pronoun resolution.
+Partial prefetch uses the same builder and may be reused only when **both** the exact final text and
+the bounded context query match. Changed/pruned context invalidates reuse. A manual retry uses the
+same actual recognition history; generated suggestions are never spoken-history substitutes.
+Search owner prefiltering and no-cross-session/identity isolation are unchanged.
+
+For longer meetings, the existing recent transcript window remains12 turns /24000 characters.
+When a segment leaves it, the session keeps a300-character actual-speech excerpt: the opening
+evicted segment plus the three most recently evicted segments, at most1200 extra characters.
+These precede recent segments for routing, retrieval and model context, yielding at most16 segments
+/25200 characters total. Excerpts are **not a rolling semantic summary** and may omit important
+middle details or later topic changes; there is no full-meeting memory, persistence or summary LLM call.
+Only newly recognized speech can enter either window. Starting a new session clears both.
+
 `search-index.json` is the minimum index schema, including the `meeting-semantic` title/content configuration. Optional additional fields are allowed. Populate `contentVector` with the same deployment/model as query embeddings: `text-embedding-3-small`, 1536 dimensions. The API performs hybrid text + vector retrieval over up to 50 candidates, semantically reranks them, and passes at most 5 accepted results to the model. The configurable minimum reranker score defaults to 2.0 on the service's 0-4 scale; it needs corpus-specific evaluation and is not a correctness guarantee. Missing/invalid scores, partial semantic results, or ranker failures produce `grounding_unavailable`, never an unfiltered fallback. Candidates remain prefiltered by:
 
 ```text
 allowedPrincipalIds/any(p: p eq '<validated-oid-GUID>')
 ```
 
-ACLs contain canonical lowercase **user object IDs from the configured Entra tenant**. Group expansion, wildcard/public access, user-supplied ACL filters and cross-tenant ACLs are not supported. Ingestion must copy current source permissions and remove/reindex revoked access before exposing the index; this API cannot infer source permissions. It does not query Blob Storage. Documents are untrusted evidence, never executable instructions. Only 5 chunks of at most 6000 characters each enter the model; transcript context is at most 12 turns / 24000 characters.
+ACLs contain canonical lowercase **user object IDs from the configured Entra tenant**. Group expansion, wildcard/public access, user-supplied ACL filters and cross-tenant ACLs are not supported. Ingestion must copy current source permissions and remove/reindex revoked access before exposing the index; this API cannot infer source permissions. It does not query Blob Storage. Documents are untrusted evidence, never executable instructions. Only 5 chunks of at most 6000 characters each enter the model; recent transcript context is at most 12 turns / 24000 characters, plus at most 4 earlier actual-speech excerpts / 1200 characters as described above.

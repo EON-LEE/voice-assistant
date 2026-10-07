@@ -185,6 +185,38 @@ public sealed class PartialRetrievalTests
         Assert.Null(cache.Take("turn", Query, "knowledge"));
     }
 
+    [Fact]
+    public async Task FollowUpPrefetchUsesSameBoundedActualContextAsFinalAndPreservesOwner()
+    {
+        var provider = new Provider();
+        ConversationTurn[] history = [new("Our Lighthouse rollout uses JMAP.")];
+        const string followUp = "Can we deliver it to our customer tomorrow?";
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("follow-up", 1, followUp, false), history);
+        var call = await provider.Next();
+        Assert.Equal(RetrievalQuery.Build(followUp, history), call.Query);
+        Assert.Contains("lighthouse", call.Query);
+        Assert.Equal(Oid, call.Oid);
+        call.Result.SetResult(new("no_matches", []));
+        Assert.Equal("no_matches", (await cache.Take("follow-up", followUp, "knowledge", history)!).RequireGrounding().Status);
+        Assert.Single(provider.Calls);
+        Assert.Null(cache.Take("follow-up", followUp, "knowledge", [new("Our corrected topic is IMAP.")]));
+    }
+
+    [Fact]
+    public async Task ContextChangeInvalidatesOtherwiseIdenticalPartial()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false), [new("Lighthouse uses JMAP.")]);
+        var first = await provider.Next();
+        cache.Update(new("turn", 2, Query, false), [new("Lighthouse uses IMAP instead.")]);
+        Assert.True(first.Cancellation.IsCancellationRequested);
+        var second = await provider.Next();
+        Assert.Contains("imap instead", second.Query);
+        second.Result.SetResult(new("no_matches", []));
+    }
+
     private sealed record Call(string Query, string Oid, CancellationToken Cancellation)
     {
         internal TaskCompletionSource<Grounding> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

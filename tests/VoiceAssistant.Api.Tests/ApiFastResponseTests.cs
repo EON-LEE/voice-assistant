@@ -10,6 +10,77 @@ namespace VoiceAssistant.Api.Tests;
 public sealed partial class ApiTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FollowUpRetrievalAndModelUseActualSpeechNotGeneratedSuggestions(bool prefetch)
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true, Alternative = "Let's check the next step." };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, Start);
+        await Receive(socket);
+        provider.Emit(new("topic", 1, "Our Lighthouse rollout uses JMAP.", true));
+        var first = await Until(socket, "response.completed");
+        Assert.Equal(first.GetProperty("text").GetString(), first.GetProperty("suggestions")[0].GetString());
+        Assert.Equal(2, first.GetProperty("suggestions").GetArrayLength());
+        await provider.RetrievalQueries.Reader.ReadAsync();
+
+        const string followUp = "Can we deliver it to our customer tomorrow?";
+        if (prefetch)
+        {
+            provider.Emit(new("follow-up", 1, followUp, false));
+            var speculative = await provider.RetrievalQueries.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Contains("lighthouse", speculative);
+        }
+        provider.Emit(new("follow-up", 2, followUp, true));
+        var final = await Until(socket, "response.completed");
+        Assert.Equal(prefetch, final.GetProperty("retrievalPrefetched").GetBoolean());
+        Assert.Equal(2, provider.Retrievals);
+        Assert.Equal(2, provider.Answers);
+        Assert.Equal(["Our Lighthouse rollout uses JMAP.", followUp], provider.LastHistory!.Select(turn => turn.Text));
+        Assert.DoesNotContain(provider.LastHistory!, turn => turn.Text.Contains("Let's check"));
+        if (!prefetch)
+        {
+            var query = await provider.RetrievalQueries.Reader.ReadAsync();
+            Assert.Contains("lighthouse", query);
+            Assert.Contains("jmap", query);
+            Assert.Contains("deliver it", query);
+            Assert.DoesNotContain("concise response", query);
+            Assert.DoesNotContain("next step", query);
+        }
+        await Send(socket, """{"type":"session.stop"}""");
+    }
+
+    [Fact]
+    public async Task LongMeetingKeepsBoundedEarlierRecognizedTopicWithoutInventingSummary()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true, Alternative = "Let's check the next step." };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, Start);
+        await Receive(socket);
+        provider.Emit(new("opening", 1, "Our Lighthouse migration uses JMAP.", true));
+        await Until(socket, "response.completed");
+        await provider.RetrievalQueries.Reader.ReadAsync();
+        for (var index = 0; index < 20; index++)
+        {
+            provider.Emit(new($"turn-{index}", 1, $"Actual recognized progress update {index}.", true));
+            await Until(socket, "response.completed");
+            await provider.RetrievalQueries.Reader.ReadAsync();
+        }
+        provider.Emit(new("follow-up", 1, "Can we deliver it tomorrow?", true));
+        await Until(socket, "response.completed");
+        var query = await provider.RetrievalQueries.Reader.ReadAsync();
+        Assert.Contains("lighthouse", query);
+        Assert.Contains("jmap", query);
+        Assert.StartsWith("Our Lighthouse migration uses JMAP.", provider.LastHistory![0].Text);
+        Assert.True(provider.LastHistory.Length <= 16);
+        Assert.True(provider.LastHistory.Sum(turn => turn.Text.Length) <= 25200);
+        Assert.DoesNotContain(provider.LastHistory!, turn => turn.Text.Contains("Let's check"));
+        await Send(socket, """{"type":"session.stop"}""");
+    }
+
+    [Theory]
     [InlineData("balanced", "What is JMAP?", "transcript", 0)]
     [InlineData("conversation", "What is our customer deadline tomorrow?", "transcript", 0)]
     [InlineData("balanced", "Introduce yourself and your project", "profile", 0)]
@@ -36,6 +107,7 @@ public sealed partial class ApiTests
         Assert.Equal(retrievals, provider.Retrievals);
         if (route == "profile")
         {
+            Assert.Single(completion.GetProperty("suggestions").EnumerateArray());
             Assert.Null(provider.AnswerOptions);
             Assert.Equal(0, provider.Answers);
             Assert.Equal("My name is Mina; my role is Software engineer. My current project is Evaluating email client interoperability.",
@@ -83,6 +155,7 @@ public sealed partial class ApiTests
         else provider.Release.SetResult(new("no_matches", []));
         if (fail) Assert.Equal("grounding_unavailable", (await Until(socket, "error")).GetProperty("code").GetString());
         var completion = await Until(socket, "response.completed");
+        Assert.Single(completion.GetProperty("suggestions").EnumerateArray());
         Assert.True(completion.GetProperty("retrievalPrefetched").GetBoolean());
         Assert.Equal("knowledge", completion.GetProperty("responseRoute").GetString());
         Assert.Equal(fail ? "unavailable" : "no_matches", completion.GetProperty("grounding").GetString());
@@ -254,6 +327,10 @@ public sealed partial class ApiTests
 
     private sealed class ControlledProvider : IMeetingProvider
     {
+        public string? Alternative { get; init; }
+        public ConversationTurn[]? LastHistory { get; private set; }
+        public System.Threading.Channels.Channel<string> RetrievalQueries { get; } =
+            System.Threading.Channels.Channel.CreateUnbounded<string>();
         public bool AutomaticRetrieval { get; set; }
         public bool IgnoreCancellation { get; init; }
         public ManualResetEventSlim? BlockRetrieval { get; init; }
@@ -278,6 +355,7 @@ public sealed partial class ApiTests
         public Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation)
         {
             Interlocked.Increment(ref Retrievals);
+            RetrievalQueries.Writer.TryWrite(query);
             RetrievalStarted.TrySetResult();
             BlockRetrieval?.Wait();
             if (AutomaticRetrieval) return Task.FromResult(new Grounding("no_matches", []));
@@ -289,11 +367,19 @@ public sealed partial class ApiTests
             SessionOptions options, string route, [EnumeratorCancellation] CancellationToken cancellation)
         {
             Answers++;
+            LastHistory = conversation.ToArray();
             AnswerOptions = options;
             Route = route;
             await Task.Yield();
             cancellation.ThrowIfCancellationRequested();
             yield return "Here is a concise response grounded only in the supplied context.";
+        }
+        public async IAsyncEnumerable<ReplyUpdate> AnswerWithSuggestionsAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
+            SessionOptions options, string route, [EnumeratorCancellation] CancellationToken cancellation)
+        {
+            await foreach (var text in AnswerAsync(conversation, grounding, options, route, cancellation))
+                yield return new(text);
+            if (Alternative is not null) yield return new("", Alternative);
         }
         private sealed class Stream(Action write, Action dispose) : ISpeechStream
         {

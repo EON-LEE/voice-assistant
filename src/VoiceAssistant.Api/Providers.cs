@@ -30,6 +30,13 @@ public interface IMeetingProvider
         Action<ProviderException> error, CancellationToken cancellation) => StartSpeechAsync(transcript, error, cancellation);
     IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
         SessionOptions options, string responseRoute, CancellationToken cancellation) => AnswerAsync(conversation, grounding, cancellation);
+    async IAsyncEnumerable<ReplyUpdate> AnswerWithSuggestionsAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
+        SessionOptions options, string responseRoute,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellation)
+    {
+        await foreach (var text in AnswerAsync(conversation, grounding, options, responseRoute, cancellation).WithCancellation(cancellation))
+            yield return new(text);
+    }
 }
 
 public sealed class FakeMeetingProvider : IMeetingProvider
@@ -49,6 +56,15 @@ public sealed class FakeMeetingProvider : IMeetingProvider
             await Task.Delay(50, cancellation);
             yield return text;
         }
+    }
+
+    public async IAsyncEnumerable<ReplyUpdate> AnswerWithSuggestionsAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
+        SessionOptions options, string responseRoute,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellation)
+    {
+        await foreach (var text in AnswerAsync(conversation, grounding, cancellation))
+            yield return new(text);
+        yield return new("", "Let's agree on the goal and next step, then choose an owner.");
     }
 
     private sealed class FakeSpeechStream(Action<Transcript> transcript) : ISpeechStream
