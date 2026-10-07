@@ -18,7 +18,13 @@ public sealed class AuthenticatedApiClient : IDisposable
         this.settings = settings;
         this.identity = identity;
         http = handler is null
-            ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+            ? new HttpClient(new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Fail fast on stalled TCP/TLS setup so reconnects and translation retries are quick.
+                ConnectTimeout = TimeSpan.FromSeconds(6),
+                PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30)
+            })
             : new HttpClient(handler, disposeHandler: true);
     }
 

@@ -45,6 +45,7 @@ public sealed class ReplyState
     public void Pin() { if (Current is not null) Pinned = Current with { Sources = Current.Sources.ToArray() }; }
     public void Unpin() => Pinned = null;
     public void BeginRequest() { suppressedTurn = null; Error = null; }
+    public void ClearError() => Error = null;
     public void Pause(bool paused)
     {
         suppressAll = paused;

@@ -277,8 +277,7 @@ public partial class MainWindow : Window
         translatingTurns.Clear();
         ErrorText.Text = "";
         lifetime = new CancellationTokenSource();
-        client = IsDemo ? new MeetingClient(new DemoMeetingTransport())
-            : new MeetingClient(new TicketedMeetingTransport(api));
+        client = new MeetingClient(CreateTransport());
         StartButton.IsEnabled = SignInButton.IsEnabled = DeviceBox.IsEnabled = false;
         RefreshButton.IsEnabled = ConsentBox.IsEnabled = false;
         StopButton.IsEnabled = true;
@@ -294,36 +293,69 @@ public partial class MainWindow : Window
 
     private async Task RunMeetingAsync(ClientSettings meetingSettings, string? endpointId, CancellationToken token)
     {
+        var attempt = 0;
         try
         {
-            await client!.RunAsync(meetingSettings,
-                () =>
+            while (!token.IsCancellationRequested)
+            {
+                var connectedAt = DateTime.UtcNow;
+                Exception? failure = null;
+                try
                 {
-                    if (IsDemo) return new SyntheticAudioSource();
-                    var source = new MicrophoneAudioSource(endpointId!);
-                    source.LevelChanged += level => Dispatcher.BeginInvoke(() =>
+                    await client!.RunAsync(meetingSettings, () => CreateAudioSource(endpointId),
+                        message => Dispatcher.BeginInvoke(() => ApplyMeetingEvent(message)),
+                        status => Dispatcher.BeginInvoke(() =>
+                        {
+                            StatusText.Text = status;
+                            if (client?.IsReady == true && ErrorText.Text.StartsWith(ReconnectingPrefix, StringComparison.Ordinal))
+                                ErrorText.Text = "";
+                            UpdateOverlay();
+                        }), token);
+                    if (stopping || token.IsCancellationRequested) break;
+                    failure = new IOException("The service ended the session.");
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
+                catch (Exception ex) { failure = ex; }
+                if (stopping || token.IsCancellationRequested) break;
+                if (IsDemo || !IsTransientDisconnect(failure))
+                {
+                    await Dispatcher.InvokeAsync(() =>
                     {
-                        LevelMeter.Value = level;
-                        LevelText.Text = $"Input level: {(level < 0.015 ? "very low — check mic placement" : $"{level:P0}")}";
+                        ErrorText.Text = $"Session ended: {failure.Message} Start again to reconnect.";
+                        UpdateOverlay();
                     });
-                    return source;
-                },
-                message => Dispatcher.BeginInvoke(() => ApplyMeetingEvent(message)),
-                status => Dispatcher.BeginInvoke(() =>
+                    break;
+                }
+                // A stable session resets the backoff; repeated quick failures back off up to 5 seconds.
+                attempt = DateTime.UtcNow - connectedAt > TimeSpan.FromSeconds(30) ? 1 : attempt + 1;
+                if (attempt > MaxReconnectAttempts)
                 {
-                    StatusText.Text = status;
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        ErrorText.Text = $"연결이 계속 끊깁니다 ({failure.Message}). 네트워크를 확인하고 다시 시작하세요.";
+                        UpdateOverlay();
+                    });
+                    break;
+                }
+                var delay = TimeSpan.FromMilliseconds(Math.Min(3000, 300 * (1 << Math.Min(attempt - 1, 4))));
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    changingPause = true;
+                    PauseBox.IsChecked = false;
+                    changingPause = false;
+                    state.Pause(false);
+                    if (state.Current is { Complete: false }) state.CancelCurrent();
+                    state.ClearError();
+                    Render();
+                    ErrorText.Text = $"{ReconnectingPrefix} ({attempt}/{MaxReconnectAttempts}) · 대화와 추천은 유지됩니다";
+                    StatusText.Text = "Reconnecting — microphone resumes automatically.";
                     UpdateOverlay();
-                }), token);
+                });
+                await Task.Delay(delay, token);
+                await Dispatcher.InvokeAsync(() => client = new MeetingClient(CreateTransport()));
+            }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception ex)
-        {
-            await Dispatcher.InvokeAsync(() =>
-            {
-                ErrorText.Text = $"Session ended: {ex.Message} Start again to reconnect.";
-                UpdateOverlay();
-            });
-        }
         finally
         {
             await Dispatcher.InvokeAsync(() =>
@@ -354,6 +386,39 @@ public partial class MainWindow : Window
             });
         }
     }
+
+    private const string ReconnectingPrefix = "연결이 끊겨 자동 재연결 중";
+    private const int MaxReconnectAttempts = 20;
+    internal Func<IMeetingTransport>? TransportFactory { get; set; }
+    internal Func<IAudioSource>? AudioSourceFactory { get; set; }
+
+    private IMeetingTransport CreateTransport() => TransportFactory?.Invoke() ??
+        (IsDemo ? new DemoMeetingTransport() : new TicketedMeetingTransport(api));
+
+    private IAudioSource CreateAudioSource(string? endpointId)
+    {
+        if (AudioSourceFactory is not null) return AudioSourceFactory();
+        if (IsDemo) return new SyntheticAudioSource();
+        var source = new MicrophoneAudioSource(endpointId!);
+        source.LevelChanged += level => Dispatcher.BeginInvoke(() =>
+        {
+            LevelMeter.Value = level;
+            LevelText.Text = $"Input level: {(level < 0.015 ? "very low — check mic placement" : $"{level:P0}")}";
+        });
+        return source;
+    }
+
+    /// <summary>Network/service interruptions are retried; authorization, protocol and device failures are not.</summary>
+    internal static bool IsTransientDisconnect(Exception failure) => failure switch
+    {
+        ApiRequestException api => api.Code is "busy" or "provider_unavailable" or "provider_timeout",
+        System.Net.WebSockets.WebSocketException or HttpRequestException or TimeoutException or TaskCanceledException => true,
+        IOException io => !io.Message.StartsWith("invalid_", StringComparison.Ordinal) &&
+            !io.Message.StartsWith("transcribe_only", StringComparison.Ordinal) &&
+            !io.Message.StartsWith("forbidden", StringComparison.Ordinal) &&
+            !io.Message.StartsWith("unauthorized", StringComparison.Ordinal),
+        _ => false
+    };
 
     private void ApplyMeetingEvent(ServerEvent message)
     {
@@ -492,12 +557,23 @@ public partial class MainWindow : Window
         var translations = new List<string>();
         foreach (var chunk in TranslationChunks(text))
         {
-            using var document = await api.PostJsonAsync("/api/assist/enrich",
-                new { kind, text = chunk, translationOnly = true }, cancellationToken);
-            var korean = document.RootElement.GetProperty("korean").GetString();
-            if (string.IsNullOrWhiteSpace(korean))
-                throw new InvalidDataException("The translation response is empty.");
-            translations.Add(korean);
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    using var document = await api.PostJsonAsync("/api/assist/enrich",
+                        new { kind, text = chunk, translationOnly = true }, cancellationToken);
+                    var korean = document.RootElement.GetProperty("korean").GetString();
+                    if (string.IsNullOrWhiteSpace(korean))
+                        throw new InvalidDataException("The translation response is empty.");
+                    translations.Add(korean);
+                    break;
+                }
+                catch (Exception ex) when (attempt < 3 && !cancellationToken.IsCancellationRequested && IsTransientDisconnect(ex))
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(300 * attempt), cancellationToken);
+                }
+            }
         }
         return string.Join(" ", translations);
     }

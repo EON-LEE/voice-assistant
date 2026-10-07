@@ -118,11 +118,12 @@ namespace VoiceAssistant.Api
                     if (identity is null) { context.Response.StatusCode = 401; return; }
                     objectId = identity.ObjectId;
                 }
-                using var slot = slots.TryAcquire(objectId);
+                using var slot = await slots.AcquireAsync(objectId, context.RequestAborted);
                 if (slot is null) { context.Response.StatusCode = 429; return; }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                using var session = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, slot.Superseded);
                 await new MeetingSession(socket, provider, objectId, app.Logger, settings.MaxSessionMinutes,
-                    context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(context.RequestAborted);
+                    context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(session.Token);
             });
             app.MapKnowledge(settings);
             app.MapPractice(settings);

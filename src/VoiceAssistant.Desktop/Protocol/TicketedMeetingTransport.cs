@@ -17,7 +17,7 @@ public sealed class TicketedMeetingTransport(AuthenticatedApiClient? api = null)
         socket.Options.SetRequestHeader("Origin", settings.Origin);
         socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
         await socket.ConnectAsync(endpoint, timeout.Token);
     }
 

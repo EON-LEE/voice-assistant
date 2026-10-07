@@ -7,19 +7,55 @@ namespace VoiceAssistant.Api;
 
 public sealed class SessionSlots
 {
-    private readonly HashSet<string> active = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Slot> active = new(StringComparer.Ordinal);
+
+    /// <summary>Acquires the identity's single meeting slot, superseding a stale session of the same identity.</summary>
+    public async Task<SessionLease?> AcquireAsync(string objectId, CancellationToken cancellation)
+    {
+        Slot? previous;
+        lock (active)
+        {
+            if (!active.TryGetValue(objectId, out previous) && active.Count >= 100) return null;
+            if (previous is null) return Register(objectId);
+        }
+        // A reconnect after a network drop can arrive before the old socket notices the drop.
+        previous.Supersede.Cancel();
+        try { await previous.Released.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellation); }
+        catch (TimeoutException) { return null; }
+        lock (active)
+            return active.ContainsKey(objectId) ? null : Register(objectId);
+    }
+
     public IDisposable? TryAcquire(string objectId)
     {
         lock (active)
-        {
-            if (active.Count >= 100 || !active.Add(objectId)) return null;
-            return new Lease(() => { lock (active) active.Remove(objectId); });
-        }
+            return active.Count >= 100 || active.ContainsKey(objectId) ? null : Register(objectId);
     }
-    private sealed class Lease(Action release) : IDisposable
+
+    private SessionLease Register(string objectId)
     {
-        public void Dispose() => release();
+        var slot = new Slot();
+        active.Add(objectId, slot);
+        return new SessionLease(slot.Supersede.Token, () =>
+        {
+            lock (active) if (active.TryGetValue(objectId, out var current) && current == slot) active.Remove(objectId);
+            slot.Released.TrySetResult();
+            slot.Supersede.Dispose();
+        });
     }
+
+    private sealed class Slot
+    {
+        public CancellationTokenSource Supersede { get; } = new();
+        public TaskCompletionSource Released { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+}
+
+public sealed class SessionLease(CancellationToken superseded, Action release) : IDisposable
+{
+    private Action? release = release;
+    public CancellationToken Superseded { get; } = superseded;
+    public void Dispose() => Interlocked.Exchange(ref this.release, null)?.Invoke();
 }
 
 public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, string objectId, ILogger logger,
@@ -180,6 +216,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
+            if (requestAborted.IsCancellationRequested)
+                logger.LogWarning("Meeting session ended: connection aborted or superseded by a reconnect.");
             await TryErrorAsync(overflow != 0 ? "session_overloaded" : duration.IsCancellationRequested ? "session_time_limit" : "session_ended",
                 overflow != 0 ? "Session could not keep up. Reconnect." :
                 duration.IsCancellationRequested ? "Session reached its time limit. Start a new session to continue." : "Session ended.",
@@ -190,7 +228,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             await TryErrorAsync("startup_timeout", "Session startup timed out. Reconnect.");
         }
         catch (ProviderException exception) { await TryErrorAsync(exception.Code, exception.Message); }
-        catch (WebSocketException) { logger.LogInformation("Meeting transport disconnected."); }
+        catch (WebSocketException) { logger.LogWarning("Meeting transport disconnected by the client or network."); }
         catch (Exception)
         {
             logger.LogWarning("Meeting provider failed; sensitive error detail suppressed.");
@@ -199,6 +237,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         finally
         {
             lifetime.Cancel();
+            // Send the close frame before cancelling the pending receive: cancelling it aborts the socket
+            // and the client would see an unexplained reset instead of a normal close.
+            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            {
+                using var close = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                try { await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Session ended", close.Token); }
+                catch (Exception exception) when (exception is WebSocketException or OperationCanceledException)
+                { logger.LogInformation("Meeting transport closed before shutdown completed."); }
+            }
             receiving.Cancel();
             generation?.Cancel();
             if (prefetch is not null) await prefetch.DisposeAsync();
@@ -209,13 +256,6 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             {
                 try { await speech.DisposeAsync(); }
                 catch (Exception) { logger.LogWarning("Speech cleanup failed; sensitive error detail suppressed."); }
-            }
-            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-            {
-                using var close = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                try { await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Session ended", close.Token); }
-                catch (Exception exception) when (exception is WebSocketException or OperationCanceledException)
-                { logger.LogInformation("Meeting transport closed before shutdown completed."); }
             }
         }
     }
