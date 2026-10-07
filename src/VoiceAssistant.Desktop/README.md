@@ -29,7 +29,12 @@ dotnet publish .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -c Rel
   -o "$env:USERPROFILE\.copilot\session-state\<session-id>\files\desktop-publish"
 ```
 
-The shipped `appsettings.json` points to the configured Azure service. Opening the app shows only the overlay and does not sign in or capture audio. Right-click for secondary settings. There are no separate login buttons: starting Live or requesting materials/practice connects the configured Microsoft account when needed, before accessing protected resources. Tokens are acquired silently from the current process's MSAL cache when possible; Microsoft may still require interactive authentication. This is not anonymous access, and authentication is not persisted across processes. Closing the secondary settings window returns to the overlay; **Exit application** in the overlay menu ends sessions and releases resources.
+The shipped `appsettings.json` points to the configured Azure service. Opening the app shows only the overlay and does not sign in or capture audio. Right-click for secondary settings. There are no separate login buttons: starting Live or requesting materials/practice connects the configured Microsoft account when needed, before accessing protected resources. After the first successful authentication, the official MSAL persistence extension retains the cache across app restarts and portable-folder updates, encrypted with Windows DPAPI for the current Windows user. Tokens are acquired and refreshed silently when possible. Microsoft may still require interactive authentication after consent revocation, MFA/sign-in-frequency policies or account changes; persistence cannot bypass those policies. Cache persistence errors are surfaced instead of silently falling back to plaintext. Closing the secondary settings window returns to the overlay; **Exit application** in the overlay menu ends sessions and releases resources.
+
+The cache is outside the portable distribution at
+`%LOCALAPPDATA%\VoiceAssistant\Identity\<tenant-id>\<client-id>\msal-cache.bin`.
+Never copy it into the repository, include it in a portable archive or share it.
+Tenant/client-specific directories keep different app identities separate.
 
 `--demo` is an explicit offline preview mode. It cannot silently replace a failed live connection.
 
@@ -50,7 +55,7 @@ Supported settings include `Mode`, `Endpoint`, `Origin`, `Authority`, `TenantId`
 
 ## In-person meeting mode
 
-1. Select an active **physical microphone** in secondary settings. There are no login buttons or consent/translation checkboxes in the visible meeting flow. **Start Live** explicitly identifies microphone audio transmission to Azure and requires participant permission; it does not start on launch. If no account is connected, Start performs Microsoft authentication before capturing audio. API authentication and private-document owner filtering are not disabled. The current MSAL account cache is process-local, so a new process may need Microsoft authentication again.
+1. Select an active **physical microphone** in secondary settings. There are no login buttons or consent/translation checkboxes in the visible meeting flow. **Start Live** explicitly identifies microphone audio transmission to Azure and requires participant permission; it does not start on launch. Start first uses the encrypted persistent account cache and requests Microsoft authentication only when necessary, before capturing audio. API authentication and private-document owner filtering are not disabled.
 2. Review the topic and optional profile values. **Grounded (always search my materials)** is the default; it retrieves only from the signed-in account's authorized Azure AI Search documents. Balanced and Conversation are explicit alternatives.
 3. Select **Start meeting overlay**. Microphone capture begins only after the server accepts the session; the secondary settings window hides and the overlay remains the main surface.
 4. The fixed 550×740 overlay (height capped at the Windows work area) stays on top, has a translucent dark background and opaque text, and moves from its header. There are **no visible buttons, resize grip, close/expand controls, or opacity slider**. Its right-click menu provides setup, start, pause/resume, regenerate, translation retry, stop and application exit. There are no global hotkeys that can steal slide-navigation keys.

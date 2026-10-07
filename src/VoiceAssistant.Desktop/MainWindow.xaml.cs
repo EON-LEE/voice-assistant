@@ -129,7 +129,7 @@ public partial class MainWindow : Window
         try
         {
             await identity.SignInAsync();
-            AuthStatus.Text = "Signed in with the configured Entra tenant. Tokens remain in memory.";
+            AuthStatus.Text = "Account connected. Sign-in is retained in the Windows-user encrypted cache.";
         }
         catch (Exception ex) { ErrorText.Text = $"Sign-in did not finish: {ex.Message}"; }
         finally { SignInButton.IsEnabled = true; }
@@ -146,7 +146,7 @@ public partial class MainWindow : Window
                 var dialog = new DeviceCodeWindow(url, code) { Owner = this };
                 dialog.ShowDialog();
             }));
-            AuthStatus.Text = "Signed in with the configured Entra tenant. Tokens remain in memory.";
+            AuthStatus.Text = "Account connected. Sign-in is retained in the Windows-user encrypted cache.";
         }
         catch (Exception ex) { ErrorText.Text = $"Device-code sign-in did not finish: {ex.Message}"; }
         finally { DeviceCodeButton.IsEnabled = true; }

@@ -11,6 +11,7 @@
     <Using Include="System.IO" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Microsoft.Identity.Client" Version="4.84.2" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.84.2" />
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
