@@ -1,0 +1,225 @@
+{
+  "runId": "verifyround1007",
+  "startedAt": "2026-10-07T00:51:36.580Z",
+  "steps": [
+    {
+      "name": "enrich reply",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 3411,
+        "korean": "가장 큰 리스크는 데이터베이스 마이그레이션이 느려지는 것이어서, 그래서 우리는 일찍 시작합니다.",
+        "pronunciation": [
+          {
+            "en": "The",
+            "ko": "더"
+          },
+          {
+            "en": "main",
+            "ko": "메인"
+          },
+          {
+            "en": "risk",
+            "ko": "리스크"
+          },
+          {
+            "en": "is",
+            "ko": "이즈"
+          },
+          {
+            "en": "a",
+            "ko": "어"
+          },
+          {
+            "en": "slow",
+            "ko": "슬로우"
+          },
+          {
+            "en": "database",
+            "ko": "데이터베이스"
+          },
+          {
+            "en": "migration,",
+            "ko": "마이그레이션"
+          },
+          {
+            "en": "so",
+            "ko": "소"
+          },
+          {
+            "en": "we",
+            "ko": "위"
+          },
+          {
+            "en": "start",
+            "ko": "스타트"
+          },
+          {
+            "en": "early.",
+            "ko": "얼리"
+          }
+        ]
+      }
+    },
+    {
+      "name": "enrich question",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1439,
+        "korean": "롤아웃의 가장 큰 리스크는 무엇인가요?"
+      }
+    },
+    {
+      "name": "speak coach/normal",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 719,
+        "bytes": 27360,
+        "type": "audio/mpeg"
+      }
+    },
+    {
+      "name": "speak partner/slow",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 838,
+        "bytes": 32688,
+        "type": "audio/mpeg"
+      }
+    },
+    {
+      "name": "partner opening",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1284,
+        "text": "What is your main goal for the Zephyr rollout planning meeting?",
+        "words": 11
+      }
+    },
+    {
+      "name": "suggest",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1252,
+        "text": "My main goal is to make the rollout plan clear and safe. I want to agree on the next steps and any open questions."
+      }
+    },
+    {
+      "name": "feedback",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1906,
+        "body": {
+          "correctedEnglish": "My main goal is to make the rollout plan clear and safe. I want to start early to reduce risk.",
+          "easierEnglish": "My main goal is to make a clear plan. I want to start early and lower risk.",
+          "feedbackKo": "좋아요, 핵심을 잘 말했어요. 목표와 이유가 분명해서 미팅 답변으로 자연스럽습니다. 조금 더 부드럽게 말하면 더 좋아요.",
+          "points": [
+            {
+              "tag": "clarity",
+              "ko": "목표를 먼저 말해서 이해하기 쉬웠어요."
+            },
+            {
+              "tag": "grammar",
+              "ko": "문장 구조를 조금 더 자연스럽게 다듬을 수 있어요."
+            },
+            {
+              "tag": "vocabulary",
+              "ko": "goal, plan, risk 같은 단어를 잘 썼어요."
+            }
+          ],
+          "clarity": 4
+        }
+      }
+    },
+    {
+      "name": "partner second question",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 1400,
+        "text": "I think starting early is good, and I want to lower the database risk. What is the next step we should plan first?"
+      }
+    },
+    {
+      "name": "partner closing done",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "text": "Thanks for practicing with me. See you next time."
+      }
+    },
+    {
+      "name": "summary",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 3796,
+        "body": {
+          "headlineKo": "좋아요. 핵심은 위험을 먼저 말하고, 시작 시점을 분명히 했습니다. 답이 짧고 직접적이라 회의에서 이해하기 쉽습니다.",
+          "strengthsKo": [
+            "위험을 먼저 말해서 우선순위가 분명합니다.",
+            "짧은 문장으로 핵심을 바로 전달했습니다."
+          ],
+          "improveKo": [
+            "moveing 같은 표현보다 자연스러운 말을 쓰면 더 좋습니다.",
+            "필요하면 계획을 조금 더 자세히 말할 수 있습니다."
+          ],
+          "phrases": [
+            {
+              "en": "The main risk is a slow database move.",
+              "ko": "가장 큰 위험은 데이터베이스 이동이 느리다는 것입니다."
+            },
+            {
+              "en": "We start early.",
+              "ko": "우리는 일찍 시작합니다."
+            },
+            {
+              "en": "I need to check that detail.",
+              "ko": "그 세부 내용은 확인해야 합니다."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "strict schema rejects unknown field",
+      "ok": true,
+      "detail": {
+        "status": 400
+      }
+    },
+    {
+      "name": "unauthenticated rejected",
+      "ok": true,
+      "detail": {
+        "status": 401
+      }
+    },
+    {
+      "name": "bad origin rejected",
+      "ok": true,
+      "detail": {
+        "status": 403
+      }
+    }
+  ],
+  "timings": {
+    "enrichReplyMs": 3411,
+    "enrichQuestionMs": 1439,
+    "speak_coachMs": 719,
+    "speak_partnerMs": 838,
+    "turn1Ms": 1284,
+    "suggestMs": 1252,
+    "feedbackMs": 1906,
+    "turn2Ms": 1400,
+    "summaryMs": 3796
+  },
+  "completedAt": "2026-10-07T00:51:53.747Z",
+  "ok": true
+}
