@@ -8,12 +8,19 @@ internal sealed class ReplySuggestions
 {
     private readonly StringBuilder alternative = new();
     private bool secondLine;
+    private bool primaryStarted;
     private int length;
 
     internal string Append(string delta)
     {
         length += delta.Length;
         if (length > 8000) throw new ProviderException("response_limit", "Response exceeded its size limit.");
+        if (!primaryStarted)
+        {
+            delta = delta.TrimStart();
+            if (delta.Length == 0) return "";
+            primaryStarted = true;
+        }
         if (secondLine)
         {
             alternative.Append(delta);

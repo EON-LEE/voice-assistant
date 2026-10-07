@@ -217,11 +217,14 @@ public sealed partial class ApiTests
         {
             provider.Emit(new("new-turn", 1, "A new utterance", false));
             provider.Emit(new("new-turn", 2, "A new utterance", true));
+            await Until(socket, "transcript.final");
+            await Send(socket, """{"type":"response.cancel"}""");
         }
         else await Send(socket, """{"type":"response.request"}""");
         var cancelled = await Until(socket, "response.cancelled");
         Assert.Equal("response.cancelled", cancelled.GetProperty("type").GetString());
         Assert.Equal(first.GetProperty("responseId").GetString(), cancelled.GetProperty("responseId").GetString());
+        if (newUtterance) await Send(socket, """{"type":"response.request"}""");
         var second = await Until(socket, "response.started");
         Assert.Equal("response.started", second.GetProperty("type").GetString());
         provider.Release.TrySetResult();

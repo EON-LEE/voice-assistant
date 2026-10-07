@@ -40,7 +40,9 @@ Korean translation and Hangul pronunciation. Request:
 { "kind": "question", "text": "What is the main risk for the rollout?" }
 ```
 `kind` is `question` (something another person said) or `reply` (suggested English the user will say). `text` is
-1..600 characters of English.
+1..600 characters of English. Optional `translationOnly` (JSON boolean, default `false`; any other type -> `400`): when
+`true` the server requests and returns only the Korean translation and `pronunciation` is always `null`, for both kinds.
+Existing clients that omit it are unchanged.
 
 `200`:
 ```json
@@ -49,7 +51,7 @@ Korean translation and Hangul pronunciation. Request:
   "pronunciation": null
 }
 ```
-For `kind:"reply"`, `pronunciation` is a non-empty array of chunks, otherwise `null`:
+For `kind:"reply"` without `translationOnly:true`, `pronunciation` is a non-empty array of chunks, otherwise `null`:
 ```json
 {
   "korean": "가장 큰 위험은 느린 데이터베이스 이전입니다.",
@@ -61,7 +63,8 @@ For `kind:"reply"`, `pronunciation` is a non-empty array of chunks, otherwise `n
 }
 ```
 Rules (server validates, the browser also validates and falls back to showing plain English):
-* `korean` is a natural Korean **translation of meaning**, at most 400 characters, Hangul-first, no English-only echo.
+* `korean` is a natural Korean **translation of meaning**, at most 400 characters, Hangul-dominant (names such as
+  `Copilot` may stay in Latin letters, including at the start), no English-only echo.
 * `pronunciation[].en` chunks, joined with a single space, must equal the input `text` after collapsing whitespace
   (same words, same order, same punctuation). Each chunk has 1..4 words; at most 40 chunks.
 * `pronunciation[].ko` is how a Korean speaker would **read the English aloud** in Hangul (a transcription of the sound,

@@ -16,11 +16,12 @@ public sealed record SessionOptions
     public IReadOnlyList<string> Phrases { get; init; } = Array.Empty<string>();
     public int EndSilenceMs { get; init; } = 700;
     public bool TranscribeOnly { get; init; }
+    public bool SemanticSegmentation { get; init; }
     public static SessionOptions Legacy { get; } = new();
 
     internal static SessionOptions Parse(JsonElement value)
     {
-        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly");
+        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly", "semanticSegmentation");
         var transcribeOnly = value.TryGetProperty("transcribeOnly", out var only) && only.GetBoolean();
         var mode = Text(value, "responseMode", 20, "grounded");
         if (mode is not ("balanced" or "grounded" or "conversation")) throw Invalid();
@@ -51,7 +52,8 @@ public sealed record SessionOptions
         {
             ResponseMode = mode, Profile = profile, ProfileConfirmed = confirmed,
             Topic = Text(value, "topic", 300), Phrases = phrases.AsReadOnly(), EndSilenceMs = silence,
-            TranscribeOnly = transcribeOnly
+            TranscribeOnly = transcribeOnly,
+            SemanticSegmentation = value.TryGetProperty("semanticSegmentation", out var semantic) && semantic.GetBoolean()
         };
     }
 

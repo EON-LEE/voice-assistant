@@ -12,6 +12,38 @@ namespace VoiceAssistant.Desktop.Tests;
 public sealed class OverlayTranslationTests
 {
     [Fact]
+    public async Task LongTranscriptTranslationUsesBoundedChunksWithoutDroppingWords()
+    {
+        var text = string.Join(" ", Enumerable.Repeat("Copilot helps teams prepare a launch plan.", 40));
+        IEnumerable<string> Split(string input) => (IEnumerable<string>)typeof(MainWindow)
+            .GetMethod("TranslationChunks", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [input])!;
+        var chunks = Split(text).ToArray();
+        Assert.True(chunks.Length > 1);
+        Assert.All(chunks, chunk => Assert.InRange(chunk.Length, 1, 600));
+        Assert.Equal(text, string.Join(" ", chunks));
+        Assert.Equal(2, Split(new string('x', 601)).Count());
+        await OnUiThread(async () =>
+        {
+            var received = new List<string>();
+            var settings = new ClientSettings { Mode = ConnectionMode.Production };
+            using var api = new AuthenticatedApiClient(settings, new TestIdentity(),
+                new TranslationHandler(chunk =>
+                {
+                    received.Add(chunk);
+                    return Task.FromResult(JsonResponse(new { korean = "번역된 문장" }));
+                }, "question"));
+            var window = new MainWindow(settings, new NativeIdentity(settings), api);
+            try
+            {
+                var korean = await (Task<string>)Invoke(window, "TranslateAsync", "question", text, CancellationToken.None)!;
+                Assert.Equal(chunks, received);
+                Assert.Equal(string.Join(" ", chunks.Select(_ => "번역된 문장")), korean);
+            }
+            finally { await window.CloseForOwnerAsync(); }
+        });
+    }
+
+    [Fact]
     public async Task OptionsTranslateIndependentlyAndLateResultsDoNotReplaceCurrentAnswer()
     {
         await OnUiThread(async () =>
@@ -97,7 +129,7 @@ public sealed class OverlayTranslationTests
                 var overlay = (OverlayWindow)typeof(MainWindow).GetField("overlay",
                     BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
                 var conversation = (StackPanel)overlay.FindName("ConversationPanel");
-                var bubble = Assert.IsType<StackPanel>(Assert.IsType<Border>(conversation.Children[0]).Child);
+                var bubble = Assert.IsType<StackPanel>(conversation.Children[0]);
                 Assert.Equal("출시 조건은 무엇인가요?", Assert.IsType<TextBlock>(bubble.Children[1]).Text);
                 Invoke(window, "ApplyMeetingEvent", new ServerEvent("response.started", "t", ResponseId: "r"));
                 Invoke(window, "ApplyMeetingEvent", new ServerEvent("response.completed", "t", Text: "Review first.",
@@ -184,6 +216,8 @@ public sealed class OverlayTranslationTests
             Assert.Equal("/api/assist/enrich", request.RequestUri!.AbsolutePath);
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             Assert.Equal(expectedKind, body.RootElement.GetProperty("kind").GetString());
+            Assert.True(body.RootElement.GetProperty("translationOnly").GetBoolean());
+            Assert.InRange(body.RootElement.GetProperty("text").GetString()!.Length, 1, 600);
             return await reply(body.RootElement.GetProperty("text").GetString()!);
         }
     }

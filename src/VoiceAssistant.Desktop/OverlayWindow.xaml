@@ -41,7 +41,7 @@
       <Border Grid.Row="1" Padding="22,14" BorderBrush="#1BFFFFFF" BorderThickness="0,0,0,1">
         <StackPanel>
           <TextBlock Text="들은 대화" Foreground="#A6B5CC" FontSize="11" FontWeight="SemiBold"/>
-          <ScrollViewer x:Name="ConversationScroll" MaxHeight="115" VerticalScrollBarVisibility="Auto"
+          <ScrollViewer x:Name="ConversationScroll" Height="240" VerticalScrollBarVisibility="Hidden"
                         Margin="0,9,0,0" AutomationProperties.Name="Recognized conversation, not AI suggestions">
             <StackPanel x:Name="ConversationPanel">
               <TextBlock x:Name="QuestionText" Text="영어 대화를 기다리고 있어요."
@@ -72,7 +72,7 @@
                            FontWeight="SemiBold"/>
               </DockPanel>
               <TextBlock x:Name="AnswerText" Text="대화가 인식되면 추천 답변이 여기에 표시됩니다."
-                         FontSize="23" LineHeight="33" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,10,0,12"/>
+                         FontSize="21" LineHeight="29" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,8,0,8"/>
               <Border BorderBrush="#30A1C5FF" BorderThickness="0,1,0,0" Padding="0,10,0,0">
                 <StackPanel>
                   <TextBlock Text="한국어 뜻" Foreground="#AEC8EF" FontSize="11"/>
@@ -80,8 +80,6 @@
                              Foreground="#DFEBFF" FontSize="14" LineHeight="24" TextWrapping="Wrap" Margin="0,5,0,0"/>
                 </StackPanel>
               </Border>
-              <TextBlock Text="질문에 짧게 답하는 우선 추천 표현" Foreground="#9BAFCB" FontSize="11"
-                         Margin="0,9,0,0"/>
             </StackPanel>
           </Border>
           <Border x:Name="AlternativeCard" Visibility="Collapsed" Background="#08FFFFFF"
@@ -89,11 +87,11 @@
             <StackPanel>
               <DockPanel>
                 <TextBlock Text="대안 표현" DockPanel.Dock="Right" Foreground="#9FB1CB" FontSize="10"/>
-                <TextBlock Text="02 · 다른 표현으로 답하기" Foreground="#B7D2FF" FontSize="11"
+                <TextBlock Text="02 · 다른 대응 방식" Foreground="#B7D2FF" FontSize="11"
                            FontWeight="SemiBold"/>
               </DockPanel>
-              <TextBlock x:Name="AlternativeText" FontSize="23" LineHeight="33" FontWeight="SemiBold"
-                         TextWrapping="Wrap" Margin="0,10,0,12"/>
+              <TextBlock x:Name="AlternativeText" FontSize="21" LineHeight="29" FontWeight="SemiBold"
+                         TextWrapping="Wrap" Margin="0,8,0,8"/>
               <Border BorderBrush="#30A1C5FF" BorderThickness="0,1,0,0" Padding="0,10,0,0">
                 <StackPanel>
                   <TextBlock Text="한국어 뜻" Foreground="#AEC8EF" FontSize="11"/>
@@ -101,8 +99,6 @@
                              TextWrapping="Wrap" Margin="0,5,0,0"/>
                 </StackPanel>
               </Border>
-              <TextBlock Text="같은 질문에 답하는 대안 표현" Foreground="#9BAFCB" FontSize="11"
-                         Margin="0,9,0,0"/>
             </StackPanel>
           </Border>
           <TextBlock x:Name="ContinuityText" TextWrapping="Wrap" Foreground="#9BAEC9" FontSize="10" Margin="0,12,0,0"/>

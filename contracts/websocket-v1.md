@@ -55,7 +55,13 @@ Speech receives the explicit phrase list through `PhraseListGrammar` before cont
 
 Routing: `grounded` always retrieves. `conversation` explicitly skips Search and instructs the model to abstain from unsupported private facts. `balanced` skips only anchored clear conversational requests, allowlisted self-contained general technical questions, or introductions covered by confirmed profile fields. Company/customer/date/commitment questions and ambiguous fragments default to Search. Up to12 prior turns/24000 characters can make routing more conservative; history never turns an ambiguous fragment into a confident knowledge-free answer. The model receives bounded history even when routing chooses Search. General technical questions should get direct explanations, not irrelevant requests for personal details.
 
-Text commands: `{"type":"response.request"}`, `{"type":"response.cancel"}`, `{"type":"session.stop"}`. Manual request uses the latest finalized utterance; before any final it returns a retryable `no_transcript` error. At most 10 commands/second. A finalized utterance automatically starts a response. A new partial utterance cancels the previous response; a new final/manual request supersedes pending generation. After cancellation, obsolete deltas/completions are discarded. Socket writes are serialized.
+Optional `semanticSegmentation` (boolean, default false) selects Azure Speech's sentence-oriented
+`Semantic` strategy for continuous meeting captions. Native meeting mode enables it by default;
+the legacy/browser silence strategy is unchanged. Recognition-only practice keeps silence-based
+boundaries even if the flag is present. Semantic segmentation aims for complete sentences, not
+speaker diarization or guaranteed grammatical correction; partial text remains provisional.
+
+Text commands: `{"type":"response.request"}`, `{"type":"response.cancel"}`, `{"type":"session.stop"}`. Manual request uses the latest finalized utterance; before any final it returns a retryable `no_transcript` error. At most 10 commands/second. A finalized utterance automatically starts a response when idle. While a reply is active, new partials do not cancel it and the latest final is queued; intermediate queued finals remain in recognized history. Completion/failure starts the latest queued reply. Manual regeneration/cancellation and stop invalidate obsolete generation immediately and clear queued work. Clients match active response/turn IDs, retain completed suggestions and label previous-question replies. Socket writes are serialized.
 
 Server events:
 
@@ -78,7 +84,10 @@ The first suggestion equals `text`; `response.delta` still appends only primary 
 Azure generates two independently speakable concise English wordings from the same transcript/evidence
 in **one** streamed model request, not an additional retrieval or model round trip. The internal newline
 separator and second wording are never streamed to the primary text. The prompt targets at most two
-short sentences / 25 words per option. A missing, duplicate, multiline, oversized or over-25-word
+short sentences / 18 words per option, with an A2-B1 Korean-speaking IT-engineer reading persona.
+The persona sets vocabulary difficulty, not evidence of employment or personal history. The second
+reply uses a distinct conversational move rather than synonym-only paraphrasing.
+A missing, duplicate, multiline, oversized or over-25-word
 alternative is discarded; deterministic profile replies and grounding failures have only one suggestion.
 Suggestions share completion-level grounding/sources; they are not individually verified citations.
 Korean translations are client enrichment, not part of this English API field. Neither primary nor

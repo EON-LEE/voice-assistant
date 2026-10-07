@@ -14,6 +14,20 @@ public sealed class SessionOptionsAndRoutingTests
         Profile = new("Alex", "Engineer", "Original prototype")
     };
 
+    [Fact]
+    public void SemanticCaptionSegmentationIsOptInAndPracticeKeepsSilenceBoundaries()
+    {
+        Assert.False(SessionOptions.Legacy.SemanticSegmentation);
+        var options = Parse("""{"semanticSegmentation":true,"endSilenceMs":1100}""");
+        var captions = AzureMeetingProvider.CreateSpeechConfig(new() { SpeechRegion = "eastus" }, "test-token", options);
+        Assert.Equal("Semantic", captions.GetProperty(PropertyId.Speech_SegmentationStrategy));
+        var practice = AzureMeetingProvider.CreateSpeechConfig(new() { SpeechRegion = "eastus" }, "test-token",
+            options with { TranscribeOnly = true });
+        Assert.NotEqual("Semantic", practice.GetProperty(PropertyId.Speech_SegmentationStrategy));
+        Assert.Equal("1100", practice.GetProperty(PropertyId.Speech_SegmentationSilenceTimeoutMs));
+        Assert.Throws<InvalidOperationException>(() => Parse("""{"semanticSegmentation":"true"}"""));
+    }
+
     public static IEnumerable<object[]> RoutingCases()
     {
         string[] technical = ["an API", "REST", "JMAP", "JSON", "HTTP", "HTTPS", "WebSockets", "OAuth",

@@ -7,8 +7,8 @@ public static class PracticeOutputs
 {
     public static JsonElement Validate(string json, PracticeRequest request, bool fake = false)
     {
-        json = PracticeOutputNormalization.Normalize(json, request.Operation, request.Kind);
-        if (request.Operation == "enrich" && request.Kind == "reply")
+        json = PracticeOutputNormalization.Normalize(json, request.Operation, request.Kind, request.TranslationOnly);
+        if (request.WantsPronunciation)
             json = PronunciationAlignment.Rebuild(json, request.Text);
         using var parsed = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 8 });
         var value = parsed.RootElement;
@@ -25,8 +25,8 @@ public static class PracticeOutputs
                     var korean = PracticeJson.Text(value.GetProperty("korean"), 1, 400, true);
                     if (!korean.StartsWith("[fake-ko] ", StringComparison.Ordinal)) throw PracticeException.Invalid();
                 }
-                else Korean(value.GetProperty("korean"), 400, hangulFirst: true);
-                if (request.Kind == "question")
+                else Korean(value.GetProperty("korean"), 400, translation: true);
+                if (!request.WantsPronunciation)
                 {
                     rule = "pronunciation:null";
                     if (value.GetProperty("pronunciation").ValueKind != JsonValueKind.Null) throw PracticeException.Invalid();
@@ -121,12 +121,19 @@ public static class PracticeOutputs
         PracticeException Invalid(string reason) => PracticeOutputNormalization.Invalid("schema:" + rule + ":" + reason);
     }
 
-    private static string Korean(JsonElement value, int max, bool hangulFirst = false, string rule = "korean")
+    private static string Korean(JsonElement value, int max, bool translation = false, string rule = "korean")
     {
         var text = OutputText(value, max, rule);
         var hangul = text.Count(Hangul);
         if (hangul == 0) throw Invalid("no_hangul");
-        if (hangulFirst && !Hangul(text.FirstOrDefault(char.IsLetter))) throw Invalid("hangul_first");
+        // A translation may begin with a kept name ("Copilot이 ..."); it must still be mostly Korean, not an English echo.
+        if (translation)
+        {
+            var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            var koreanWords = words.Count(word => word.Any(Hangul));
+            var latinWords = words.Count(word => !word.Any(Hangul) && word.Any(char.IsAsciiLetter));
+            if (koreanWords == 0 || (latinWords > 2 && latinWords >= koreanWords)) throw Invalid("hangul_dominant");
+        }
         if (text.Any(c => CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.Surrogate or UnicodeCategory.OtherSymbol))
             throw Invalid("symbols");
         if (text.IndexOfAny(['<', '>', '*', '`', '#']) >= 0) throw Invalid("markup");

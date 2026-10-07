@@ -46,8 +46,10 @@ public sealed class StateAndProtocolTests
         state.Apply(new("transcript.final", "old", 1, "old"));
         state.Apply(new("response.started", "old", ResponseId: "old-r"));
         state.Apply(new("transcript.partial", "new", 1, "new"));
+        Assert.Equal("old-r", state.Current!.ResponseId);
+        state.Apply(new("transcript.final", "new", 2, "new"));
         state.Apply(new("response.started", "old", ResponseId: "late"));
-        Assert.Null(state.Current);
+        Assert.Equal("old-r", state.Current.ResponseId);
         state.Pause(true);
         state.Apply(new("response.started", "new", ResponseId: "paused"));
         Assert.Null(state.Current);
@@ -59,6 +61,24 @@ public sealed class StateAndProtocolTests
         state.BeginRequest();
         state.Apply(new("response.started", "new", ResponseId: "requested"));
         Assert.Equal("requested", state.Current!.ResponseId);
+    }
+
+    [Fact]
+    public void ContinuousSpeechDoesNotDiscardAnAlreadyStartedReply()
+    {
+        var state = new ReplyState();
+        state.Apply(new("transcript.final", "one", 1, "Launch?"));
+        state.Apply(new("response.started", "one", ResponseId: "r1"));
+        state.Apply(new("transcript.partial", "two", 1, "And"));
+        state.Apply(new("response.delta", "one", Text: "Review first.", ResponseId: "r1"));
+        state.Apply(new("transcript.final", "two", 2, "And who owns launch?"));
+        state.Apply(new("response.completed", "one", Text: "Review first.", ResponseId: "r1",
+            Sources: [], Suggestions: ["Review first.", "Could we review the findings together?"]));
+        Assert.Equal(2, state.Display!.Answers.Count);
+        state.Apply(new("response.started", "two", ResponseId: "r2"));
+        Assert.Equal("r1", state.Display.ResponseId);
+        state.Apply(new("response.delta", "one", Text: "stale", ResponseId: "r1"));
+        Assert.Equal("", state.Current!.Text);
     }
 
     [Fact]

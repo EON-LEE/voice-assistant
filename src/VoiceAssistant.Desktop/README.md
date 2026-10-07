@@ -58,11 +58,15 @@ Supported settings include `Mode`, `Endpoint`, `Origin`, `Authority`, `TenantId`
 1. Select an active **physical microphone** in secondary settings. There are no login buttons or consent/translation checkboxes in the visible meeting flow. **Start Live** explicitly identifies microphone audio transmission to Azure and requires participant permission; it does not start on launch. Start first uses the encrypted persistent account cache and requests Microsoft authentication only when necessary, before capturing audio. API authentication and private-document owner filtering are not disabled.
 2. Review the topic and optional profile values. **Grounded (always search my materials)** is the default; it retrieves only from the signed-in account's authorized Azure AI Search documents. Balanced and Conversation are explicit alternatives.
 3. Select **Start meeting overlay**. Microphone capture begins only after the server accepts the session; the secondary settings window hides and the overlay remains the main surface.
-4. The fixed-width 550×860 overlay (height capped at the Windows work area) stays on top, has a translucent dark background and opaque text, and moves from its header. **Overlay v2** in the header distinguishes this build from older portable folders. The latest transcript has a highlighted left-edge bubble, prior speech is muted, each answer has a numbered label, and a grounding badge accompanies the answer heading. The Korean meaning stays below each English option. There are **no visible buttons, resize grip, close/expand controls, or opacity slider**. Its right-click menu provides setup, start, pause/resume, regenerate, translation retry, stop and application exit. There are no global hotkeys that can steal slide-navigation keys.
+4. The fixed-width 550×860 overlay (height capped at the Windows work area) stays on top, has a translucent dark background and opaque text, and moves from its header. **Overlay v2** in the header distinguishes this build from older portable folders. Recognized English/Korean flows through a 240-pixel conversation area without per-turn cards; up to 12 recent utterances remain available. Each answer has a numbered label, and a grounding badge accompanies the answer heading. The Korean meaning stays below each English option. There are **no visible buttons, resize grip, close/expand controls, or opacity slider**. Its right-click menu provides setup, start, pause/resume, regenerate, translation retry, stop and application exit. There are no global hotkeys that can steal slide-navigation keys.
 5. Recognized speech and its Korean translation appear in the upper independent conversation scroller. The central answer cards show one primary English suggestion and, when supplied by the server, one alternative with its own Korean meaning. Korean display is mandatory for the live overlay. English streams without waiting for translation; completed options translate concurrently, keyed to response/option so late translations cannot overwrite another answer. Loading and failure states occupy the Korean area instead of leaving it blank; **Retry Korean translation** is available from the menu. Owner-authorized source names and grounding state stay below the cards.
 6. The last completed suggestion remains visible while a new utterance or regeneration is pending, on pause/cancel, and after stop, with its original question identified as previous/current. A new session clears it. Generated suggestions are never added to recognized transcript history. Before the first answer the card shows an honest waiting state, not an invented suggestion. Menu actions and consent remain explicit; the overlay does not auto-start capture.
 
-The native client uses a 500 ms end-of-speech silence threshold for faster turn completion; this can split a speaker's thought sooner than the 700 ms server default. Increase it in `appsettings.json` or a supplied settings file if your speakers pause mid-sentence.
+Native meeting captions default to Azure Speech semantic segmentation, which prefers sentence-ending
+boundaries instead of treating each short pause as a complete sentence. Partials remain live/provisional.
+Set `SemanticSegmentation:false` to restore silence segmentation; its native fallback is1100ms.
+Recognition-only practice uses silence boundaries. Semantic segmentation does not fix microphone noise
+or guarantee complete grammar; it is not speaker diarization.
 
 Conversation context is on by default. The API combines bounded recent recognized
 utterances with bounded excerpts of earlier actual speech for follow-up retrieval
@@ -71,6 +75,16 @@ meeting archive; old details can be omitted. Retrieval prefetch and final retrie
 use the same contextual query without an extra model call to rewrite each question.
 One model stream produces the primary reply and an optional alternative; existing
 servers without `suggestions` still display their single `text` reply.
+The alternative is prompted to offer a distinct grounded conversational move
+(next step, clarification or condition), not a synonym-only paraphrase.
+Ongoing speech does not cancel an already-started reply: it completes while the
+latest finalized utterance is queued, replacing any intermediate queued utterance.
+The next generation uses all retained recognized context. Previous-question labels
+remain visible, and manual regeneration, pause and stop still cancel explicitly.
+The default reading persona is a Korean-speaking IT engineer learning spoken English:
+prefer one short A2-B1 sentence,5-10 words per sentence,18 words maximum per suggestion.
+Familiar IT terms are retained. This style persona never supplies employer/project/history facts;
+only explicitly confirmed profile fields can be used in personal assertions.
 
 Pause discards queued and new audio locally and cancels the active suggestion. Stop sends `session.stop`, closes the socket, and releases the WASAPI capture device. The API enforces its session duration and per-user concurrency limits. Captured audio is not written to disk; Azure still processes audio/text submitted during an active session under the service's data policy.
 
@@ -108,6 +122,10 @@ to the same account-connection routine. Translation requests share one
 nonempty-Korean-response validator; per-turn and per-option ownership remains
 separate. The overlay renders session status, conversation and suggestions
 independently so status updates do not overwrite reply text or translations.
+Live translation sends `translationOnly: true`, avoiding unused pronunciation
+generation and validation. Long recognized utterances are translated in sequential
+chunks within the API's 600-character limit, rather than failing the whole request
+as invalid input. Translation failures retain their visible error/retry state.
 
 The desktop tests cover protocol event parsing and grounding metadata, ticket request bearer/Origin headers and URL construction, grounded/500 ms start-option serialization, PCM conversion, bounded streaming/lifecycle behavior, and WPF's no-capture startup plus separated conversation/suggestion presentation and fixed translucent overlay. The optional external-backend test is skipped unless explicitly configured.
 

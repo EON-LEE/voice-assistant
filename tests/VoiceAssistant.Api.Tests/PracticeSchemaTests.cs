@@ -23,6 +23,19 @@ public sealed class PracticeSchemaTests
     public void AssistRequestsAcceptOnlyDocumentedTypes(string operation, string json) =>
         Assert.Equal(operation, Parse(operation, json).Operation);
 
+    [Theory]
+    [InlineData("""{"kind":"reply","text":"Let me check."}""", false, true)]
+    [InlineData("""{"kind":"reply","text":"Let me check.","translationOnly":false}""", false, true)]
+    [InlineData("""{"kind":"reply","text":"Let me check.","translationOnly":true}""", true, false)]
+    [InlineData("""{"kind":"question","text":"What is it?","translationOnly":true}""", true, false)]
+    [InlineData("""{"kind":"question","text":"What is it?"}""", false, false)]
+    public void EnrichTranslationOnlyIsOptionalAndOnlyExistingReplyRequestsWantPronunciation(string json, bool only, bool reading)
+    {
+        var request = Parse("enrich", json);
+        Assert.Equal(only, request.TranslationOnly);
+        Assert.Equal(reading, request.WantsPronunciation);
+    }
+
     public static IEnumerable<object[]> InvalidRequests()
     {
         foreach (var json in new[]
@@ -31,7 +44,10 @@ public sealed class PracticeSchemaTests
             """{"kind":"reply","text":"hi","text":"there"}""", """{"kind":null,"text":"hi"}""",
             """{"kind":"other","text":"hi"}""", """{"kind":"reply","text":1}""",
             """{"kind":"reply","text":"\t"}""", """{"kind":"reply","text":"hello\rthere"}""",
-            """{"kind":"reply","text":"한국어"}""", """{"kind":"reply","text":""}"""
+            """{"kind":"reply","text":"한국어"}""", """{"kind":"reply","text":""}""",
+            """{"kind":"reply","text":"hi","translationOnly":null}""", """{"kind":"reply","text":"hi","translationOnly":"true"}""",
+            """{"kind":"reply","text":"hi","translationOnly":1}""",
+            """{"kind":"reply","text":"hi","translationOnly":true,"translationOnly":false}"""
         }) yield return ["enrich", json];
         yield return ["enrich", JsonSerializer.Serialize(new { kind = "reply", text = new string('a', 601) })];
         foreach (var json in new[]

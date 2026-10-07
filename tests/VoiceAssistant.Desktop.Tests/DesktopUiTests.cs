@@ -85,6 +85,14 @@ public sealed class DesktopUiTests
                     Apply(new("transcript.partial", "turn-2", 1, "And when?"));
                     Assert.Equal("Review first.", ((TextBlock)overlay.FindName("AnswerText")).Text);
                     Assert.Contains("이전", ((TextBlock)overlay.FindName("PrimaryLabel")).Text);
+                    var overlayConversation = (StackPanel)overlay.FindName("ConversationPanel");
+                    Assert.Equal(2, overlayConversation.Children.Count);
+                    Assert.All(overlayConversation.Children.Cast<object>(), child => Assert.IsType<StackPanel>(child));
+                    Assert.Equal(240, ((ScrollViewer)overlay.FindName("ConversationScroll")).Height);
+                    var firstLine = overlayConversation.Children[0];
+                    Apply(new("response.started", "turn-2", ResponseId: "response-3"));
+                    Apply(new("response.delta", "turn-2", Text: "After review.", ResponseId: "response-3"));
+                    Assert.Same(firstLine, overlayConversation.Children[0]);
                     Assert.True(Control<Button>("StartButton").IsEnabled);
                     api.Dispose();
                     result.TrySetResult();

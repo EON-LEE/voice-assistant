@@ -20,7 +20,12 @@ public sealed record PracticeTurn(string Question, string Answer, string? Correc
 public sealed record PracticeRequest(string Operation, string Text = "", string Kind = "", string Voice = "coach",
     string Rate = "normal", PracticeScenario? Scenario = null, string Topic = "", bool UseMaterials = false,
     int MaxTurns = 0, IReadOnlyList<PracticeHistory>? History = null, string Question = "", string Answer = "",
-    IReadOnlyList<PracticeTurn>? Turns = null);
+    IReadOnlyList<PracticeTurn>? Turns = null, bool TranslationOnly = false)
+{
+    // Questions never carry pronunciation; translation-only replies skip the Hangul reading entirely.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool WantsPronunciation => Operation == "enrich" && Kind == "reply" && !TranslationOnly;
+}
 
 internal static class PracticeJson
 {
@@ -75,10 +80,11 @@ public static class PracticeRequests
     {
         if (operation == "enrich")
         {
-            PracticeJson.Object(root, ["kind", "text"]);
+            PracticeJson.Object(root, ["kind", "text"], "translationOnly");
             var text = PracticeJson.Text(root.GetProperty("text"), 1, 600, true);
             EnglishInput(text);
-            return new(operation, text, PracticeJson.Choice(root.GetProperty("kind"), "question", "reply"));
+            return new(operation, text, PracticeJson.Choice(root.GetProperty("kind"), "question", "reply"),
+                TranslationOnly: root.TryGetProperty("translationOnly", out var only) && PracticeJson.Boolean(only));
         }
         if (operation == "speak")
         {

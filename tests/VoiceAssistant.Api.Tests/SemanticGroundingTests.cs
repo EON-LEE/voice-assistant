@@ -223,7 +223,7 @@ public sealed class SemanticGroundingTests
         using var body = JsonDocument.Parse(handler.ChatBody!);
         var messages = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
         var policy = messages[0].GetProperty("content").GetString()!;
-        Assert.Contains("at most 2 short sentences and at most 25 words", policy);
+        Assert.Contains("at most 2 short sentences and at most 18 words", policy);
         Assert.Contains("simple everyday words", policy);
         Assert.Contains("Never use markdown", policy);
         Assert.Contains("only the words to say, as plain text", policy);

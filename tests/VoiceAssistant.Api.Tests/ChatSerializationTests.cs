@@ -39,6 +39,11 @@ public sealed class ChatSerializationTests
         Assert.Contains("JMAP supports push updates.", handler.RequestBody);
         Assert.Contains("TWO alternative English replies", handler.RequestBody);
         Assert.Contains("SAME supplied evidence", handler.RequestBody);
+        Assert.Contains("DIFFERENT conversational", handler.RequestBody);
+        Assert.Contains("NOT simply paraphrase", handler.RequestBody);
+        Assert.Contains("Korean-speaking IT engineer", handler.RequestBody);
+        Assert.Contains("CEFR A2-B1", handler.RequestBody);
+        Assert.Contains("at most 18 words", handler.RequestBody);
     }
 
     [Fact]

@@ -39,6 +39,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private MeetingMetrics.ResponseMeasurement? responseMeasurement;
     private int generationNumber;
     private bool responseActive;
+    private bool responsePending;
     private int overflow;
     private SessionOptions options = SessionOptions.Legacy;
     private PartialRetrieval? prefetch;
@@ -103,12 +104,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             }
                             lastTurn = transcript.TurnId;
                             lastFinalTimestamp = message.Timestamp;
-                            await StartResponseAsync(lifetime.Token, manual: false);
+                            if (responseActive) responsePending = true;
+                            else await StartResponseAsync(lifetime.Token, manual: false);
                         }
                         else
                         {
-                            if (responseActive && transcript.TurnId != responseTurn)
-                                await CancelResponseAsync(lifetime.Token);
                             prefetch!.Update(transcript, earlierTranscripts.With(conversation));
                         }
                         break;
@@ -146,6 +146,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }, lifetime.Token);
                         if (message.ModelResponse) responseMeasurement?.CompletedSent();
                         responseActive = false;
+                        if (responsePending) await StartResponseAsync(lifetime.Token, manual: false);
                         break;
                     case "generation.error" when message.Generation == generationNumber && responseActive:
                         var failure = (ProviderException)message.Value!;
@@ -166,7 +167,13 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             }, lifetime.Token);
                             responseActive = false;
                         }
-                        else await CancelResponseAsync(lifetime.Token);
+                        else
+                        {
+                            var pending = responsePending;
+                            await CancelResponseAsync(lifetime.Token);
+                            responsePending = pending;
+                        }
+                        if (responsePending) await StartResponseAsync(lifetime.Token, manual: false);
                         break;
                 }
             }
@@ -337,6 +344,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     private async Task CancelResponseAsync(CancellationToken cancellation)
     {
+        responsePending = false;
         generation?.Cancel();
         generationNumber++;
         if (!responseActive) return;
@@ -392,7 +400,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         {
             if (!lifetime.IsCancellationRequested)
             {
-                var error = exception as ProviderException ?? new ProviderException("response_unavailable", "Response service is unavailable. Please retry.");
+                var error = exception switch
+                {
+                    ProviderException failure => failure,
+                    System.ClientModel.ClientResultException { Status: 429 } =>
+                        new ProviderException("model_busy", "Azure model request limit reached. Wait briefly, then retry."),
+                    _ => new ProviderException("response_unavailable", "Response service is unavailable. Please retry.")
+                };
+                logger.LogWarning("Meeting response failed with code {Code}, HTTP status {Status}.", error.Code,
+                    exception is System.ClientModel.ClientResultException client ? client.Status : 0);
                 await events.Writer.WriteAsync(new("generation.error", error, number), lifetime);
             }
         }

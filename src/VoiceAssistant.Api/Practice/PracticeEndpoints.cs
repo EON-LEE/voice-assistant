@@ -59,6 +59,12 @@ public static class PracticeEndpoints
                 catch (Exception exception)
                 {
                     PracticeDiagnostics.Failure(app.Logger, operation, exception, 0);
+                    if (exception is System.ClientModel.ClientResultException { Status: 429 } or
+                        Azure.RequestFailedException { Status: 429 })
+                    {
+                        context.Response.Headers.RetryAfter = "1";
+                        return Error(PracticeException.Busy());
+                    }
                     return Error(PracticeException.Unavailable());
                 }
                 finally

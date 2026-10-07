@@ -26,6 +26,28 @@ public sealed partial class ApiTests
             json.RootElement.GetProperty("pronunciation").ValueKind);
     }
 
+    [Theory]
+    [InlineData("question")]
+    [InlineData("reply")]
+    public async Task DesktopTranslationOnlyEnrichmentReturnsNullPronunciationOverHttp(string kind)
+    {
+        var model = new EnrichmentContractModel();
+        await using var host = await Host.StartAsync(azure: true, practiceModel: model);
+        using var client = host.Client;
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Token());
+        var response = await client.PostAsync("/api/assist/enrich",
+            PracticeBody(JsonSerializer.Serialize(new { kind, text = "Let me check.", translationOnly = true })));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.False(string.IsNullOrWhiteSpace(json.RootElement.GetProperty("korean").GetString()));
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("pronunciation").ValueKind);
+        Assert.True(Assert.Single(model.Requests).TranslationOnly);
+        var invalid = await client.PostAsync("/api/assist/enrich",
+            PracticeBody(JsonSerializer.Serialize(new { kind, text = "Let me check.", translationOnly = "yes" })));
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        Assert.Single(model.Requests);
+    }
+
     public static IEnumerable<object[]> PracticePayloads()
     {
         yield return ["/api/assist/enrich", """{"kind":"reply","text":"Let me check the goal."}"""];
@@ -255,10 +277,14 @@ public sealed partial class ApiTests
     private static StringContent PracticeBody(string json) => new(json, Encoding.UTF8, "application/json");
     private sealed class EnrichmentContractModel : IPracticeModel
     {
-        public Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, CancellationToken cancellation) =>
-            Task.FromResult(request.Kind == "question"
+        public System.Collections.Concurrent.ConcurrentQueue<PracticeRequest> Requests { get; } = new();
+        public Task<string> GenerateAsync(PracticeRequest request, Grounding grounding, bool retry, CancellationToken cancellation)
+        {
+            Requests.Enqueue(request);
+            return Task.FromResult(request.Kind == "question"
                 ? """{"korean":"목표가 무엇인가요?","pronunciation":null}"""
                 : """{"korean":"확인해 볼게요.","pronunciation":[{"en":"Let me check.","ko":"렛 미 첵"}]}""");
+        }
     }
 
     private sealed class FixedPracticeModel : IPracticeModel

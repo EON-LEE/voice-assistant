@@ -337,6 +337,78 @@ public sealed class PracticeModelVariationTests
             """{"korean":"Hello how are you 가","pronunciation":null}""", new("enrich", "Hello?", "question")));
     }
 
+    [Theory]
+    [InlineData("reply")]
+    [InlineData("question")]
+    public async Task TranslationOnlyNeverRequestsOrValidatesPronunciationAndCompletesInOneCall(string kind)
+    {
+        // Even a broken model-supplied reading must not cost a retry when the caller asked for translation only.
+        using var handler = new Responses("""{"korean":"위험을 확인해요.","pronunciation":[{"en":"wrong","ko":"Latin"}]}""");
+        using var http = new HttpClient(handler);
+        var logger = new CapturingLogger<PracticeService>();
+        var result = (JsonElement)await Service(http, logger).ExecuteAsync(
+            new("enrich", "The main risk is a slow database migration, so we start early.", kind, TranslationOnly: true),
+            "caller", CancellationToken.None);
+        Assert.Equal("위험을 확인해요.", result.GetProperty("korean").GetString());
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("pronunciation").ValueKind);
+        Assert.Equal(1, handler.Calls);
+        Assert.Empty(logger.Lines);
+        using var body = JsonDocument.Parse(handler.Bodies[0]);
+        var system = body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!;
+        Assert.Contains("pronunciation MUST be JSON null", system);
+        Assert.DoesNotContain("SOUNDS", system);
+        Assert.DoesNotContain("chunk", system);
+        Assert.Contains("do not explain, coach, or speculate", system);
+        Assert.Equal(1024, body.RootElement.GetProperty("max_completion_tokens").GetInt32());
+    }
+
+    [Fact]
+    public async Task ExistingReplyClientsStillReceiveAndAreAskedForAlignedPronunciation()
+    {
+        using var handler = new Responses("""{"korean":"위험이에요.","pronunciation":[{"en":"The risk.","ko":"더 리스크"}]}""");
+        using var http = new HttpClient(handler);
+        var logger = new CapturingLogger<PracticeService>();
+        var result = (JsonElement)await Service(http, logger).ExecuteAsync(
+            new("enrich", "The risk.", "reply"), "caller", CancellationToken.None);
+        Assert.Equal("더 리스크", result.GetProperty("pronunciation")[0].GetProperty("ko").GetString());
+        using var body = JsonDocument.Parse(handler.Bodies[0]);
+        var system = body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!;
+        Assert.Contains("English SOUNDS written in Hangul", system);
+        Assert.Contains("\"pronunciation\":[{\"en\"", system);
+    }
+
+    [Theory]
+    [InlineData("Copilot이 오늘 준비됐나요?")]
+    [InlineData("Azure DevOps 파이프라인")]
+    [InlineData("Zephyr 롤아웃의 가장 큰 위험은 무엇인가요?")]
+    [InlineData("네.")]
+    public async Task TranslationsThatKeepLeadingNamesSucceedWithoutRetry(string korean)
+    {
+        using var handler = new Responses(JsonSerializer.Serialize(new { korean, pronunciation = (object?)null }));
+        using var http = new HttpClient(handler);
+        var logger = new CapturingLogger<PracticeService>();
+        var result = (JsonElement)await Service(http, logger).ExecuteAsync(
+            new("enrich", "Is Copilot ready today?", "question", TranslationOnly: true), "caller", CancellationToken.None);
+        Assert.Equal(korean, result.GetProperty("korean").GetString());
+        Assert.Equal(1, handler.Calls);
+        Assert.Empty(logger.Lines);
+    }
+
+    [Theory]
+    [InlineData("Is Copilot ready today 가")]
+    [InlineData("The main risk is 위험")]
+    public async Task EnglishEchoTranslationIsRetriedThenSurfacedAsProviderUnavailable(string korean)
+    {
+        using var handler = new Responses(JsonSerializer.Serialize(new { korean, pronunciation = (object?)null }));
+        using var http = new HttpClient(handler);
+        var logger = new CapturingLogger<PracticeService>();
+        var failure = await Assert.ThrowsAsync<PracticeException>(() => Service(http, logger).ExecuteAsync(
+            new("enrich", "Is Copilot ready today?", "question", TranslationOnly: true), "caller", CancellationToken.None));
+        Assert.Equal(502, failure.Status);
+        Assert.Equal(2, handler.Calls);
+        Assert.All(logger.Lines, line => Assert.Contains("schema:korean:hangul_dominant", line));
+    }
+
     private static PracticeService Service(HttpClient http, CapturingLogger<PracticeService> logger)
     {
         var client = new AzureOpenAIClient(new Uri("https://example.openai.azure.com"), new ApiKeyCredential("test-only"),

@@ -6,7 +6,7 @@ namespace VoiceAssistant.Api.Practice;
 
 internal static class PracticeOutputNormalization
 {
-    internal static string Normalize(string json, string operation, string? kind = null)
+    internal static string Normalize(string json, string operation, string? kind = null, bool translationOnly = false)
     {
         if (json.Length > 32768) throw Invalid("schema:output_size");
         json = json.Trim().TrimStart('\uFEFF').Replace("\r\n", "\n");
@@ -29,8 +29,8 @@ internal static class PracticeOutputNormalization
             _ => throw Invalid("schema:root")
         };
         Project(root, fields);
-        if (operation == "enrich" && kind == "question")
-            root["pronunciation"] = null; // This field is server-owned for questions, irrespective of model output.
+        if (operation == "enrich" && (kind == "question" || translationOnly))
+            root["pronunciation"] = null; // Server-owned when no reading was requested, irrespective of model output.
         foreach (var pair in root.ToArray())
         {
             if (pair.Value is JsonValue value && value.TryGetValue<string>(out var text))

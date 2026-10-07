@@ -196,6 +196,35 @@ public sealed partial class ApiTests
     }
 
     [Fact]
+    public async Task ContinuousSpeechCompletesPendingReplyThenAnswersLatestFinal()
+    {
+        var provider = new ControlledProvider { Alternative = "Could we review the plan together?" };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, Start);
+        await Receive(socket);
+        provider.Emit(new("one", 1, "What is our delivery plan?", true));
+        var started = await Until(socket, "response.started");
+        await provider.RetrievalStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        provider.Emit(new("two", 1, "And", false));
+        await Until(socket, "transcript.partial");
+        provider.Emit(new("two", 2, "And who owns launch?", true));
+        await Until(socket, "transcript.final");
+        provider.Emit(new("three", 1, "What should we do next?", true));
+        await Until(socket, "transcript.final");
+        provider.AutomaticRetrieval = true;
+        provider.Release.SetResult(new("no_matches", []));
+        var first = await Until(socket, "response.completed");
+        Assert.Equal(started.GetProperty("responseId").GetString(), first.GetProperty("responseId").GetString());
+        Assert.Equal("one", first.GetProperty("turnId").GetString());
+        Assert.Equal(2, first.GetProperty("suggestions").GetArrayLength());
+        var next = await Until(socket, "response.completed");
+        Assert.Equal("three", next.GetProperty("turnId").GetString());
+        Assert.Equal(2, provider.Answers);
+        Assert.Equal(3, provider.LastHistory!.Length);
+    }
+
+    [Fact]
     public async Task PendingPrefetchDoesNotBlockAudioCancelOrStopAndNeverLeaksObsoleteResponse()
     {
         const string query = "What is our customer delivery plan?";

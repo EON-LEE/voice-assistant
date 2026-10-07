@@ -8,6 +8,7 @@ namespace VoiceAssistant.Desktop;
 public partial class OverlayWindow : Window
 {
     private bool closingAfterCleanup;
+    private (TranscriptTurn Turn, string Translation)[] renderedConversation = [];
     public OverlayWindow()
     {
         InitializeComponent();
@@ -50,6 +51,10 @@ public partial class OverlayWindow : Window
     public void ShowConversation(IReadOnlyList<TranscriptTurn> turns, IReadOnlyDictionary<string, string> translations,
         bool demo)
     {
+        var recent = turns.TakeLast(12).Select(turn => (Turn: turn,
+            Translation: translations.TryGetValue(turn.TurnId, out var translated) ? translated : "")).ToArray();
+        if (recent.SequenceEqual(renderedConversation) && turns.Count > 0) return;
+        renderedConversation = recent;
         ConversationPanel.Children.Clear();
         if (turns.Count == 0)
         {
@@ -57,15 +62,15 @@ public partial class OverlayWindow : Window
             ConversationPanel.Children.Add(QuestionText);
             return;
         }
-        var recent = turns.TakeLast(3).ToArray();
-        foreach (var turn in recent)
+        foreach (var entry in recent)
         {
-            bool current = turn == recent[^1];
-            var bubble = new StackPanel();
+            var turn = entry.Turn;
+            bool current = turn == recent[^1].Turn;
+            var bubble = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
             bubble.Children.Add(new TextBlock
             {
-                Text = turn.Text, TextWrapping = TextWrapping.Wrap, FontSize = current ? 15 : 13,
-                LineHeight = current ? 25 : 21,
+                Text = turn.Text, TextWrapping = TextWrapping.Wrap, FontSize = 15,
+                LineHeight = 25,
                 Foreground = new SolidColorBrush(current ? Color.FromRgb(237, 242, 250) : Color.FromRgb(154, 170, 193))
             });
             bubble.Children.Add(new TextBlock
@@ -73,21 +78,12 @@ public partial class OverlayWindow : Window
                 Text = !turn.IsFinal ? "듣는 중…" :
                     translations.TryGetValue(turn.TurnId, out var translation) ? translation :
                     demo ? "오프라인 예시 · 실제 번역 요청 없음" : "한국어 번역 중…",
-                TextWrapping = TextWrapping.Wrap, FontSize = current ? 13 : 12,
-                LineHeight = current ? 22 : 20,
+                TextWrapping = TextWrapping.Wrap, FontSize = 13,
+                LineHeight = 22,
                 Foreground = new SolidColorBrush(current ? Color.FromRgb(180, 195, 216) : Color.FromRgb(137, 155, 181)),
                 Margin = new Thickness(0, 5, 0, 0)
             });
-            ConversationPanel.Children.Add(new Border
-            {
-                Background = current ? new SolidColorBrush(Color.FromArgb(8, 255, 255, 255)) : Brushes.Transparent,
-                BorderBrush = new SolidColorBrush(current ? Color.FromRgb(112, 136, 170) : Color.FromRgb(71, 88, 111)),
-                BorderThickness = new Thickness(2, 0, 0, 0),
-                CornerRadius = new CornerRadius(9),
-                Padding = current ? new Thickness(13, 10, 13, 10) : new Thickness(13, 0, 13, 0),
-                Margin = new Thickness(0, 0, 0, 10),
-                Child = bubble
-            });
+            ConversationPanel.Children.Add(bubble);
         }
         ConversationScroll.ScrollToEnd();
     }

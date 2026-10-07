@@ -17,6 +17,16 @@ public sealed class ReplySuggestionsTests
     }
 
     [Fact]
+    public void LeadingBlankLinesDoNotHidePrimaryOrTurnItIntoAlternative()
+    {
+        var parser = new ReplySuggestions();
+        var primary = string.Concat("\r\n  First answer.\nSecond answer."
+            .Select(character => parser.Append(character.ToString())));
+        Assert.Equal("First answer.", primary);
+        Assert.Equal(2, ReplySuggestions.Complete(primary, parser.Alternative).Length);
+    }
+
+    [Fact]
     public void MissingAlternativeKeepsReadableSinglePrimary()
     {
         var parser = new ReplySuggestions();

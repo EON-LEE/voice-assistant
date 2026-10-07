@@ -99,7 +99,8 @@ public sealed class AuthenticationTests
         using var document = System.Text.Json.JsonDocument.Parse(MeetingClient.BuildStartMessage(settings));
         var options = document.RootElement.GetProperty("options");
         Assert.Equal("grounded", options.GetProperty("responseMode").GetString());
-        Assert.Equal(500, options.GetProperty("endSilenceMs").GetInt32());
+        Assert.Equal(1100, options.GetProperty("endSilenceMs").GetInt32());
+        Assert.True(options.GetProperty("semanticSegmentation").GetBoolean());
         Assert.Equal("Quarterly planning", options.GetProperty("topic").GetString());
         Assert.True(options.GetProperty("profileConfirmed").GetBoolean());
         Assert.Equal("Ari", options.GetProperty("profile").GetProperty("name").GetString());

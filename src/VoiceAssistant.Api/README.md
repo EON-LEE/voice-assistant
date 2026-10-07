@@ -132,7 +132,7 @@ compliance; actual conversation acceptance runs also inspect this behavior.
 
 Audio exists only in bounded transient buffers and the live Speech SDK push stream; transcript/answer context is memory-only and cleared when the session ends. No application transcript/audio/query/body/credential logging or persistence is configured. Azure services still process submitted content under their service data policies: configure retention, network access and diagnostics to organizational requirements. Disable full request URL/query capture in Azure ingress, access logs, telemetry and reverse proxies because the upgrade URL carries a short-lived ticket.
 
-Errors are explicit safe messages; raw SDK exception details are suppressed. Startup, idle, response, write and session deadlines bound resource usage; 100 total sessions and one per identity, bounded queues, message/audio rates and bounded history prevent unbounded accumulation. A slow peer or overloaded recognizer is disconnected rather than silently dropping transcript/audio. New turns and manual cancellation invalidate stale generation before sending subsequent output.
+Errors are explicit safe messages; raw SDK exception details are suppressed. Startup, idle, response, write and session deadlines bound resource usage; 100 total sessions and one per identity, bounded queues, message/audio rates and bounded history prevent unbounded accumulation. A slow peer or overloaded recognizer is disconnected rather than silently dropping transcript/audio. Continuous partial/final speech does not abort an active reply: the latest final utterance is queued (intermediate queued utterances still enter recognized history) and starts after the active reply completes or fails. Manual regeneration/cancellation and session stop still invalidate obsolete generation immediately. Clients retain response/turn ownership and label replies to earlier questions accordingly.
 
 SDK references: [Speech Entra auth](https://learn.microsoft.com/azure/ai-services/speech-service/how-to-configure-azure-ad-auth), [Azure OpenAI .NET streaming](https://learn.microsoft.com/dotnet/api/overview/azure/ai.openai-readme), [Search vector quickstart](https://learn.microsoft.com/azure/search/search-get-started-vector).
 
@@ -178,7 +178,9 @@ Hangul chunks matches the new chunk count. It never manufactures missing Hangul 
 omissions or reordering. Input punctuation-only standalone tokens are rejected for alignment rather than guessed.
 Korean coaching may contain English technical terms
 without an arbitrary Latin-vs-Hangul character ratio and may quote the learner's English terms; Hangul text is still
-required, and the enrichment meaning translation still starts with Hangul. Feedback/headline caps are800characters
+required, and the enrichment meaning translation must be Hangul-dominant (`schema:korean:hangul_dominant`): it
+needs Hangul words and is rejected when more than two Latin-only words are not outnumbered by Hangul words, so a kept
+leading name such as `Copilot이 ...` is valid while an English echo is not. Feedback/headline caps are800characters
 and summary-phrase Korean meanings400, matching browser limits; enrichment translation remains400 and point text120.
 Hangul-only sound chunks retain their stricter script rule. Do not mistake these structural tolerances for semantic
 correction of model output.
@@ -198,7 +200,11 @@ outer endpoint timeout/provider failure or retrieval fallback. Categories includ
 `retrieval_unavailable`. No exception object, body, prompt, user text, identity, URL or rejected property name is logged.
 An exhausted schema retry can therefore yield two detailed safe model warnings and one generic endpoint warning.
 
-Question enrichment treats `pronunciation` as server-owned: any model-provided value is discarded and the response
+Enrichment accepts the optional boolean `translationOnly` (default false). When true, the model is never asked for
+a Hangul reading (the pronunciation rules are omitted from the prompt), no alignment runs, and `pronunciation` is JSON
+null for both kinds. The live desktop overlay uses this because it shows only Korean meaning; it saves output tokens and
+removes the alignment/Hangul-chunk retry path that could make a reply translation slow or fail502.
+Question and translation-only enrichment treat `pronunciation` as server-owned: any model-provided value is discarded and the response
 always contains JSON null, including when the field was omitted. Korean translation still passes validation.
 Reply enrichment has no null-success fallback: pronunciation remains required and aligned after at most one retry.
 On that retry only the allowlisted failed validator category is added to the system prompt (for example
@@ -227,7 +233,7 @@ the coordinator must verify those selected voices against the resource before cl
 No input text, audio, feedback or provider error body is logged or persisted. Response caching remains disabled.
 
 Fake enrichment deliberately uses the contract's `[fake-ko] ` marker and an input echo (truncated to400characters),
-not a real Korean translation; this marker is the explicit Fake-only exception to Hangul-first translation validation.
+not a real Korean translation; this marker is the explicit Fake-only exception to Hangul-dominant translation validation.
 Pronunciation still passes exact alignment/Hangul validation. Very word-dense replies that cannot fit40chunks fail502,
 rather than returning invalid alignment.
 
@@ -255,6 +261,15 @@ The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:
 These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record `disabled`/`grounded`/`no_matches` model paths; `no_matches` now invokes the model using transcript-only context rather than returning a fixed clarification. Grounding-unavailable deterministic refusal remains excluded. Retrieval metrics still record all outcomes.
 
 Tags are bounded `provider=Azure|Fake|TestDouble`; response `trigger=automatic|manual`; retrieval `outcome=grounded|disabled|no_matches|unavailable|unknown|failed|cancelled`. No content, IDs, URLs or arbitrary error messages are metric tags. No exporter, persistence, or new WebSocket event is enabled; an approved operational `MeterListener`/OpenTelemetry configuration may subscribe. Never mix Fake/TestDouble observations with Azure measurements.
+
+Live recommendations and Korean enrichment share the chat deployment's quota.
+Ten requests/minute is insufficient for continuous speech plus1-2 reply translations;
+check the deployment's actual `rateLimits`, not only the HTTP endpoint limiter.
+The deployed GlobalStandard `meeting-chat` allocation is100 requests/minute and100,000 tokens/minute,
+within the existing subscription quota, with the same usage-based pricing (no provisioned-throughput SKU).
+Translation-only enrichment uses a short dedicated translation prompt and a1024-token output budget,
+not the4096-token pronunciation/feedback budget. Upstream429 is surfaced as `busy` for enrichment
+and `model_busy` for meeting generation, with content-free failure diagnostics.
 
 The [live-provider acceptance probe](../../tools/VoiceAssistant.LiveProbe/README.md) directly exercises this same provider with an explicit opt-in original synthetic WAV and standard noninteractive `DefaultAzureCredential`. It separately reports content-free real service evidence or **BLOCKED**, never fake Azure success.
 

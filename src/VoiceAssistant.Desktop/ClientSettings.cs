@@ -15,7 +15,8 @@ public sealed record ClientSettings
     public string ClientId { get; init; } = "6c67aee7-0c67-48aa-9dce-40db347c5a7f";
     public string Scope { get; init; } = "api://4546bd70-1872-4a1d-bdcd-d09377e365e4/Meeting.Access";
     public string ResponseMode { get; init; } = "grounded";
-    public int EndSilenceMs { get; init; } = 500;
+    public int EndSilenceMs { get; init; } = 1100;
+    public bool SemanticSegmentation { get; init; } = true;
     public string Topic { get; init; } = "";
     public string ProfileName { get; init; } = "";
     public string ProfileRole { get; init; } = "";

@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, string> meetingTranslations = [];
     private readonly Dictionary<string, string[]> replyTranslations = [];
     private readonly HashSet<string> translatingResponses = [];
+    private readonly HashSet<string> translatingTurns = [];
     private readonly OverlayWindow overlay = new();
     private readonly HashSet<Task> enrichmentTasks = [];
     private MainWindow? demoPreview;
@@ -273,6 +274,7 @@ public partial class MainWindow : Window
         meetingTranslations.Clear();
         replyTranslations.Clear();
         translatingResponses.Clear();
+        translatingTurns.Clear();
         ErrorText.Text = "";
         lifetime = new CancellationTokenSource();
         client = IsDemo ? new MeetingClient(new DemoMeetingTransport())
@@ -356,12 +358,16 @@ public partial class MainWindow : Window
     private void ApplyMeetingEvent(ServerEvent message)
     {
         state.Apply(message);
+        if (message.Type == "response.started" && state.Current?.ResponseId == message.ResponseId)
+            ErrorText.Text = "";
         if (IsDemo && message.Type == "transcript.final" && message.TurnId == "demo-turn")
             meetingTranslations[message.TurnId] = "금요일까지 진행 상황을 공유해 주실 수 있나요? (고정 데모 예시)";
         if (message.Type == "transcript.final" && !IsDemo && KoreanBox.IsChecked == true &&
+            !meetingTranslations.ContainsKey(message.TurnId!) &&
             lifetime is { IsCancellationRequested: false } transcriptLifetime)
             TrackEnrichment(EnrichTranscriptAsync(message.TurnId!, message.Text!, transcriptLifetime.Token));
-        if (message.Type == "response.completed" && state.Current is { Complete: true } completed)
+        if (message.Type == "response.completed" && state.Current is { Complete: true } completed &&
+            completed.ResponseId == message.ResponseId)
         {
             if (IsDemo && completed.TurnId == "demo-turn")
                 replyTranslations[completed.ResponseId] =
@@ -378,7 +384,8 @@ public partial class MainWindow : Window
         Render();
         if (message.Type == "response.completed" && !IsDemo && closeTask is null &&
             lifetime is { IsCancellationRequested: false } activeLifetime &&
-            KoreanBox.IsChecked == true && state.Current is { Complete: true } reply)
+            KoreanBox.IsChecked == true && state.Current is { Complete: true } reply &&
+            reply.ResponseId == message.ResponseId && !replyTranslations.ContainsKey(reply.ResponseId))
             TrackEnrichment(EnrichReplyAsync(reply, activeLifetime.Token));
     }
 
@@ -391,6 +398,7 @@ public partial class MainWindow : Window
 
     private async Task EnrichTranscriptAsync(string turnId, string text, CancellationToken cancellationToken)
     {
+        if (!translatingTurns.Add(turnId)) return;
         try
         {
             var korean = await TranslateAsync("question", text, cancellationToken);
@@ -417,12 +425,13 @@ public partial class MainWindow : Window
             await Dispatcher.InvokeAsync(() =>
             {
                 if (cancellationToken.IsCancellationRequested) return;
-                meetingTranslations[turnId] = "한국어 번역을 가져오지 못했습니다.";
+                meetingTranslations[turnId] = TranslationFailure(ex);
                 ErrorText.Text = $"Meeting translation unavailable: {ex.Message}";
                 RenderConversation();
                 UpdateOverlay();
             });
         }
+        finally { translatingTurns.Remove(turnId); }
     }
 
     private async Task EnrichReplyAsync(ReplySnapshot reply, CancellationToken cancellationToken)
@@ -461,7 +470,7 @@ public partial class MainWindow : Window
                     {
                         if (cancellationToken.IsCancellationRequested ||
                             !replyTranslations.TryGetValue(reply.ResponseId, out var translations)) return;
-                        translations[index] = "한국어 번역 실패 · 우클릭 메뉴에서 재시도";
+                        translations[index] = TranslationFailure(ex) + " · 우클릭으로 재시도";
                         ErrorText.Text = $"Korean assist unavailable: {ex.Message}";
                         Render();
                     });
@@ -480,11 +489,40 @@ public partial class MainWindow : Window
 
     private async Task<string> TranslateAsync(string kind, string text, CancellationToken cancellationToken)
     {
-        using var document = await api.PostJsonAsync("/api/assist/enrich", new { kind, text }, cancellationToken);
-        var korean = document.RootElement.GetProperty("korean").GetString();
-        if (string.IsNullOrWhiteSpace(korean))
-            throw new InvalidDataException("The translation response is empty.");
-        return korean;
+        var translations = new List<string>();
+        foreach (var chunk in TranslationChunks(text))
+        {
+            using var document = await api.PostJsonAsync("/api/assist/enrich",
+                new { kind, text = chunk, translationOnly = true }, cancellationToken);
+            var korean = document.RootElement.GetProperty("korean").GetString();
+            if (string.IsNullOrWhiteSpace(korean))
+                throw new InvalidDataException("The translation response is empty.");
+            translations.Add(korean);
+        }
+        return string.Join(" ", translations);
+    }
+
+    private static string TranslationFailure(Exception exception) => exception switch
+    {
+        ApiRequestException { Code: "busy" } => "번역 요청 제한 · 잠시 후 재시도",
+        ApiRequestException { Code: "provider_timeout" } => "한국어 번역 시간 초과",
+        ApiRequestException { Code: "unauthorized" or "forbidden" } => "한국어 번역 인증 오류",
+        _ => "한국어 번역 실패"
+    };
+
+    private static IEnumerable<string> TranslationChunks(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            throw new InvalidDataException("The translation input is empty.");
+        var remaining = text.Trim();
+        while (remaining.Length > 600)
+        {
+            var boundary = remaining.LastIndexOfAny([' ', '\n', '\r', '\t'], 599, 600);
+            if (boundary <= 0) boundary = 600;
+            yield return remaining[..boundary];
+            remaining = remaining[boundary..].TrimStart();
+        }
+        if (remaining.Length > 0) yield return remaining;
     }
 
     private void Render()

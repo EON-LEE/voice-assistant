@@ -94,6 +94,7 @@ public sealed class MeetingClient
         {
             ["responseMode"] = settings.ResponseMode,
             ["endSilenceMs"] = settings.EndSilenceMs,
+            ["semanticSegmentation"] = settings.SemanticSegmentation && !settings.TranscribeOnly,
             ["topic"] = settings.Topic,
             ["transcribeOnly"] = settings.TranscribeOnly
         };

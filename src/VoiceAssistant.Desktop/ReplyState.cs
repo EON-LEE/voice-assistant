@@ -18,6 +18,7 @@ public sealed class ReplyState
     private readonly HashSet<string> seenResponses = [];
     private readonly Queue<string> responseOrder = [];
     private string? latestTurn;
+    private string? latestFinalTurn;
     private string? suppressedTurn;
     private bool suppressAll;
     public IReadOnlyList<TranscriptTurn> Turns => turns;
@@ -35,6 +36,7 @@ public sealed class ReplyState
         Current = null;
         LastCompleted = null;
         latestTurn = null;
+        latestFinalTurn = null;
         suppressedTurn = null;
         suppressAll = false;
         Error = null;
@@ -51,7 +53,7 @@ public sealed class ReplyState
     }
     public void CancelCurrent()
     {
-        suppressedTurn = latestTurn;
+        suppressedTurn = Current?.TurnId ?? latestFinalTurn ?? latestTurn;
         Current = null;
     }
 
@@ -73,14 +75,19 @@ public sealed class ReplyState
                 {
                     turns.Add(turn);
                     latestTurn = turn.TurnId;
-                    Current = null;
                     if (turns.Count > 64) turns.RemoveAt(0);
+                }
+                if (turn.IsFinal)
+                {
+                    latestFinalTurn = turn.TurnId;
                 }
                 return;
             case "response.started":
-                if (message.TurnId != latestTurn || suppressAll || suppressedTurn == message.TurnId ||
+                if (message.TurnId != latestFinalTurn && message.TurnId != latestTurn ||
+                    suppressAll || suppressedTurn == message.TurnId ||
                     !seenResponses.Add(message.ResponseId!)) return;
                 responseOrder.Enqueue(message.ResponseId!);
+                Error = null;
                 if (responseOrder.Count > 256) seenResponses.Remove(responseOrder.Dequeue());
                 Current = new(message.ResponseId!, message.TurnId!, "", [], false);
                 return;
@@ -88,7 +95,7 @@ public sealed class ReplyState
             case "response.completed":
             case "response.cancelled":
                 if (Current is null || Current.Complete || suppressAll || suppressedTurn == message.TurnId ||
-                    message.ResponseId != Current.ResponseId || message.TurnId != latestTurn) return;
+                    message.ResponseId != Current.ResponseId || message.TurnId != Current.TurnId) return;
                 if (message.Type == "response.cancelled") { Current = null; return; }
                 Current = message.Type == "response.delta"
                     ? Current with { Text = Limit(Current.Text + message.Text) }

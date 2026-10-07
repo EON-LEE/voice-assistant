@@ -75,8 +75,12 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             : SpeechConfig.FromEndpoint(new Uri(settings.SpeechEndpoint));
         config.AuthorizationToken = authorization;
         config.SpeechRecognitionLanguage = "en-US";
-        config.SetProperty(PropertyId.Speech_SegmentationSilenceTimeoutMs,
-            (options ?? SessionOptions.Legacy).EndSilenceMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var session = options ?? SessionOptions.Legacy;
+        if (session.SemanticSegmentation && !session.TranscribeOnly)
+            config.SetProperty(PropertyId.Speech_SegmentationStrategy, "Semantic");
+        else
+            config.SetProperty(PropertyId.Speech_SegmentationSilenceTimeoutMs,
+                session.EndSilenceMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
         config.SetProperty("OPENSSL_DISABLE_CRL_CHECK", "false");
         config.SetProperty("OPENSSL_CONTINUE_ON_CRL_DOWNLOAD_FAILURE", "false");
         return config;
@@ -196,9 +200,14 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             new SystemChatMessage("""
                 Help a participant speak in an English work meeting. The participant is not fluent in English and will
                 read your reply aloud, so write only the words to say, as plain text, only in English.
-                Style: at most 2 short sentences and at most 25 words in total; the first sentence is a direct answer
-                of about 8-14 words. Use simple everyday words (about CEFR B1), short sentences, contractions,
+                Reading persona: a Korean-speaking IT engineer who is a beginner at spoken English.
+                This persona sets language difficulty, not employer, projects, experience or personal history.
+                Style: prefer ONE sentence; at most 2 short sentences and at most 18 words in total.
+                Aim for 5-10 words per sentence and a direct first sentence.
+                Use very simple everyday words (CEFR A2-B1), short sentences, contractions,
                 the active voice and no idioms. Avoid rare or long words and jargon, unless the speaker used the term.
+                Keep familiar IT terms such as API, server, Azure and database when needed.
+                Do not mention the reader's nationality or English level in the spoken reply.
                 Never use markdown, asterisks, bullets, numbering, headings, quotation marks, emojis, line breaks,
                 lists of options, labels or stage directions. Do not repeat the question and do not add filler or background.
                 If you cannot answer from the supplied facts, say so in one short line, such as
@@ -255,9 +264,11 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         if (suggestions)
             messages.Add(new SystemChatMessage("""
                 Output format exception only: give exactly TWO alternative English replies separated by exactly
-                one newline. Each line is independently speakable, at most 2 short sentences and 25 words.
-                The first line is the primary direct reply; the second expresses the same supported answer
-                in different simple words. Both must use the SAME supplied evidence and uncertainty.
+                one newline. Each line is independently speakable, preferably ONE short sentence, at most 18 words.
+                The first line is the primary direct reply. The second must use a DIFFERENT conversational
+                move: propose a supported next step, ask a useful clarifying question, or surface a supported
+                condition/trade-off. It must NOT simply paraphrase the first line or repeat its clause order.
+                Both must use the SAME supplied evidence and uncertainty.
                 Do not add new facts, commitments, or personal assertions to the alternative.
                 No labels, numbering, markdown, JSON, quotation marks or commentary.
                 If a second safe wording is not possible, output only the first line.
