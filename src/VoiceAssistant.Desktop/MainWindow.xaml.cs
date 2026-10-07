@@ -18,7 +18,6 @@ public partial class MainWindow : Window
     private readonly AuthenticatedApiClient api;
     private readonly SemaphoreSlim stopGate = new(1, 1);
     private readonly ReplyState state = new();
-    private readonly Dictionary<string, string> suggestedReplies = [];
     private readonly Dictionary<string, string> meetingTranslations = [];
     private readonly Dictionary<string, string[]> replyTranslations = [];
     private readonly HashSet<string> translatingResponses = [];
@@ -78,7 +77,6 @@ public partial class MainWindow : Window
         DeviceBox.IsEnabled = !IsDemo;
         RefreshButton.IsEnabled = !IsDemo;
         MicTestButton.IsEnabled = !IsDemo;
-        KoreanBox.IsEnabled = !IsDemo;
         ReadButton.IsEnabled = !IsDemo;
         StartButton.Content = IsDemo ? "Start offline overlay preview" : "Start live — send microphone audio to Azure";
         StatusText.Text = IsDemo ? "OFFLINE DEMO — no sign-in, network, or microphone." : StatusText.Text;
@@ -241,29 +239,7 @@ public partial class MainWindow : Window
             UpdateOverlay();
             return;
         }
-        if (!IsDemo && !identity.IsSignedIn)
-        {
-            connectingAccount = true;
-            StartButton.IsEnabled = false;
-            ErrorText.Text = "";
-            StatusText.Text = "Connecting your Microsoft account — no microphone capture yet.";
-            try
-            {
-                await identity.SignInAsync();
-                AuthStatus.Text = "Account connected. Uploaded materials remain protected under your account.";
-            }
-            catch (Exception ex)
-            {
-                ErrorText.Text = $"Account connection did not finish: {ex.Message}";
-                UpdateOverlay();
-                return;
-            }
-            finally
-            {
-                connectingAccount = false;
-                StartButton.IsEnabled = true;
-            }
-        }
+        if (!await ConnectAccountForFeatureAsync()) return;
         var lease = AudioSessionCoordinator.TryAcquire();
         if (lease is null)
         {
@@ -294,7 +270,6 @@ public partial class MainWindow : Window
 
         audioLease = lease;
         state.ResetSession();
-        suggestedReplies.Clear();
         meetingTranslations.Clear();
         replyTranslations.Clear();
         translatingResponses.Clear();
@@ -305,7 +280,7 @@ public partial class MainWindow : Window
         StartButton.IsEnabled = SignInButton.IsEnabled = DeviceBox.IsEnabled = false;
         RefreshButton.IsEnabled = ConsentBox.IsEnabled = false;
         StopButton.IsEnabled = true;
-        overlay.ShowMeetingState(true, "", "",
+        overlay.ShowSessionState(true,
             IsDemo ? "Offline canned preview — no Search" : "Grounding pending",
             TopmostBox.IsChecked == true, demo: IsDemo);
         if (!overlay.IsVisible) overlay.Show();
@@ -394,10 +369,6 @@ public partial class MainWindow : Window
                     "네, 금요일까지 진행 상황을 공유할 수 있습니다. (고정 데모 예시)",
                     "짧은 진행 상황을 준비해서 금요일까지 보내겠습니다. (고정 데모 예시)"
                 ];
-            suggestedReplies[completed.TurnId] = completed.Text;
-            var retained = state.Turns.Select(turn => turn.TurnId).ToHashSet(StringComparer.Ordinal);
-            foreach (var stale in suggestedReplies.Keys.Where(turnId => !retained.Contains(turnId)).ToArray())
-                suggestedReplies.Remove(stale);
             StatusText.Text = "Suggested reply ready — listening for the next meeting utterance.";
         }
         else if (message.Type == "transcript.partial")
@@ -422,10 +393,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            using var document = await api.PostJsonAsync("/api/assist/enrich",
-                new { kind = "question", text }, cancellationToken);
-            string korean = document.RootElement.GetProperty("korean").GetString() ?? "";
-            if (string.IsNullOrWhiteSpace(korean)) throw new InvalidDataException("The translation response is empty.");
+            var korean = await TranslateAsync("question", text, cancellationToken);
             await Dispatcher.InvokeAsync(() =>
             {
                 if (cancellationToken.IsCancellationRequested || !state.Turns.Any(turn => turn.TurnId == turnId)) return;
@@ -469,10 +437,7 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    using var document = await api.PostJsonAsync("/api/assist/enrich",
-                        new { kind = "reply", text = answer }, cancellationToken);
-                    var korean = document.RootElement.GetProperty("korean").GetString();
-                    if (string.IsNullOrWhiteSpace(korean)) throw new InvalidDataException("The translation response is empty.");
+                    var korean = await TranslateAsync("reply", answer, cancellationToken);
                     await Dispatcher.InvokeAsync(() =>
                     {
                         if (cancellationToken.IsCancellationRequested ||
@@ -511,6 +476,15 @@ public partial class MainWindow : Window
                          !translatingResponses.Contains(id)).ToArray())
                 replyTranslations.Remove(stale);
         }
+    }
+
+    private async Task<string> TranslateAsync(string kind, string text, CancellationToken cancellationToken)
+    {
+        using var document = await api.PostJsonAsync("/api/assist/enrich", new { kind, text }, cancellationToken);
+        var korean = document.RootElement.GetProperty("korean").GetString();
+        if (string.IsNullOrWhiteSpace(korean))
+            throw new InvalidDataException("The translation response is empty.");
+        return korean;
     }
 
     private void Render()
@@ -587,8 +561,8 @@ public partial class MainWindow : Window
     private void UpdateOverlay()
     {
         var displayed = state.Display;
-        overlay.ShowMeetingState(client?.IsReady == true, LatestQuestion(),
-            displayed?.Text ?? "", IsDemo ? "고정 데모 예시 · 실제 문서 검색 아님" : displayed?.Grounding switch
+        overlay.ShowSessionState(client?.IsReady == true,
+            IsDemo ? "고정 데모 예시 · 실제 문서 검색 아님" : displayed?.Grounding switch
             {
                 "grounded" => "근거 있음 · 내 업로드 문서",
                 "no_matches" => "문서 근거 없음 · 사실 확인 필요",
@@ -596,7 +570,7 @@ public partial class MainWindow : Window
                 "disabled" => "이번 답변은 문서 검색을 사용하지 않음",
                 _ => "문서 근거 상태는 답변 완료 후 표시됩니다"
             },
-            !IsVisible && TopmostBox.IsChecked == true, KoreanText.Text, "", IsDemo, PauseBox.IsChecked == true);
+            !IsVisible && TopmostBox.IsChecked == true, IsDemo, PauseBox.IsChecked == true);
         overlay.ShowConversation(state.Turns, meetingTranslations, IsDemo);
         var translations = displayed is not null && replyTranslations.TryGetValue(displayed.ResponseId, out var values)
             ? values : IsDemo && displayed is not null
@@ -625,8 +599,6 @@ public partial class MainWindow : Window
             _ => "Grounding status was not supplied."
         };
     }
-
-    private string LatestQuestion() => state.Turns.LastOrDefault()?.Text ?? "";
 
     private static string FormatSources(ReplySnapshot? reply) => reply is null ? "" :
         string.Join(Environment.NewLine, reply.Sources.Select(source =>
@@ -770,10 +742,7 @@ public partial class MainWindow : Window
             ErrorText.Text = "Stop the meeting microphone before opening practice.";
             return;
         }
-        if (!identity.IsSignedIn && !IsDemo)
-        {
-            if (!await ConnectAccountForFeatureAsync()) return;
-        }
+        if (!await ConnectAccountForFeatureAsync()) return;
         if (practice is { IsVisible: true }) { practice.Activate(); return; }
         practice = new PracticeWindow(settings, identity, api);
         practice.Closed += (_, _) => practice = null;
@@ -784,6 +753,7 @@ public partial class MainWindow : Window
 
     private async Task<bool> ConnectAccountForFeatureAsync()
     {
+        if (closeTask is not null) return false;
         if (IsDemo || identity.IsSignedIn) return true;
         if (connectingAccount)
         {
@@ -792,6 +762,10 @@ public partial class MainWindow : Window
             return false;
         }
         connectingAccount = true;
+        bool restoreStart = StartButton.IsEnabled;
+        StartButton.IsEnabled = false;
+        ErrorText.Text = "";
+        StatusText.Text = "Connecting your Microsoft account — no microphone capture yet.";
         try
         {
             await identity.SignInAsync();
@@ -805,7 +779,11 @@ public partial class MainWindow : Window
             UpdateOverlay();
             return false;
         }
-        finally { connectingAccount = false; }
+        finally
+        {
+            connectingAccount = false;
+            StartButton.IsEnabled = restoreStart;
+        }
     }
 
     private async Task RefreshMaterialsAsync()

@@ -107,7 +107,6 @@
                     <TextBlock x:Name="SourcesText" Margin="0,2,0,0" TextWrapping="Wrap"/>
                     <TextBlock x:Name="KoreanText" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="17"
                                Foreground="#174A7E"/>
-                    <TextBlock x:Name="ReadingText" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#43536A"/>
                   </StackPanel>
                 </Border>
                 <WrapPanel Margin="0,10,0,5">

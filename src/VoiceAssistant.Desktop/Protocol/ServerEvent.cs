@@ -3,7 +3,6 @@ using System.Text.Json;
 namespace VoiceAssistant.Desktop.Protocol;
 
 public sealed record ReplySource(string Title, string Url, string? UpdatedAt);
-public sealed record GroundingInfo(string? Grounding, string? ResponseRoute, bool? RetrievalPrefetched);
 public sealed record ServerEvent(
     string Type, string? TurnId = null, int Revision = 0, string? Text = null,
     string? ResponseId = null, IReadOnlyList<ReplySource>? Sources = null,

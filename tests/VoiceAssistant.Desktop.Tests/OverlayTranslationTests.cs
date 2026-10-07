@@ -73,6 +73,7 @@ public sealed class OverlayTranslationTests
                     BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
                 Assert.Contains("번역 실패", ((TextBlock)overlay.FindName("KoreanText")).Text);
                 Assert.Contains("empty", ((TextBlock)overlay.FindName("SessionError")).Text);
+                Assert.Equal(Visibility.Visible, ((TextBlock)overlay.FindName("SessionError")).Visibility);
                 Assert.Equal("Answer.", ((TextBlock)overlay.FindName("AnswerText")).Text);
             }
             finally { await window.CloseForOwnerAsync(); }
@@ -96,7 +97,7 @@ public sealed class OverlayTranslationTests
                 var overlay = (OverlayWindow)typeof(MainWindow).GetField("overlay",
                     BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
                 var conversation = (StackPanel)overlay.FindName("ConversationPanel");
-                var bubble = Assert.IsType<StackPanel>(conversation.Children[0]);
+                var bubble = Assert.IsType<StackPanel>(Assert.IsType<Border>(conversation.Children[0]).Child);
                 Assert.Equal("출시 조건은 무엇인가요?", Assert.IsType<TextBlock>(bubble.Children[1]).Text);
                 Invoke(window, "ApplyMeetingEvent", new ServerEvent("response.started", "t", ResponseId: "r"));
                 Invoke(window, "ApplyMeetingEvent", new ServerEvent("response.completed", "t", Text: "Review first.",
@@ -144,6 +145,19 @@ public sealed class OverlayTranslationTests
                 Assert.Equal(Visibility.Collapsed, ((Button)window.FindName("DeviceCodeButton")).Visibility);
             }
             finally { await window.CloseForOwnerAsync(); }
+        });
+    }
+
+    [Fact]
+    public async Task ClosingWindowDoesNotStartNewAccountConnection()
+    {
+        await OnUiThread(async () =>
+        {
+            var settings = new ClientSettings { Mode = ConnectionMode.Production };
+            using var api = new AuthenticatedApiClient(settings, new TestIdentity());
+            var window = new MainWindow(settings, new NativeIdentity(settings), api);
+            await window.CloseForOwnerAsync();
+            Assert.False(await (Task<bool>)Invoke(window, "ConnectAccountForFeatureAsync")!);
         });
     }
 

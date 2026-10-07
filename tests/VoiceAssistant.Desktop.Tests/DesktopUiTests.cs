@@ -42,14 +42,14 @@ public sealed class DesktopUiTests
                     var overlay = (OverlayWindow)typeof(MainWindow).GetField("overlay",
                         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)!;
                     Assert.Equal(550, overlay.Width);
-                    Assert.True(overlay.Height <= 740);
+                    Assert.True(overlay.Height <= 860);
                     Assert.True(overlay.AllowsTransparency);
                     Assert.Equal(ResizeMode.NoResize, overlay.ResizeMode);
                     Assert.True(overlay.Topmost);
                     Assert.Equal(0, ((SolidColorBrush)overlay.Background).Color.A);
                     Assert.DoesNotContain(VisualChildren(overlay), element => element is Button or Slider);
                     Assert.False(overlay.IsVisible);
-                    overlay.ShowMeetingState(false, "", "", "Offline canned response", true, demo: true);
+                    overlay.ShowSessionState(false, "Offline canned response", true, demo: true);
                     Assert.Contains("OFFLINE DEMO", ((TextBlock)overlay.FindName("CaptureStatus")).Text);
                     Control<Button>("ShowOverlayButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert.True(overlay.IsVisible);
@@ -57,8 +57,7 @@ public sealed class DesktopUiTests
                     Assert.False(overlay.IsVisible);
                     Control<Button>("ShowOverlayButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     Assert.True(overlay.IsVisible);
-                    overlay.ShowMeetingState(true, "Can you confirm?", "Yes, I can.", "Grounded", true,
-                        "네, 확인하겠습니다.", "Yes (예) · I can (아이 캔)");
+                    overlay.ShowSessionState(true, "Grounded", true);
                     void Apply(ServerEvent message) => typeof(MainWindow).GetMethod("ApplyMeetingEvent",
                         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                         .Invoke(window, [message]);
@@ -78,6 +77,10 @@ public sealed class DesktopUiTests
                     Apply(new("response.completed", "turn-1", Text: "Review first.", ResponseId: "response-2",
                         Sources: [], Suggestions: ["Review first.", "Let's review before launch."]));
                     Assert.Equal(Visibility.Visible, ((Border)overlay.FindName("AlternativeCard")).Visibility);
+                    Assert.Equal("Let's review before launch.", ((TextBlock)overlay.FindName("AlternativeText")).Text);
+                    Assert.Equal("01 · 바로 답하기", ((TextBlock)overlay.FindName("PrimaryLabel")).Text);
+                    overlay.ShowSessionState(true, "Grounded", true);
+                    Assert.Equal("Review first.", ((TextBlock)overlay.FindName("AnswerText")).Text);
                     Assert.Equal("Let's review before launch.", ((TextBlock)overlay.FindName("AlternativeText")).Text);
                     Apply(new("transcript.partial", "turn-2", 1, "And when?"));
                     Assert.Equal("Review first.", ((TextBlock)overlay.FindName("AnswerText")).Text);
