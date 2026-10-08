@@ -136,7 +136,8 @@ public static class PracticeOutputs
         }
         if (text.Any(c => CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.Surrogate or UnicodeCategory.OtherSymbol))
             throw Invalid("symbols");
-        if (text.IndexOfAny(['<', '>', '*', '`', '#']) >= 0) throw Invalid("markup");
+        // Translations may keep a spoken "#4"; '#' is only markup in generated coaching text.
+        if (text.IndexOfAny(translation ? ['<', '>', '*', '`'] : ['<', '>', '*', '`', '#']) >= 0) throw Invalid("markup");
         return text;
         PracticeException Invalid(string reason) => PracticeOutputNormalization.Invalid("schema:" + rule + ":" + reason);
     }
