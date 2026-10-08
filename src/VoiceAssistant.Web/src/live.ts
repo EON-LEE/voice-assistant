@@ -58,7 +58,7 @@ topic.addEventListener("change", saveSettings);
 
 function sessionOptions(): SessionOptions {
   return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
-    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 2500 };
+    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 1000 };
 }
 
 // ---------- Live session lifecycle with automatic reconnect ----------
@@ -264,7 +264,9 @@ function renderSuggestions(): void {
   $("alternative-korean").textContent = ko[1] ?? "한국어 번역 준비 중…";
   const generating = ready && state.generating;
   const previous = !!display && (display.turnId !== state.latest?.id || generating && display.complete);
-  $("primary-label").textContent = previous ? "01 · 이전 질문용 답변" : "01 · 바로 답하기";
+  const myTurn = !previous && !!display?.respondNow;
+  $("primary-label").textContent = previous ? "01 · 이전 질문용 답변" : myTurn ? "01 · 지금 답할 차례" : "01 · 바로 답하기";
+  document.querySelector(".live-card.primary")!.classList.toggle("my-turn", myTurn);
   const question = state.turns.find(turn => turn.id === display?.turnId)?.text ?? (display ? "이전 대화" : "");
   $("continuity").textContent = !display
     ? generating ? "내 문서에서 근거를 찾아 답변 준비 중…" : active ? "듣는 중 · 질문이 끝나면 추천 답변을 만듭니다" : "우클릭으로 설정 / 라이브 시작"

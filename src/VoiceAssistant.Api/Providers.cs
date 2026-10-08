@@ -37,6 +37,9 @@ public interface IMeetingProvider
         await foreach (var text in AnswerAsync(conversation, grounding, options, responseRoute, cancellation).WithCancellation(cancellation))
             yield return new(text);
     }
+    /// <summary>Does the latest speech invite the listening participant to respond now? Used for emphasis only.</summary>
+    Task<bool> ShouldRespondAsync(IReadOnlyList<ConversationTurn> conversation, CancellationToken cancellation) =>
+        Task.FromResult(conversation.Count > 0 && ReplyTrigger.ContainsQuestion([conversation[^1].Text]));
 }
 
 public sealed class FakeMeetingProvider : IMeetingProvider

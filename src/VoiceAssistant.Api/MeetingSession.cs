@@ -88,7 +88,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false);
     private sealed record AudioMessage(byte[] Bytes);
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
-    private sealed record Completion(string Text, string[] Suggestions, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched);
+    private sealed record Completion(string Text, string[] Suggestions, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched, bool RespondNow = false);
 
     public async Task RunAsync(CancellationToken requestAborted, CancellationToken superseded = default)
     {
@@ -204,7 +204,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             sources = completion.Sources,
                             grounding = completion.Grounding,
                             responseRoute = completion.ResponseRoute,
-                            retrievalPrefetched = completion.RetrievalPrefetched
+                            retrievalPrefetched = completion.RetrievalPrefetched,
+                            respondNow = completion.RespondNow
                         }, lifetime.Token);
                         if (message.ModelResponse) responseMeasurement?.CompletedSent();
                         responseActive = false;
@@ -298,6 +299,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     /// <summary>Statements wait for more context, but never longer than this before a reply is offered.</summary>
     private static readonly TimeSpan MaxGatherTime = TimeSpan.FromSeconds(12);
+
+    /// <summary>The turn signal is optional: a slow or failed classifier yields "no emphasis", never an error.</summary>
+    private async Task<bool> TurnSignalAsync(Task<bool> signal)
+    {
+        try { return await signal.WaitAsync(TimeSpan.FromMilliseconds(800)); }
+        catch (Exception) when (!signal.IsCompletedSuccessfully)
+        {
+            _ = signal.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            return false;
+        }
+    }
 
     private void ScheduleSettle(CancellationTokenSource lifetime)
     {
@@ -464,6 +476,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 await MeetingMetrics.MeasureRetrievalAsync(provider,
                     RetrievalQuery.Build(history[^1].Text, history.Take(history.Length - 1).ToArray()), objectId, cancellation);
             var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches";
+            // Runs alongside the answer; it only adds emphasis and never delays or blocks the suggestion.
+            var turnSignal = provider.ShouldRespondAsync(history, cancellation);
             var text = new StringBuilder();
             string? alternative = null;
             await foreach (var update in provider.AnswerWithSuggestionsAsync(history, grounding, options, route, cancellation).WithCancellation(cancellation))
@@ -480,7 +494,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
             await events.Writer.WriteAsync(new("complete",
                 new Completion(text.ToString(), ReplySuggestions.Complete(text.ToString(), alternative),
-                    grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status, route, prefetched is not null), number,
+                    grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status, route, prefetched is not null,
+                    await TurnSignalAsync(turnSignal)), number,
                 ModelResponse: modelResponse), cancellation);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)

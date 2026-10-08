@@ -14,6 +14,17 @@ test("Live: two suggestions parse and the first must equal text", () => {
     assert.throws(() => parseEvent(JSON.stringify({ type: "response.completed", turnId: "t", responseId: "r", text: "x", sources: [], suggestions: bad })));
 });
 
+test("Live: respondNow is parsed, validated and kept on the completed reply", () => {
+  const e = parseEvent(JSON.stringify({ type: "response.completed", turnId: "t", responseId: "r", text: "Yes.", sources: [], respondNow: true }));
+  assert.equal(e.respondNow, true);
+  assert.throws(() => parseEvent(JSON.stringify({ type: "response.completed", turnId: "t", responseId: "r", text: "Yes.", sources: [], respondNow: "yes" })));
+  const state = new LiveState();
+  state.apply(final("t", "What do you think?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply(e);
+  assert.equal(state.display?.respondNow, true);
+});
+
 test("Live: continuous speech never discards a started reply and keeps last suggestions visible", () => {
   const state = new LiveState();
   state.apply(final("one", "Launch?"));

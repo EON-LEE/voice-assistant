@@ -49,6 +49,9 @@ html, body.live-body { margin: 0; min-height: 100%; }
 }
 .live-card { margin-top: 12px; padding: 15px 16px; border-radius: 11px; }
 .live-card.primary { background: rgba(115, 156, 222, .07); border: 1px solid rgba(154, 187, 238, .21); }
+/* The latest speech invites a response: make the primary hint stand out. */
+.live-card.primary.my-turn { border-color: #84dcaf; box-shadow: 0 0 0 1px rgba(132, 220, 175, .45); background: rgba(132, 220, 175, .09); }
+.live-card.primary.my-turn #primary-label { color: #b4f0cf; }
 .live-card.secondary { background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .13); }
 .live-choice { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: #b7d2ff; }
 .live-choice span + span { font-size: 10px; font-weight: 400; color: #9fb1cb; }

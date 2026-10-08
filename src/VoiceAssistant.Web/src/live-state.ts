@@ -3,7 +3,7 @@ import type { Grounding, ServerEvent, Source } from "./protocol.js";
 export interface LiveTurn { id: string; revision: number; text: string; final: boolean }
 export interface LiveReply {
   id: string; turnId: string; text: string; complete: boolean; sources: Source[];
-  grounding?: Grounding; suggestions?: string[];
+  grounding?: Grounding; suggestions?: string[]; respondNow?: boolean;
 }
 export function answers(reply: LiveReply | null): string[] {
   if (!reply) return [];
@@ -90,7 +90,7 @@ export class LiveState {
         if (e.type === "response.cancelled") { this.current = null; return; }
         if (e.type === "response.delta") { this.current = { ...current, text: bounded(current.text + e.text) }; return; }
         this.current = { ...current, text: bounded(e.text!), complete: true, sources: structuredClone(e.sources ?? []),
-          ...(e.grounding ? { grounding: e.grounding } : {}), ...(e.suggestions ? { suggestions: [...e.suggestions] } : {}) };
+          ...(e.grounding ? { grounding: e.grounding } : {}), ...(e.suggestions ? { suggestions: [...e.suggestions] } : {}), ...(e.respondNow ? { respondNow: true } : {}) };
         this.lastCompleted = this.current;
         return;
       }

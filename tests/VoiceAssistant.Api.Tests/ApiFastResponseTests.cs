@@ -242,6 +242,7 @@ public sealed partial class ApiTests
         provider.Emit(new("d", 1, "What price should we pick?", true));
         var completed = await Until(socket, "response.completed");
         Assert.Equal("d", completed.GetProperty("turnId").GetString());
+        Assert.True(completed.GetProperty("respondNow").GetBoolean());
         await Task.Delay(900);
         Assert.Equal(1, provider.Answers);
         Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("remote control"));

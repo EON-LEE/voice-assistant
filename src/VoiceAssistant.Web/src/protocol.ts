@@ -9,6 +9,8 @@ export interface ServerEvent {
   retrievalPrefetched?: boolean;
   /** One or two English replies; the first always equals `text`. Older servers omit it. */
   suggestions?: string[];
+  /** The latest speech invites the listener to respond now (emphasis only). */
+  respondNow?: boolean;
 }
 export const startMessage = {
   type: "session.start", protocolVersion: 1,
@@ -53,6 +55,7 @@ export function parseEvent(data: unknown): ServerEvent {
       throw new Error("Invalid grounding status.");
     if (e.responseRoute !== undefined && !["transcript", "profile", "knowledge"].includes(e.responseRoute as string))
       throw new Error("Invalid response route.");
+    if (e.respondNow !== undefined && typeof e.respondNow !== "boolean") throw new Error("Invalid respondNow flag.");
     if (e.retrievalPrefetched !== undefined && typeof e.retrievalPrefetched !== "boolean")
       throw new Error("Invalid retrieval prefetch flag.");
     let suggestions: string[] | undefined;
@@ -65,7 +68,7 @@ export function parseEvent(data: unknown): ServerEvent {
     }
     return { type, turnId, responseId, text: text("text"), sources, grounding: e.grounding as Grounding | undefined,
       responseRoute: e.responseRoute as ResponseRoute | undefined, retrievalPrefetched: e.retrievalPrefetched as boolean | undefined,
-      ...(suggestions ? { suggestions } : {}) };
+      ...(suggestions ? { suggestions } : {}), ...(e.respondNow === undefined ? {} : { respondNow: e.respondNow as boolean }) };
   }
   throw new Error(`Unsupported server event: ${type}`);
 }
