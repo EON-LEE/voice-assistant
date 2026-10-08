@@ -51,7 +51,10 @@ namespace VoiceAssistant.Api
                     services.GetRequiredService<ILogger<AzurePracticeSpeech>>()));
             builder.Services.AddSingleton<PracticeService>();
             builder.Services.AddSingleton<PracticeLimiter>();
-            builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+            var demo = DemoLoginSettings.Read(builder.Configuration);
+            builder.Services.AddSingleton(demo);
+            builder.Services.AddSingleton<DemoLoginLimiter>();
+            var authentication = builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
             {
                 options.MapInboundClaims = false;
                 options.IncludeErrorDetails = false;
@@ -72,9 +75,15 @@ namespace VoiceAssistant.Api
                     };
                 }
             });
+            if (demo.Enabled) authentication.AddJwtBearer(DemoLoginSettings.Scheme, options => DemoLoginSettings.Configure(options, demo));
             builder.Services.AddAuthorization(options => options.AddPolicy("Meeting", policy =>
+            {
+                // Entra tokens always; demo-login tokens only when DemoLogin is configured.
+                policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+                if (demo.Enabled) policy.AuthenticationSchemes.Add(DemoLoginSettings.Scheme);
                 policy.RequireAuthenticatedUser().RequireAssertion(context =>
-                    MeetingIdentity.HasScope(context.User) && MeetingIdentity.ObjectId(context.User) is not null)));
+                    MeetingIdentity.HasScope(context.User) && MeetingIdentity.ObjectId(context.User) is not null);
+            }));
 
             var app = builder.Build();
             app.Use(async (context, next) =>
@@ -97,8 +106,10 @@ namespace VoiceAssistant.Api
                 authority = settings.Fake ? "" : $"https://login.microsoftonline.com/{settings.TenantId}",
                 scope = settings.Scope,
                 mode = settings.Mode,
+                login = demo.Enabled && !settings.Fake ? "demo" : "entra",
                 webSocketPath = "/api/meeting"
             }));
+            app.MapDemoLogin(settings, demo);
             app.MapPost("/api/session/ticket", (HttpContext context, TicketStore store) =>
             {
                 if (!OriginPolicy.Allows(context, settings)) return Results.StatusCode(403);

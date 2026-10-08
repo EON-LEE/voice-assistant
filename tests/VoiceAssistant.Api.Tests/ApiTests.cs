@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Security.Claims;
 using System.Text;
@@ -167,6 +168,65 @@ public sealed partial class ApiTests
         Assert.Equal("session.ready", (await Receive(socket)).GetProperty("type").GetString());
         await Assert.ThrowsAsync<WebSocketException>(() => host.ConnectAsync(ticket, "https://meeting.example"));
         await Assert.ThrowsAsync<WebSocketException>(() => host.ConnectAsync(origin: "https://meeting.example"));
+    }
+
+    [Fact]
+    public async Task DemoLoginIssuesOwnerTokenRejectsWrongPasswordAndLimitsAttempts()
+    {
+        var key = Convert.ToBase64String(Enumerable.Range(1, 48).Select(i => (byte)i).ToArray());
+        await using var host = await Host.StartAsync(azure: true, configuration: new()
+        {
+            ["DemoLogin:Username"] = "test", ["DemoLogin:Password"] = "test",
+            ["DemoLogin:ObjectId"] = ObjectId, ["DemoLogin:SigningKey"] = key
+        });
+        using var client = host.Client;
+        var config = await client.GetFromJsonAsync<JsonElement>("/api/client-config");
+        Assert.Equal("demo", config.GetProperty("login").GetString());
+        StringContent Login(string user, string password) =>
+            new(JsonSerializer.Serialize(new { username = user, password }), Encoding.UTF8, "application/json");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsync("/api/demo/login", Login("test", "wrong"))).StatusCode);
+        using (var response = await client.PostAsync("/api/demo/login", Login("test", "test")))
+        {
+            response.EnsureSuccessStatusCode();
+            var token = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+            client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+            using var ticketResponse = await client.PostAsync("/api/session/ticket", null);
+            ticketResponse.EnsureSuccessStatusCode();
+            var ticket = (await ticketResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ticket").GetString()!;
+            using var socket = await host.ConnectAsync(ticket, "https://meeting.example");
+            await Send(socket, Start);
+            Assert.Equal("session.ready", (await Receive(socket)).GetProperty("type").GetString());
+            // A demo token with a tampered payload is rejected.
+            var parts = token.Split('.');
+            client.DefaultRequestHeaders.Authorization = new("Bearer", parts[0] + "." + parts[1] + "x." + parts[2]);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsync("/api/session/ticket", null)).StatusCode);
+        }
+        client.DefaultRequestHeaders.Authorization = new("Bearer", host.Token());
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/session/ticket", null)).StatusCode);
+        for (var i = 0; i < 9; i++) await client.PostAsync("/api/demo/login", Login("test", "nope"));
+        Assert.Equal((HttpStatusCode)429, (await client.PostAsync("/api/demo/login", Login("test", "test"))).StatusCode);
+        using var crossOrigin = new HttpClient { BaseAddress = client.BaseAddress };
+        crossOrigin.DefaultRequestHeaders.Add("Origin", "https://evil.example");
+        Assert.Equal(HttpStatusCode.Forbidden, (await crossOrigin.PostAsync("/api/demo/login", Login("test", "test"))).StatusCode);
+    }
+
+    [Fact]
+    public async Task DemoLoginIsAbsentByDefaultAndRejectsWeakConfiguration()
+    {
+        await using (var host = await Host.StartAsync(azure: true))
+        {
+            using var client = host.Client;
+            Assert.Equal("entra", (await client.GetFromJsonAsync<JsonElement>("/api/client-config")).GetProperty("login").GetString());
+            using var absent = await client.PostAsync("/api/demo/login",
+                new StringContent("""{"username":"test","password":"test"}""", Encoding.UTF8, "application/json"));
+            Assert.False(absent.IsSuccessStatusCode);
+            Assert.DoesNotContain("token", await absent.Content.ReadAsStringAsync());
+        }
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Host.StartAsync(azure: true, configuration: new()
+        {
+            ["DemoLogin:Username"] = "test", ["DemoLogin:Password"] = "test",
+            ["DemoLogin:ObjectId"] = ObjectId, ["DemoLogin:SigningKey"] = Convert.ToBase64String(new byte[16])
+        }));
     }
 
     [Fact]

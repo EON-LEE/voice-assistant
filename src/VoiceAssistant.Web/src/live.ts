@@ -70,7 +70,7 @@ async function startLive(): Promise<void> {
     // Uses the cached account first; a popup appears only when Microsoft requires sign-in again.
     if (config.mode === "Azure" && !(await auth.verify())) await auth.signIn();
   } catch (error) {
-    connectionMessage = `Microsoft 계정 연결 실패: ${asError(error).message}`;
+    connectionMessage = `${auth.isDemo ? "로그인" : "Microsoft 계정 연결"} 실패: ${asError(error).message}`;
     render(); return;
   }
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -342,10 +342,12 @@ function fillDevices(devices: MediaDeviceInfo[]): void {
   micDevice.value = [...micDevice.options].some(option => option.value === selected) ? selected : "";
 }
 function renderAccount(): void {
+  const label = auth.isDemo ? "로그인" : "Microsoft 계정 연결";
   $("account-status").textContent = auth.isFake ? "로컬 테스트 서버 (로그인 불필요)"
-    : auth.signedIn ? `연결된 계정: ${auth.accountName} · 이 브라우저에서 로그인이 유지됩니다` : "Microsoft 계정이 아직 연결되지 않았습니다.";
+    : auth.signedIn ? `로그인됨: ${auth.accountName} · 이 브라우저에서 로그인이 유지됩니다`
+    : auth.isDemo ? "아직 로그인하지 않았습니다." : "Microsoft 계정이 아직 연결되지 않았습니다.";
   $("signin").hidden = auth.isFake;
-  $("signin").textContent = auth.signedIn ? "다른 계정으로 연결" : "Microsoft 계정 연결";
+  $("signin").textContent = auth.signedIn ? (auth.isDemo ? "다시 로그인" : "다른 계정으로 연결") : label;
 }
 function openSettings(): void {
   if (pipWindow) window.focus();
