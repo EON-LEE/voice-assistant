@@ -414,6 +414,8 @@ public partial class MainWindow : Window
         ApiRequestException api => api.Code is "busy" or "provider_unavailable" or "provider_timeout",
         System.Net.WebSockets.WebSocketException or HttpRequestException or TimeoutException or TaskCanceledException => true,
         IOException io => !io.Message.StartsWith("invalid_", StringComparison.Ordinal) &&
+            !io.Message.StartsWith("session_superseded", StringComparison.Ordinal) &&
+            !io.Message.StartsWith("session_time_limit", StringComparison.Ordinal) &&
             !io.Message.StartsWith("transcribe_only", StringComparison.Ordinal) &&
             !io.Message.StartsWith("forbidden", StringComparison.Ordinal) &&
             !io.Message.StartsWith("unauthorized", StringComparison.Ordinal),

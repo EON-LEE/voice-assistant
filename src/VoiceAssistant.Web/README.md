@@ -2,6 +2,29 @@
 
 Installation-free TypeScript/Vite frontend for the same-origin Azure-hosted API. End users open a URL; no Windows app, extension, or download is needed. Tab capture never requests microphone permission; the explicit in-person microphone mode does. The preserved desktop project is not a dependency.
 
+## Live overlay page (`/live.html`) — same screen as the desktop overlay
+
+`live.html` reproduces the desktop **Overlay v2** layout (550×860 dark panel, recognized English/Korean
+caption flow, one or two English suggestions with Korean meaning, grounding badge and sources) and its
+right-click menu (settings/materials, start, pause, regenerate, Korean retry, stop). It reuses the
+microphone, ticketed WebSocket and MSAL modules and matches the desktop behaviour:
+
+- Grounded mode by default, Azure semantic sentence segmentation, 1100 ms silence fallback.
+- `response.completed.suggestions` (1–2 replies) with distinct alternative; last completed suggestions stay visible
+  while the next reply is prepared; ongoing speech never discards a started reply (`live-state.ts`).
+- Korean via `translationOnly` enrichment, chunked at 600 characters, retried 3 times on transient failure,
+  with specific failure labels (rate limit, timeout, auth).
+- Automatic reconnect (300 ms–3 s backoff, up to 20 attempts; reset after 30 s of stable connection) that keeps
+  transcript and suggestions on screen. Sign-in, permission, time-limit and `session_superseded` failures stop instead.
+  A BroadcastChannel stops older tabs when another tab starts live.
+- Sign-in persists in this browser profile (`localStorage` MSAL cache, opt-in for this page only);
+  Microsoft policy can still require interactive sign-in.
+- **항상 위 작은 창으로 띄우기** moves the same panel into a Document Picture-in-Picture window (Edge/Chrome).
+
+A web page uses the same Windows network path as the desktop app, so it does not avoid network filtering that
+resets connections to Azure; it only reconnects automatically. Local verification scripts:
+`tests/VoiceAssistant.Web.E2E/verify-live.mjs` and `verify-live-reconnect.mjs` (local Fake API + Vite, Edge synthetic microphone).
+
 ## Viewport overlay, floating window and practice
 
 The meeting viewport is a single glass-like floating card, not a scrolling document: a small handle and control strip, **one internally scrollable conversation area**, and a fixed compact action bar. No hero/title block or long footer occupies the meeting surface. The strip contains round Start/Stop, elapsed timer, Meeting / Practice chips, status and Settings/Float/Opacity icons. English question, Korean meaning, streamed suggestion/listen controls and aligned pronunciation occupy the middle; transcript history is a collapsed disclosure. A pinned answer remains separate. The card fills the viewport; **Compact** optionally narrows it to about 420px when snapping the browser beside Teams. The separate materials page keeps its own layout. No third-party brand, wording, imagery, logo or assets are included.

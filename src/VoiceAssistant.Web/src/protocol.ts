@@ -7,6 +7,8 @@ export interface ServerEvent {
   grounding?: Grounding;
   responseRoute?: ResponseRoute;
   retrievalPrefetched?: boolean;
+  /** One or two English replies; the first always equals `text`. Older servers omit it. */
+  suggestions?: string[];
 }
 export const startMessage = {
   type: "session.start", protocolVersion: 1,
@@ -53,8 +55,17 @@ export function parseEvent(data: unknown): ServerEvent {
       throw new Error("Invalid response route.");
     if (e.retrievalPrefetched !== undefined && typeof e.retrievalPrefetched !== "boolean")
       throw new Error("Invalid retrieval prefetch flag.");
+    let suggestions: string[] | undefined;
+    if (e.suggestions !== undefined) {
+      if (!Array.isArray(e.suggestions) || e.suggestions.length < 1 || e.suggestions.length > 2 ||
+        e.suggestions.some(value => typeof value !== "string" || !value.trim() || value.length > 8000))
+        throw new Error("Invalid response suggestions.");
+      suggestions = e.suggestions as string[];
+      if (suggestions[0] !== e.text) throw new Error("The primary suggestion must match response text.");
+    }
     return { type, turnId, responseId, text: text("text"), sources, grounding: e.grounding as Grounding | undefined,
-      responseRoute: e.responseRoute as ResponseRoute | undefined, retrievalPrefetched: e.retrievalPrefetched as boolean | undefined };
+      responseRoute: e.responseRoute as ResponseRoute | undefined, retrievalPrefetched: e.retrievalPrefetched as boolean | undefined,
+      ...(suggestions ? { suggestions } : {}) };
   }
   throw new Error(`Unsupported server event: ${type}`);
 }

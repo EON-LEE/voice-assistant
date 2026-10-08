@@ -6,6 +6,8 @@ export interface SessionOptions {
   phrases: string[];
   endSilenceMs: number;
   transcribeOnly?: boolean;
+  /** Azure sentence-oriented caption segmentation for continuous meeting speech. */
+  semanticSegmentation?: boolean;
 }
 
 export function defaultOptions(): SessionOptions {
@@ -40,9 +42,12 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     throw new Error("End-of-turn silence must be an integer between 350 and 1500 ms.");
   if (input.transcribeOnly !== undefined && typeof input.transcribeOnly !== "boolean")
     throw new Error("transcribeOnly must be a boolean.");
+  if (input.semanticSegmentation !== undefined && typeof input.semanticSegmentation !== "boolean")
+    throw new Error("semanticSegmentation must be a boolean.");
   return { responseMode: input.responseMode, profile, profileConfirmed: input.profileConfirmed,
     topic: field(input.topic, 300, "Meeting topic"), phrases, endSilenceMs: input.endSilenceMs,
-    ...(input.transcribeOnly === undefined ? {} : { transcribeOnly: input.transcribeOnly }) };
+    ...(input.transcribeOnly === undefined ? {} : { transcribeOnly: input.transcribeOnly }),
+    ...(input.semanticSegmentation === undefined ? {} : { semanticSegmentation: input.semanticSegmentation }) };
 }
 
 export function parsePhrases(text: string): string[] {

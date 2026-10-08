@@ -16,6 +16,7 @@ public sealed class ReconnectTests
     [InlineData("busy", true)]
     [InlineData("timeout", true)]
     [InlineData("invalid_start", false)]
+    [InlineData("superseded", false)]
     [InlineData("unauthorized", false)]
     [InlineData("forbidden-api", false)]
     [InlineData("protocol", false)]
@@ -29,6 +30,7 @@ public sealed class ReconnectTests
             "busy" => new ApiRequestException("busy"),
             "timeout" => new TaskCanceledException(),
             "invalid_start" => new IOException("invalid_start: First message must be protocol v1"),
+            "superseded" => new IOException("session_superseded: Live started in another window or device."),
             "unauthorized" => new IOException("unauthorized: sign in"),
             "forbidden-api" => new ApiRequestException("forbidden"),
             "protocol" => new InvalidDataException("Unsupported server event"),

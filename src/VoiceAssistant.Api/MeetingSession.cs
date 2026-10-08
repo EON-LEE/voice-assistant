@@ -87,10 +87,10 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
     private sealed record Completion(string Text, string[] Suggestions, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched);
 
-    public async Task RunAsync(CancellationToken requestAborted)
+    public async Task RunAsync(CancellationToken requestAborted, CancellationToken superseded = default)
     {
         using var duration = new CancellationTokenSource(TimeSpan.FromMinutes(maxSessionMinutes), timeProvider ?? TimeProvider.System);
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, duration.Token);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, duration.Token, superseded);
         using var receiving = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
         ISpeechStream? speech = null;
         Task receiver = Task.CompletedTask;
@@ -216,12 +216,22 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
-            if (requestAborted.IsCancellationRequested)
-                logger.LogWarning("Meeting session ended: connection aborted or superseded by a reconnect.");
-            await TryErrorAsync(overflow != 0 ? "session_overloaded" : duration.IsCancellationRequested ? "session_time_limit" : "session_ended",
-                overflow != 0 ? "Session could not keep up. Reconnect." :
-                duration.IsCancellationRequested ? "Session reached its time limit. Start a new session to continue." : "Session ended.",
-                retryable: !duration.IsCancellationRequested);
+            if (superseded.IsCancellationRequested)
+            {
+                logger.LogWarning("Meeting session superseded by a newer session of the same user.");
+                // Not retryable: otherwise two clients of the same user would keep replacing each other.
+                await TryErrorAsync("session_superseded",
+                    "Live started in another window or device, so this session was closed.", retryable: false);
+            }
+            else
+            {
+                if (requestAborted.IsCancellationRequested)
+                    logger.LogWarning("Meeting session ended: connection aborted.");
+                await TryErrorAsync(overflow != 0 ? "session_overloaded" : duration.IsCancellationRequested ? "session_time_limit" : "session_ended",
+                    overflow != 0 ? "Session could not keep up. Reconnect." :
+                    duration.IsCancellationRequested ? "Session reached its time limit. Start a new session to continue." : "Session ended.",
+                    retryable: !duration.IsCancellationRequested);
+            }
         }
         catch (OperationCanceledException)
         {

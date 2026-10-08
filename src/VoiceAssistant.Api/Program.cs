@@ -121,9 +121,8 @@ namespace VoiceAssistant.Api
                 using var slot = await slots.AcquireAsync(objectId, context.RequestAborted);
                 if (slot is null) { context.Response.StatusCode = 429; return; }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                using var session = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, slot.Superseded);
                 await new MeetingSession(socket, provider, objectId, app.Logger, settings.MaxSessionMinutes,
-                    context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(session.Token);
+                    context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(context.RequestAborted, slot.Superseded);
             });
             app.MapKnowledge(settings);
             app.MapPractice(settings);

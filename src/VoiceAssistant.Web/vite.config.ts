@@ -7,5 +7,6 @@ export default defineConfig({
   build: { target: "es2022", rollupOptions: { input: {
     meeting: fileURLToPath(new URL("./index.html", import.meta.url)),
     materials: fileURLToPath(new URL("./materials.html", import.meta.url)),
+    live: fileURLToPath(new URL("./live.html", import.meta.url)),
   } } },
 });

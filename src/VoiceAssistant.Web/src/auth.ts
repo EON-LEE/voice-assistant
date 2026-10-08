@@ -16,7 +16,7 @@ export class BrowserAuth {
   constructor(private readonly deps: AuthDependencies = {
     fetch: (...args) => fetch(...args), location,
     createClient: config => new PublicClientApplication(config),
-  }) {}
+  }, private readonly options: { persistent?: boolean } = {}) {}
   get signedIn(): boolean { return !!this.account || this.config?.mode === "Fake"; }
   get isFake(): boolean { return this.config?.mode === "Fake"; }
   async initialize(): Promise<ClientConfig> {
@@ -35,11 +35,15 @@ export class BrowserAuth {
       if (this.deps.location.protocol !== "https:") throw new Error("Production requires HTTPS and WSS.");
       const authority = new URL(config.authority);
       if (authority.protocol !== "https:" || !/^[\da-f-]{36}$/i.test(config.clientId) || !config.scope) throw new Error("Invalid Entra configuration.");
+      // Persistent pages keep the MSAL cache in this browser profile so one sign-in survives reloads.
+      const storage = this.options.persistent ? "localStorage" : "memoryStorage";
       this.app = this.deps.createClient({
         auth: { clientId: config.clientId, authority: config.authority, redirectUri: this.deps.location.origin },
-        cache: { cacheLocation: "memoryStorage", temporaryCacheLocation: "memoryStorage" },
+        cache: { cacheLocation: storage, temporaryCacheLocation: this.options.persistent ? "sessionStorage" : "memoryStorage" },
       });
       await this.app.initialize();
+      if (this.options.persistent)
+        this.account = (this.app as Partial<Pick<PublicClientApplication, "getAllAccounts">>).getAllAccounts?.()[0];
     }
     this.config = config;
     return config;
@@ -50,6 +54,15 @@ export class BrowserAuth {
     if (this.config.mode === "Fake") return;
     const result = await this.app!.loginPopup({ scopes: [this.config.scope] });
     this.account = result.account;
+  }
+  /** Signed-in account display name, if any. */
+  get accountName(): string { return this.account?.username ?? ""; }
+  /** Verifies the cached account silently; clears it when Microsoft requires interaction again. */
+  async verify(): Promise<boolean> {
+    if (this.config?.mode === "Fake") return true;
+    if (!this.account) return false;
+    try { await this.token(); return true; }
+    catch { return false; }
   }
   private async token(): Promise<string> {
     if (!this.account || !this.app || !this.config) throw new Error("Sign in before accessing meeting materials or sharing audio.");

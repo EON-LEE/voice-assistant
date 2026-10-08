@@ -155,6 +155,15 @@ export class CoachClient {
     text(input, 1, 600, true);
     return validateEnrichment(await this.json("/api/assist/enrich", { kind, text: input }, signal), kind, input, this.fake());
   }
+  /** Korean meaning only (no pronunciation work). Product names may stay in Latin letters. */
+  async translate(kind: CoachKind, input: string, signal: AbortSignal): Promise<string> {
+    text(input, 1, 600, true);
+    const object = record(await this.json("/api/assist/enrich", { kind, text: input, translationOnly: true }, signal),
+      ["korean", "pronunciation"]);
+    const ko = text(object.korean, 1, 400);
+    if (!(this.fake() && ko.startsWith("[fake-ko] ")) && !/[\uac00-\ud7a3]/u.test(ko)) throw new CoachError("invalid_response");
+    return ko;
+  }
   async speak(input: string, voice: Voice, rate: Rate, signal: AbortSignal): Promise<Blob> {
     text(input, 1, 400, true); choice(voice, ["coach", "partner"]); choice(rate, ["normal", "slow"]);
     const response = await this.post("/api/assist/speak", { text: input, voice, rate }, signal, true);

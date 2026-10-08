@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23141d2b'/%3E%3Cpath d='M8 10h16v10H14l-6 4z' fill='%2384dcaf'/%3E%3C/svg%3E">
+    <title>Live Coach — Web</title>
+  </head>
+  <body class="live-body">
+    <main id="live-stage" class="live-stage">
+      <section id="live-panel" class="live-panel" aria-label="Live Coach 오버레이" tabindex="0">
+        <header class="live-status">
+          <div class="live-status-row">
+            <span id="capture-dot" class="live-dot" aria-hidden="true"></span>
+            <span id="capture-status" class="live-capture">마이크 꺼짐 · 우클릭으로 설정 및 시작</span>
+            <span class="live-version">WEB v2</span>
+          </div>
+          <p id="session-error" class="live-error" role="alert" hidden></p>
+        </header>
+        <section class="live-conversation" aria-label="들은 대화, AI 추천 아님">
+          <div class="live-label">들은 대화</div>
+          <div id="conversation" class="live-history" aria-live="polite">
+            <p class="live-waiting">영어 대화를 기다리고 있어요.</p>
+          </div>
+          <p class="live-context">이전 대화 맥락 기본 연결 · 추천은 실제 발화로 기억하지 않음</p>
+        </section>
+        <section class="live-answers" aria-label="내가 말할 추천 답변과 한국어 뜻">
+          <div class="live-answers-header">
+            <span class="live-answers-title">내가 말할 추천 답변</span>
+            <span id="grounding-badge" class="live-badge">맥락 연결</span>
+          </div>
+          <article class="live-card primary" aria-label="추천 답변 1">
+            <div class="live-choice"><span id="primary-label">01 · 바로 답하기</span><span>우선 추천</span></div>
+            <p id="answer-text" class="live-english">대화가 인식되면 추천 답변이 여기에 표시됩니다.</p>
+            <div class="live-meaning">
+              <div class="live-meaning-label">한국어 뜻</div>
+              <p id="answer-korean" lang="ko">영어 추천 답변의 한국어 뜻이 함께 표시됩니다.</p>
+            </div>
+          </article>
+          <article id="alternative-card" class="live-card secondary" aria-label="추천 답변 2" hidden>
+            <div class="live-choice"><span>02 · 다른 대응 방식</span><span>대안 표현</span></div>
+            <p id="alternative-text" class="live-english"></p>
+            <div class="live-meaning">
+              <div class="live-meaning-label">한국어 뜻</div>
+              <p id="alternative-korean" lang="ko"></p>
+            </div>
+          </article>
+          <p id="continuity" class="live-continuity">우클릭으로 설정 / 라이브 시작</p>
+        </section>
+        <footer class="live-footer">
+          <p id="grounding-text">문서 근거 상태는 답변 완료 후 표시됩니다</p>
+          <p id="sources-text"></p>
+        </footer>
+        <div id="live-menu" class="live-menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="settings">마이크 설정 / 내 문서</button>
+          <button type="button" role="menuitem" data-action="start">라이브 시작 · 마이크 음성을 Azure로 전송 (참여자 허락 필요)</button>
+          <button type="button" role="menuitem" data-action="pause">내가 말할 동안 일시정지</button>
+          <button type="button" role="menuitem" data-action="retry">추천 답변 다시 생성</button>
+          <button type="button" role="menuitem" data-action="translate">한국어 번역 재시도</button>
+          <button type="button" role="menuitem" data-action="stop">회의 종료 / 마이크 해제</button>
+          <hr>
+          <button type="button" role="menuitem" data-action="float">항상 위 작은 창으로 띄우기</button>
+        </div>
+      </section>
+    </main>
+    <dialog id="settings" class="live-settings" aria-labelledby="settings-title">
+      <form method="dialog">
+        <h2 id="settings-title">마이크 설정 / 내 문서</h2>
+        <p id="account-status" class="live-hint">계정 확인 중…</p>
+        <button id="signin" type="button">Microsoft 계정 연결</button>
+        <label>마이크
+          <select id="mic-device"><option value="">브라우저 기본 마이크</option></select>
+        </label>
+        <meter id="input-level" min="0" max="1" value="0" aria-label="입력 음량"></meter>
+        <label>답변 근거
+          <select id="response-mode">
+            <option value="grounded">항상 내 문서 검색 (기본)</option>
+            <option value="balanced">필요할 때만 문서 검색</option>
+            <option value="conversation">대화만 사용 (문서 검색 안 함)</option>
+          </select>
+        </label>
+        <label>회의 주제 (선택)
+          <input id="topic" maxlength="300" placeholder="예: Azure migration weekly sync">
+        </label>
+        <p class="live-hint">라이브 시작은 선택한 마이크 음성을 Azure로 전송합니다. 회의 참여자의 허락을 받은 뒤 시작하세요. 오디오는 저장하지 않습니다.</p>
+        <p><a href="/materials.html" target="_blank" rel="noopener">내 문서 업로드 / 관리 (새 탭)</a></p>
+        <div class="live-settings-actions"><button value="close">닫기</button></div>
+      </form>
+    </dialog>
+    <script type="module" src="/src/live.ts"></script>
+  </body>
+</html>
