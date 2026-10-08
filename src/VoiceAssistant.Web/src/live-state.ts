@@ -33,11 +33,8 @@ export class LiveState {
 
   get display(): LiveReply | null { return this.current?.text ? this.current : this.lastCompleted; }
   get latest(): LiveTurn | undefined { return this.turns.at(-1); }
-  /** A new final utterance is waiting for (or receiving) a reply that is not yet the displayed one. */
-  get generating(): boolean {
-    const latest = this.latest;
-    return !!this.current && !this.current.complete || !!latest?.final && this.display?.turnId !== latest.id;
-  }
+  /** A newer reply is being produced. With gathered replies, not every final gets its own reply. */
+  get generating(): boolean { return !!this.current && !this.current.complete; }
 
   resetSession(): void {
     this.turns = []; this.current = null; this.lastCompleted = null; this.error = "";

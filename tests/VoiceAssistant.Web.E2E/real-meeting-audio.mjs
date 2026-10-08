@@ -2,7 +2,7 @@
 // Records every second what the overlay shows and writes a JSON report plus a summary.
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
-const [, , outDir = ".", seconds = "260"] = process.argv;
+const [, , outDir = ".", seconds = "260", source = "unspecified recording", name = "real-meeting"] = process.argv;
 const browser = await chromium.connectOverCDP("http://127.0.0.1:9333");
 const page = browser.contexts()[0].pages().find(p => p.url().includes("live.html"));
 page.on("dialog", d => d.dismiss());
@@ -44,25 +44,27 @@ while (Date.now() - started < Number(seconds) * 1000) {
   previous = s;
   await page.waitForTimeout(1000);
 }
-await page.screenshot({ path: `${outDir}/real-meeting-final.png` });
+await page.screenshot({ path: `${outDir}/${name}-final.png` });
 const final = await snapshot();
 await page.locator("#live-panel").click({ button: "right", position: { x: 200, y: 300 } });
 await page.locator('[data-action="stop"]').click();
 const finalList = [...finals.entries()].map(([en, v]) => ({ en, ...v }));
 const words = finalList.map(f => f.en.split(/\s+/).filter(Boolean).length);
 const report = {
-  source: "AMI Meeting Corpus ES2002a, Array1-01 far-field room microphone, 04:00-08:00 (CC BY 4.0, University of Edinburgh)",
+  source,
   seconds: Number(seconds), reconnects,
   recognizedSegments: finalList.length,
   averageWordsPerSegment: words.length ? Math.round(words.reduce((a, b) => a + b, 0) / words.length * 10) / 10 : 0,
   shortSegments: words.filter(w => w <= 3).length,
-  koreanFailures: finalList.filter(f => /실패|오류|제한|초과/.test(f.ko)).length,
+  koreanFailures: finalList.filter(f => /^(한국어 번역 (실패|시간 초과|인증 오류)|번역 요청 제한)/.test(f.ko)).length,
   koreanPending: finalList.filter(f => f.ko.includes("번역 중")).length,
   suggestionChanges: answers.length,
   suggestionsWithAlternative: answers.filter(a => a.alt).length,
+  myTurnHighlights: answers.filter(a => a.label.includes("지금 답할 차례")).length,
+  notSure: answers.filter(a => /not sure/i.test(a.answer)).length,
   errors: timeline, finals: finalList, answers, finalScreen: final,
 };
-writeFileSync(`${outDir}/real-meeting-report.json`, JSON.stringify(report, null, 1));
+writeFileSync(`${outDir}/${name}-report.json`, JSON.stringify(report, null, 1));
 const { finals: _f, answers: _a, finalScreen: _s, ...summary } = report;
 console.log(JSON.stringify(summary, null, 1));
 console.log("--- first segments ---");

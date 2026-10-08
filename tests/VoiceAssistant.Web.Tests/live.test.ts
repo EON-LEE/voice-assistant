@@ -35,8 +35,9 @@ test("Live: continuous speech never discards a started reply and keeps last sugg
   state.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "Review first.", sources: [],
     suggestions: ["Review first.", "Could we review the findings together?"] });
   assert.equal(answers(state.display).length, 2);
-  assert.equal(state.generating, true, "the newer final question is still waiting for its reply");
+  assert.equal(state.generating, false, "a newer final alone may never get its own gathered reply");
   state.apply({ type: "response.started", turnId: "two", responseId: "r2" });
+  assert.equal(state.generating, true, "a newer reply is being produced");
   assert.equal(state.display!.id, "r1", "previous suggestions stay until the new reply streams text");
   state.apply({ type: "response.delta", turnId: "one", responseId: "r1", text: "stale" });
   state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Alex owns it." });

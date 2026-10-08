@@ -263,7 +263,8 @@ function renderSuggestions(): void {
   $("alternative-text").textContent = values[1] ?? "";
   $("alternative-korean").textContent = ko[1] ?? "한국어 번역 준비 중…";
   const generating = ready && state.generating;
-  const previous = !!display && (display.turnId !== state.latest?.id || generating && display.complete);
+  // "Previous" only while a newer reply is being produced; ongoing speech (maybe the user answering) keeps the hint current.
+  const previous = !!display && generating && state.current?.id !== display.id;
   const myTurn = !previous && !!display?.respondNow;
   $("primary-label").textContent = previous ? "01 · 이전 질문용 답변" : myTurn ? "01 · 지금 답할 차례" : "01 · 바로 답하기";
   document.querySelector(".live-card.primary")!.classList.toggle("my-turn", myTurn);
