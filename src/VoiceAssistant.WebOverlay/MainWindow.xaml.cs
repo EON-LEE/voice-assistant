@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private static readonly double[] Opacities = [0.92, 0.8, 0.65, 0.5];
     private readonly Uri pageUrl;
     private readonly bool fakeMicrophone;
+    private readonly string? fakeAudioFile;
     private readonly string dataFolder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VoiceAssistant", "WebOverlay");
     private ShellSettings settings;
@@ -28,6 +29,14 @@ public partial class MainWindow : Window
         var urlIndex = Array.IndexOf(args, "--url");
         pageUrl = ValidateUrl(urlIndex >= 0 && urlIndex + 1 < args.Length ? args[urlIndex + 1] : DefaultUrl);
         fakeMicrophone = args.Contains("--fake-mic");
+        var audioIndex = Array.IndexOf(args, "--audio-file");
+        if (audioIndex >= 0 && audioIndex + 1 < args.Length && fakeMicrophone)
+        {
+            var path = Path.GetFullPath(args[audioIndex + 1]);
+            if (!File.Exists(path) || !path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("--audio-file must be an existing .wav file.");
+            fakeAudioFile = path;
+        }
         settings = ShellSettings.Load(dataFolder);
         if (settings.Width is >= 360 and <= 1200) Width = settings.Width;
         if (settings.Height is >= 400) Height = Math.Min(settings.Height, SystemParameters.WorkArea.Height);
@@ -55,7 +64,8 @@ public partial class MainWindow : Window
             var options = new CoreWebView2EnvironmentOptions
             {
                 AdditionalBrowserArguments = fakeMicrophone
-                    ? "--use-fake-device-for-media-stream --use-fake-ui-for-media-stream --remote-debugging-port=9333" : ""
+                    ? "--use-fake-device-for-media-stream --use-fake-ui-for-media-stream --remote-debugging-port=9333" +
+                      (fakeAudioFile is null ? "" : $" \"--use-file-for-fake-audio-capture={fakeAudioFile}%noloop\"") : ""
             };
             // A fixed profile folder keeps the Microsoft sign-in cache and microphone choice between runs.
             var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(dataFolder, "Profile"), options);
