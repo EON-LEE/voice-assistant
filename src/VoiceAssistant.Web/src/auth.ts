@@ -9,7 +9,7 @@ export interface AuthDependencies {
   location: Pick<Location, "hostname" | "protocol" | "origin">;
   createClient(config: Configuration): AuthClient;
   /** Asks the user for the shared demo account; resolves null when cancelled. */
-  promptDemo?(error: string): Promise<DemoCredentials | null>;
+  promptDemo?(error: string, username: string): Promise<DemoCredentials | null>;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 }
 interface DemoSession { token: string; username: string; expiresAt: number }
@@ -85,10 +85,11 @@ export class BrowserAuth {
   }
   private async demoSignIn(): Promise<void> {
     const prompt = this.deps.promptDemo ?? promptDemoLogin;
-    let error = "";
+    let error = "", username = "";
     for (;;) {
-      const credentials = await prompt(error);
+      const credentials = await prompt(error, username);
       if (!credentials) throw new Error("Sign-in was cancelled.");
+      username = credentials.username;
       const response = await this.deps.fetch("/api/demo/login", {
         method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
         headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -192,7 +193,7 @@ export class BrowserAuth {
 }
 
 /** Minimal accessible sign-in dialog shared by every page in demo-login mode. */
-export function promptDemoLogin(error: string): Promise<DemoCredentials | null> {
+export function promptDemoLogin(error: string, previousUsername = ""): Promise<DemoCredentials | null> {
   return new Promise(resolve => {
     const dialog = document.createElement("dialog");
     dialog.setAttribute("aria-labelledby", "demo-login-title");
@@ -214,6 +215,7 @@ export function promptDemoLogin(error: string): Promise<DemoCredentials | null> 
     };
     form.append(title);
     const username = field("아이디", "text", "username");
+    username.value = previousUsername;
     const password = field("비밀번호", "password", "current-password");
     const message = document.createElement("p");
     message.setAttribute("role", "alert"); message.textContent = error;
@@ -240,6 +242,6 @@ export function promptDemoLogin(error: string): Promise<DemoCredentials | null> 
       resolve(value);
     }, { once: true });
     dialog.showModal();
-    username.focus();
+    (previousUsername ? password : username).focus();
   });
 }

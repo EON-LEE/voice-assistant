@@ -18,7 +18,7 @@ function setup(storage = memoryStorage(), answers: ({ username: string; password
     location: { hostname: "voice.example", protocol: "https:", origin: "https://voice.example" },
     createClient: () => { throw new Error("MSAL must not be used in demo-login mode."); },
     storage,
-    promptDemo: async error => { prompts.push(error); return answers.shift() ?? null; },
+    promptDemo: async (error, username) => { prompts.push(`${error}|${username}`); return answers.shift() ?? null; },
     fetch: async (input, init) => {
       const url = String(input);
       calls.push({ url, auth: new Headers(init?.headers).get("Authorization"), body: init?.body as string | undefined });
@@ -46,7 +46,7 @@ describe("demo login", () => {
     expect(auth.isDemo).toBe(true);
     expect(await auth.verify()).toBe(false);
     await auth.signIn();
-    expect(prompts).toEqual(["", "아이디 또는 비밀번호가 올바르지 않습니다."]);
+    expect(prompts).toEqual(["|", "아이디 또는 비밀번호가 올바르지 않습니다.|test"]);
     expect(auth.signedIn).toBe(true);
     expect(auth.accountName).toBe("test");
     const url = await auth.endpoint(false);
