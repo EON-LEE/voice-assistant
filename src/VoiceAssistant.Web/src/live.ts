@@ -58,7 +58,7 @@ topic.addEventListener("change", saveSettings);
 
 function sessionOptions(): SessionOptions {
   return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
-    endSilenceMs: 1100, semanticSegmentation: true };
+    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 2500 };
 }
 
 // ---------- Live session lifecycle with automatic reconnect ----------

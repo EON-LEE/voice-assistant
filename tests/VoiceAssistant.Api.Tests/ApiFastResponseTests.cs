@@ -225,6 +225,29 @@ public sealed partial class ApiTests
     }
 
     [Fact]
+    public async Task SettledRepliesSkipBackchannelsAndAnswerGatheredSpeechOnce()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true, Alternative = "What is the price?" };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 400 }));
+        await Receive(socket);
+        provider.Emit(new("a", 1, "Yeah.", true));
+        provider.Emit(new("b", 1, "OK, good.", true));
+        await Until(socket, "transcript.final");
+        await Until(socket, "transcript.final");
+        await Task.Delay(900);
+        Assert.Equal(0, provider.Answers);
+        provider.Emit(new("c", 1, "So we are going to sell this remote control.", true));
+        provider.Emit(new("d", 1, "What price should we pick?", true));
+        var completed = await Until(socket, "response.completed");
+        Assert.Equal("d", completed.GetProperty("turnId").GetString());
+        await Task.Delay(900);
+        Assert.Equal(1, provider.Answers);
+        Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("remote control"));
+    }
+
+    [Fact]
     public async Task PendingPrefetchDoesNotBlockAudioCancelOrStopAndNeverLeaksObsoleteResponse()
     {
         const string query = "What is our customer delivery plan?";

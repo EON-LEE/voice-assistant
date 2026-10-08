@@ -76,6 +76,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private int generationNumber;
     private bool responseActive;
     private bool responsePending;
+    private readonly List<string> pendingSpeech = [];
+    private long pendingSince;
+    private int settleNumber;
     private int overflow;
     private SessionOptions options = SessionOptions.Legacy;
     private PartialRetrieval? prefetch;
@@ -140,21 +143,44 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             }
                             lastTurn = transcript.TurnId;
                             lastFinalTimestamp = message.Timestamp;
-                            if (responseActive) responsePending = true;
+                            if (options.ReplySettleMs > 0)
+                            {
+                                if (pendingSpeech.Count == 0) pendingSince = message.Timestamp;
+                                pendingSpeech.Add(transcript.Text);
+                                ScheduleSettle(lifetime);
+                            }
+                            else if (responseActive) responsePending = true;
                             else await StartResponseAsync(lifetime.Token, manual: false);
                         }
                         else
                         {
                             prefetch!.Update(transcript, earlierTranscripts.With(conversation));
+                            // Ongoing speech postpones the reply, except a question already waiting too long.
+                            if (options.ReplySettleMs > 0 && pendingSpeech.Count > 0 &&
+                                !(TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.ContainsQuestion(pendingSpeech)))
+                                ScheduleSettle(lifetime);
                         }
+                        break;
+                    case "settle" when message.Generation == settleNumber && pendingSpeech.Count > 0:
+                        var decision = ReplyTrigger.Evaluate(pendingSpeech);
+                        if (decision == ReplyDecision.Wait) break;
+                        pendingSpeech.Clear();
+                        if (decision == ReplyDecision.Discard) break;
+                        if (responseActive) responsePending = true;
+                        else await StartResponseAsync(lifetime.Token, manual: false);
                         break;
                     case "response.request":
                         if (options.TranscribeOnly) await ErrorAsync("transcribe_only", "This session only transcribes speech.", false, lifetime.Token);
                         else if (lastTurn is null) await ErrorAsync("no_transcript", "Wait for a finalized utterance.", true, lifetime.Token);
-                        else await StartResponseAsync(lifetime.Token, manual: true);
+                        else
+                        {
+                            pendingSpeech.Clear(); settleNumber++;
+                            await StartResponseAsync(lifetime.Token, manual: true);
+                        }
                         break;
                     case "response.cancel":
                         prefetch?.Cancel();
+                        pendingSpeech.Clear(); settleNumber++;
                         await CancelResponseAsync(lifetime.Token);
                         break;
                     case "session.stop":
@@ -268,6 +294,22 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 catch (Exception) { logger.LogWarning("Speech cleanup failed; sensitive error detail suppressed."); }
             }
         }
+    }
+
+    /// <summary>Statements wait for more context, but never longer than this before a reply is offered.</summary>
+    private static readonly TimeSpan MaxGatherTime = TimeSpan.FromSeconds(12);
+
+    private void ScheduleSettle(CancellationTokenSource lifetime)
+    {
+        var number = ++settleNumber;
+        var delay = TimeSpan.FromMilliseconds(options.ReplySettleMs);
+        // A long-running gathered statement is answered as soon as the speaker pauses briefly.
+        if (pendingSpeech.Count > 0 && TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime)
+            delay = TimeSpan.FromMilliseconds(300);
+        _ = Task.Delay(delay, lifetime.Token).ContinueWith(task =>
+        {
+            if (task.IsCompletedSuccessfully) EnqueueCallback(new("settle", Generation: number), lifetime);
+        }, TaskScheduler.Default);
     }
 
     private void EnqueueCallback(SessionEvent message, CancellationTokenSource lifetime)

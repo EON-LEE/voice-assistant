@@ -104,7 +104,8 @@ public sealed class SemanticGroundingTests
         var messages = chat.RootElement.GetProperty("messages").EnumerateArray()
             .Select(message => message.GetProperty("content").GetString()!).ToArray();
         Assert.Contains(query, messages);
-        Assert.Contains("using only the meeting transcript", messages[0]);
+        Assert.Contains("When grounding is disabled or no_matches", messages[0]);
+        Assert.Contains("do not assert company-specific facts", messages[0]);
         var evidence = messages[^1];
         if (sources == 0) Assert.DoesNotContain(Lighthouse, evidence);
         else Assert.Contains(Lighthouse, evidence);
@@ -226,7 +227,8 @@ public sealed class SemanticGroundingTests
         Assert.Contains("at most 2 short sentences and at most 18 words", policy);
         Assert.Contains("simple everyday words", policy);
         Assert.Contains("Never use markdown", policy);
-        Assert.Contains("only the words to say, as plain text", policy);
+        Assert.Contains("Plain English text only", policy);
+        Assert.Contains("Never comment on unclear audio", policy);
         Assert.DoesNotContain("first sentence of 10-22 words", policy);
         Assert.Contains("For a general technical question, explain the concept directly", policy);
         Assert.Contains("Confirmed name, role and project may be used", policy);

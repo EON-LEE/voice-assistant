@@ -8,6 +8,8 @@ export interface SessionOptions {
   transcribeOnly?: boolean;
   /** Azure sentence-oriented caption segmentation for continuous meeting speech. */
   semanticSegmentation?: boolean;
+  /** Gather speech until this pause (ms) and suggest once per meaningful unit; 0 = every final utterance. */
+  replySettleMs?: number;
 }
 
 export function defaultOptions(): SessionOptions {
@@ -44,10 +46,14 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     throw new Error("transcribeOnly must be a boolean.");
   if (input.semanticSegmentation !== undefined && typeof input.semanticSegmentation !== "boolean")
     throw new Error("semanticSegmentation must be a boolean.");
+  if (input.replySettleMs !== undefined && (!Number.isInteger(input.replySettleMs) ||
+      input.replySettleMs !== 0 && (input.replySettleMs < 300 || input.replySettleMs > 5000)))
+    throw new Error("replySettleMs must be 0 or an integer between 300 and 5000.");
   return { responseMode: input.responseMode, profile, profileConfirmed: input.profileConfirmed,
     topic: field(input.topic, 300, "Meeting topic"), phrases, endSilenceMs: input.endSilenceMs,
     ...(input.transcribeOnly === undefined ? {} : { transcribeOnly: input.transcribeOnly }),
-    ...(input.semanticSegmentation === undefined ? {} : { semanticSegmentation: input.semanticSegmentation }) };
+    ...(input.semanticSegmentation === undefined ? {} : { semanticSegmentation: input.semanticSegmentation }),
+    ...(input.replySettleMs === undefined ? {} : { replySettleMs: input.replySettleMs }) };
 }
 
 export function parsePhrases(text: string): string[] {

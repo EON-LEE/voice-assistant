@@ -17,11 +17,13 @@ public sealed record SessionOptions
     public int EndSilenceMs { get; init; } = 700;
     public bool TranscribeOnly { get; init; }
     public bool SemanticSegmentation { get; init; }
+    /// <summary>0 = reply to every final utterance (legacy). Otherwise wait for this pause and reply to the gathered meaning.</summary>
+    public int ReplySettleMs { get; init; }
     public static SessionOptions Legacy { get; } = new();
 
     internal static SessionOptions Parse(JsonElement value)
     {
-        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly", "semanticSegmentation");
+        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly", "semanticSegmentation", "replySettleMs");
         var transcribeOnly = value.TryGetProperty("transcribeOnly", out var only) && only.GetBoolean();
         var mode = Text(value, "responseMode", 20, "grounded");
         if (mode is not ("balanced" or "grounded" or "conversation")) throw Invalid();
@@ -35,6 +37,8 @@ public sealed record SessionOptions
         if (!profile.IsEmpty && !confirmed) throw Invalid();
         var silence = value.TryGetProperty("endSilenceMs", out var s) ? s.GetInt32() : 700;
         if (silence is < 350 or > 1500) throw Invalid();
+        var settle = value.TryGetProperty("replySettleMs", out var r) ? r.GetInt32() : 0;
+        if (settle != 0 && settle is < 300 or > 5000) throw Invalid();
         var phrases = new List<string>();
         if (value.TryGetProperty("phrases", out var list))
         {
@@ -53,7 +57,8 @@ public sealed record SessionOptions
             ResponseMode = mode, Profile = profile, ProfileConfirmed = confirmed,
             Topic = Text(value, "topic", 300), Phrases = phrases.AsReadOnly(), EndSilenceMs = silence,
             TranscribeOnly = transcribeOnly,
-            SemanticSegmentation = value.TryGetProperty("semanticSegmentation", out var semantic) && semantic.GetBoolean()
+            SemanticSegmentation = value.TryGetProperty("semanticSegmentation", out var semantic) && semantic.GetBoolean(),
+            ReplySettleMs = settle
         };
     }
 
