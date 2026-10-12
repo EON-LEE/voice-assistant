@@ -271,6 +271,7 @@ public sealed partial class ApiTests
         Assert.Equal(WebSocketMessageType.Close, (await socket.ReceiveAsync(new byte[4096], timeout.Token)).MessageType);
         Assert.Equal(0, provider.Retrievals);
         Assert.Equal(0, provider.Answers);
+        await WaitUntilAsync(() => provider.Disposed, TimeSpan.FromSeconds(2));
         Assert.True(provider.Disposed);
     }
 

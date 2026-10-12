@@ -381,6 +381,21 @@ public sealed partial class ApiTests
         throw new InvalidOperationException("Expected event not received.");
     }
 
+    /// <summary>
+    /// The server sends the WebSocket close frame before it finishes disposing session resources
+    /// (so the client sees a clean close rather than an abrupt reset), so cleanup-flag assertions
+    /// taken right after a client-observed close must poll briefly instead of racing that cleanup.
+    /// </summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline) return;
+            await Task.Delay(20);
+        }
+    }
+
     private sealed class TestClock : TimeProvider
     {
         public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
