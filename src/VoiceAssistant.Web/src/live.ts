@@ -1,7 +1,7 @@
 import "./live.css";
 import workletUrl from "./audio.worklet.ts?worker&url";
 import { BrowserAuth } from "./auth.js";
-import { MicrophoneAudioSource } from "./capture.js";
+import { DisplayAudioSource, MicrophoneAudioSource } from "./capture.js";
 import { MeetingSession } from "./session.js";
 import { SocketTransport, asError } from "./transport.js";
 import { defaultOptions, type SessionOptions } from "./options.js";
@@ -18,6 +18,8 @@ const panel = $("live-panel"), stage = $("live-stage"), menu = $("live-menu");
 const settingsDialog = $<HTMLDialogElement>("settings");
 const micDevice = $<HTMLSelectElement>("mic-device"), responseMode = $<HTMLSelectElement>("response-mode");
 const topic = $<HTMLInputElement>("topic");
+const audioSource = $<HTMLSelectElement>("audio-source");
+const microphoneSettings = $("microphone-settings"), displayHint = $("display-hint");
 
 const auth = new BrowserAuth(undefined, { persistent: true });
 const coach = new CoachClient((path, init) => auth.coachRequest(path, init), () => auth.isFake);
@@ -34,7 +36,7 @@ const meetingKo = new Map<string, string>();
 const failedTurns = new Map<string, string>();
 const replyKo = new Map<string, string[]>();
 
-interface StoredSettings { deviceId: string; responseMode: SessionOptions["responseMode"]; topic: string }
+interface StoredSettings { deviceId: string; responseMode: SessionOptions["responseMode"]; topic: string; audioSource: "microphone" | "display" }
 const settingsKey = "live-coach-settings";
 function loadSettings(): StoredSettings {
   try {
@@ -43,18 +45,26 @@ function loadSettings(): StoredSettings {
       deviceId: typeof value.deviceId === "string" ? value.deviceId : "",
       responseMode: value.responseMode === "balanced" || value.responseMode === "conversation" ? value.responseMode : "grounded",
       topic: typeof value.topic === "string" ? value.topic.slice(0, 300) : "",
+      audioSource: value.audioSource === "display" ? "display" : "microphone",
     };
-  } catch { return { deviceId: "", responseMode: "grounded", topic: "" }; }
+  } catch { return { deviceId: "", responseMode: "grounded", topic: "", audioSource: "microphone" }; }
 }
 let settings = loadSettings();
-responseMode.value = settings.responseMode; topic.value = settings.topic;
+responseMode.value = settings.responseMode; topic.value = settings.topic; audioSource.value = settings.audioSource;
+function renderAudioSource(): void {
+  const display = audioSource.value === "display";
+  microphoneSettings.hidden = display; displayHint.hidden = !display;
+}
+renderAudioSource();
 function saveSettings(): void {
-  settings = { deviceId: micDevice.value, responseMode: responseMode.value as StoredSettings["responseMode"], topic: topic.value.trim() };
+  settings = { deviceId: micDevice.value, responseMode: responseMode.value as StoredSettings["responseMode"],
+    topic: topic.value.trim(), audioSource: audioSource.value as StoredSettings["audioSource"] };
   localStorage.setItem(settingsKey, JSON.stringify(settings));
 }
 micDevice.addEventListener("change", saveSettings);
 responseMode.addEventListener("change", saveSettings);
 topic.addEventListener("change", saveSettings);
+audioSource.addEventListener("change", () => { renderAudioSource(); saveSettings(); });
 
 function sessionOptions(): SessionOptions {
   return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
@@ -73,8 +83,10 @@ async function startLive(): Promise<void> {
     connectionMessage = `${auth.isDemo ? "로그인" : "Microsoft 계정 연결"} 실패: ${asError(error).message}`;
     render(); return;
   }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    connectionMessage = "이 브라우저에서는 마이크를 사용할 수 없습니다. HTTPS의 최신 Edge/Chrome을 사용하세요.";
+  if (settings.audioSource === "display" ? !navigator.mediaDevices?.getDisplayMedia : !navigator.mediaDevices?.getUserMedia) {
+    connectionMessage = settings.audioSource === "display"
+      ? "이 브라우저에서는 탭/시스템 오디오 공유를 사용할 수 없습니다. HTTPS의 최신 Edge/Chrome을 사용하세요."
+      : "이 브라우저에서는 마이크를 사용할 수 없습니다. HTTPS의 최신 Edge/Chrome을 사용하세요.";
     render(); return;
   }
   translations.abort(); translations = new AbortController();
@@ -86,10 +98,19 @@ async function startLive(): Promise<void> {
 
 function connect(): void {
   reconnectTimer = undefined;
-  const source = new MicrophoneAudioSource({
+  const shared = {
     context: () => new AudioContext(),
-    node: context => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
+    node: (context: AudioContext) => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
     workletUrl,
+  };
+  const source = settings.audioSource === "display" ? new DisplayAudioSource({
+    ...shared,
+    getDisplayMedia: () => {
+      if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("이 브라우저에서는 탭/시스템 오디오 공유를 사용할 수 없습니다. HTTPS의 최신 Edge/Chrome을 사용하세요.");
+      return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    },
+  }) : new MicrophoneAudioSource({
+    ...shared,
     getUserMedia: constraints => navigator.mediaDevices.getUserMedia(constraints),
     devices: navigator.mediaDevices,
     deviceId: settings.deviceId || undefined,
@@ -217,11 +238,12 @@ let renderedConversation = "";
 
 function render(): void {
   const capture = reconnecting ? "reconnecting" : ready ? paused ? "paused" : "on" : "off";
+  const sourceLabel = settings.audioSource === "display" ? "탭/시스템 오디오" : "마이크";
   panel.dataset.capture = capture;
-  $("capture-status").textContent = reconnecting ? "재연결 중 · 마이크 자동 재개"
-    : ready && paused ? "마이크 일시정지 · 오디오 전송 중지"
+  $("capture-status").textContent = reconnecting ? `재연결 중 · ${sourceLabel} 자동 재개`
+    : ready && paused ? `${sourceLabel} 일시정지 · 오디오 전송 중지`
     : ready ? "듣는 중 · 영어 · 이전 대화 맥락 연결"
-    : active ? "연결 중…" : "마이크 꺼짐 · 우클릭으로 설정 및 시작";
+    : active ? "연결 중…" : `${sourceLabel} 꺼짐 · 우클릭으로 설정 및 시작`;
   const error = connectionMessage || state.error || warning;
   const errorLine = $("session-error");
   errorLine.textContent = error; errorLine.hidden = !error;

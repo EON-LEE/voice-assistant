@@ -53,8 +53,8 @@
           <p id="sources-text"></p>
         </footer>
         <div id="live-menu" class="live-menu" role="menu" hidden>
-          <button type="button" role="menuitem" data-action="settings">마이크 설정 / 내 문서</button>
-          <button type="button" role="menuitem" data-action="start">라이브 시작 · 마이크 음성을 Azure로 전송 (참여자 허락 필요)</button>
+          <button type="button" role="menuitem" data-action="settings">오디오 소스 설정 / 내 문서</button>
+          <button type="button" role="menuitem" data-action="start">라이브 시작 · 선택한 오디오를 Azure로 전송 (참여자 허락 필요)</button>
           <button type="button" role="menuitem" data-action="pause">내가 말할 동안 일시정지</button>
           <button type="button" role="menuitem" data-action="retry">추천 답변 다시 생성</button>
           <button type="button" role="menuitem" data-action="translate">한국어 번역 재시도</button>
@@ -66,13 +66,22 @@
     </main>
     <dialog id="settings" class="live-settings" aria-labelledby="settings-title">
       <form method="dialog">
-        <h2 id="settings-title">마이크 설정 / 내 문서</h2>
+        <h2 id="settings-title">오디오 소스 설정 / 내 문서</h2>
         <p id="account-status" class="live-hint">계정 확인 중…</p>
         <button id="signin" type="button">Microsoft 계정 연결</button>
-        <label>마이크
-          <select id="mic-device"><option value="">브라우저 기본 마이크</option></select>
+        <label>오디오 소스
+          <select id="audio-source">
+            <option value="microphone">마이크 (대면 회의실 등)</option>
+            <option value="display">탭/시스템 오디오 (Teams 등 · 헤드셋 사용 시 필수)</option>
+          </select>
         </label>
-        <meter id="input-level" min="0" max="1" value="0" aria-label="입력 음량"></meter>
+        <div id="microphone-settings">
+          <label>마이크
+            <select id="mic-device"><option value="">브라우저 기본 마이크</option></select>
+          </label>
+          <meter id="input-level" min="0" max="1" value="0" aria-label="입력 음량"></meter>
+        </div>
+        <p id="display-hint" class="live-hint" hidden>라이브 시작 시 뜨는 공유 선택창에서 <strong>Teams 탭(또는 화면)을 선택</strong>하고 <strong>"탭 오디오 공유"/"시스템 오디오 공유"를 반드시 체크</strong>하세요. 헤드셋을 써도 Teams 소리를 직접 가져옵니다.</p>
         <label>답변 근거
           <select id="response-mode">
             <option value="grounded">항상 내 문서 검색 (기본)</option>
@@ -83,7 +92,7 @@
         <label>회의 주제 (선택)
           <input id="topic" maxlength="300" placeholder="예: Azure migration weekly sync">
         </label>
-        <p class="live-hint">라이브 시작은 선택한 마이크 음성을 Azure로 전송합니다. 회의 참여자의 허락을 받은 뒤 시작하세요. 오디오는 저장하지 않습니다.</p>
+        <p class="live-hint">라이브 시작은 선택한 오디오(마이크 또는 공유된 탭/시스템 오디오)를 Azure로 전송합니다. 회의 참여자의 허락을 받은 뒤 시작하세요. 오디오는 저장하지 않습니다.</p>
         <p><a href="/materials.html" target="_blank" rel="noopener">내 문서 업로드 / 관리 (새 탭)</a></p>
         <div class="live-settings-actions"><button value="close">닫기</button></div>
       </form>
