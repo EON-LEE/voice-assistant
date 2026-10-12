@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-06",
+  "status": "intermediate-not-final-acceptance",
+  "commits": ["9224600", "dcdab35"],
+  "distribution": {
+    "type": "portable",
+    "runtime": "self-contained-win-x64",
+    "installer": false,
+    "command": "scripts\\desktop\\Publish.ps1 -OutputDirectory <new-folder-outside-repository>"
+  },
+  "verified": [
+    "Parent Desktop test run: 52 passed, 1 explicit external-backend opt-in skip, 0 failures.",
+    "Release self-contained publish succeeded with the native executable, configuration and launcher.",
+    "Computer-use launched the published executable and observed the In-person English Coach setup window, 900x760.",
+    "Initial UI displayed Stopped - no audio capture and no available active microphone."
+  ],
+  "pending": [
+    "Review fixes for practice submissions, cancellation, playback and overlay reopening.",
+    "Offline practice and overlay preview usability.",
+    "Interactive native Entra token acquisition and live Azure workflow.",
+    "Consented physical microphone recognition.",
+    "True transparency and focus behavior above PowerPoint."
+  ],
+  "observationLimitation": "Subsequent computer-use enumeration showed a different desktop than the local app process. The setup observation is not evidence of overlay or practice runtime behavior.",
+  "audioCaptured": false
+}

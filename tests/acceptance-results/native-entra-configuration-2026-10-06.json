@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-06",
+  "purpose": "In-person Windows native public-client application",
+  "tenantId": "2573db8c-dfe5-4805-9e28-a0859692e705",
+  "apiClientId": "4546bd70-1872-4a1d-bdcd-d09377e365e4",
+  "nativeClientId": "6c67aee7-0c67-48aa-9dce-40db347c5a7f",
+  "publicClientRedirect": "http://localhost",
+  "scope": "api://4546bd70-1872-4a1d-bdcd-d09377e365e4/Meeting.Access",
+  "origin": "https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io",
+  "verified": [
+    "Native client is separate from the SPA and API applications.",
+    "Single-tenant application with a public-client localhost redirect.",
+    "No application password or key credentials on the native client.",
+    "Meeting.Access is an enabled delegated API permission and is requested by the native client.",
+    "Owned API preauthorization includes the native client and preserves existing preauthorized clients.",
+    "scripts/infra/Test-NativeEntra.ps1 read-only validation passed against Microsoft Graph."
+  ],
+  "notVerified": [
+    "Interactive application sign-in and native-client token acquisition.",
+    "Physical microphone input.",
+    "PowerPoint overlay behavior.",
+    "Native practice round against live Azure services."
+  ]
+}

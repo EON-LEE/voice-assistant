@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-07",
+  "verified": {
+    "desktopRegression": { "passed": 54, "failed": 0, "externalBackendSkipped": 1 },
+    "azureGroundingAcceptance": { "passed": 20, "failed": 0 },
+    "azurePracticeRoundAcceptance": { "passed": 13, "failed": 0 },
+    "materialFixture": "Created a synthetic owner-scoped rollout note in deployed Azure; confirmed grounded question and suggestion include its source and facts; deleted afterward.",
+    "disabledMaterials": "With useMaterials=false, the same note facts were not returned and grounding was disabled.",
+    "practice": "Real partner questions, suggested answer, feedback, closing, Korean summary and TTS endpoints passed.",
+    "recognition": "Synthetic English audio over a recognition-only socket produced final text without a meeting reply.",
+    "cleanup": "Both operator authorization receipts reported cleanupRequired=false."
+  },
+  "limitations": [
+    "Live tests use the existing authorized operator API client, not interactive authentication by the native public client.",
+    "A synthetic test note was used; this does not prove relevance or correctness for every pre-existing user upload.",
+    "Desktop tests confirm the live materials checkbox defaults on and offline sample checkbox remains off; they are not native end-to-end Azure UI proof.",
+    "Physical microphone, actual native sign-in, PowerPoint focus/transparency and native round end-to-end remain unverified.",
+    "Korean reading guide output shape passed; human pronunciation quality is not established."
+  ]
+}

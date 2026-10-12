@@ -1,0 +1,12 @@
+{
+    "schemaVersion":  1,
+    "synthetic":  true,
+    "approvedForLiveUse":  true,
+    "language":  "en-US",
+    "sha256":  "dc88e8844e4ac625d90c5f19016b881756be91a39041b528affae7e802adee61",
+    "speechEndSample":  null,
+    "synthesisEndSample":  54080,
+    "trailingSilenceSamples":  16000,
+    "text":  "Project Lumen needs a brief update by Friday.",
+    "generator":  "Windows System.Speech / Microsoft Zira Desktop"
+}

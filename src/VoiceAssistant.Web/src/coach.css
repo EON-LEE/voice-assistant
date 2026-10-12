@@ -1,0 +1,75 @@
+.coach-theme { color-scheme: dark; background: radial-gradient(ellipse at 15% 0, #25323e, transparent 50%), #10151d; color: #ebf0f7; min-height: 100vh; }
+.coach-shell { max-width: 768px; padding: 28px 24px 40px; }
+.coach-heading { margin: 0 0 18px; }
+.coach-heading h1 { font-size: 1.5rem; letter-spacing: -.025em; margin: 6px 0; }
+.coach-heading p { font-size: .86rem; margin: 0; color: #a8b7cc; }
+.coach-theme .eyebrow { color: #90b6d7; font-size: .67rem; }
+.coach-strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border: 1px solid #415063; background: #1b2531; border-radius: 20px; box-shadow: 0 18px 44px #0005; margin-bottom: 14px; }
+.coach-strip .round-control { width: 42px; height: 42px; border-radius: 50%; min-height: 42px; padding: 0; background: #7edcc3; color: #142b29; }
+#elapsed { font-variant-numeric: tabular-nums; font-size: .86rem; color: #c3d0e2; }
+.mode-chips, .scenario-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mode-chips button, .scenario-chips button { min-height: 36px; padding: 7px 12px; border-radius: 20px; font-size: .82rem; }
+.coach-theme button[aria-pressed=true] { background: #306bc5; color: white; border-color: #75a7ef; }
+.coach-theme .mode-chips button[aria-pressed=false] { background: #26374c; color: #a4b4c8; border-color: #43576c; }
+#coach-status { font-size: .72rem; color: #a9bbd2; margin-left: auto; }
+.coach-theme .card { background: #1a222e; border-color: #344254; border-radius: 20px; box-shadow: 0 16px 35px #0003; margin-bottom: 14px; padding: 22px; }
+.coach-theme .controls { padding: 18px 22px; }
+.coach-theme .workspace { display: flex; flex-direction: column; gap: 0; margin-top: 14px; }
+.coach-theme .reply-panel { order: -1; }
+.coach-theme .transcript-panel { margin-top: 0; }
+.coach-theme #transcript { min-height: 0; max-height: 170px; font-size: .9rem; }
+.coach-theme #transcript p { border-color: #344254; margin: 0; padding: 6px 0 12px; }
+.coach-theme .pinned-panel { background: #242b32; border-color: #4b5861; }
+.coach-theme h2 { font-size: 1rem; }
+.coach-theme h3 { font-size: 1.02rem; line-height: 1.55; }
+.question-line { padding-bottom: 18px; margin-bottom: 20px; border-bottom: 1px solid #3a485b; }
+#coach-question { color: #dae5f4; margin: 6px 0 0; font-size: 1.1rem; }
+.coach-theme .answer { font-size: 1.4rem; line-height: 1.65; font-weight: 500; min-height: 64px; margin: 12px 0; }
+.coach-theme .korean { color: #aebed2; font-size: .9rem; line-height: 1.7; margin: 10px 0; }
+.listen-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 16px; }
+.coach-theme .listen-pill { border-radius: 24px; background: #3277d8; color: white; padding: 8px 15px; min-height: 36px; font-size: .82rem; box-shadow: 0 4px 14px #102d6550; }
+.listen-row label { font-size: .78rem; color: #b0c2d8; }
+.listen-row select { min-width: 0; width: auto; margin: 0; font-size: .8rem; padding: 7px; }
+.coach-theme .listen-row select { width: auto; flex: 0 1 auto; }
+.pronunciation { display: flex; flex-wrap: wrap; gap: 14px 18px; padding: 16px; background: #121c29; border: 1px solid #324457; border-radius: 12px; }
+.pronunciation-chunk { display: flex; flex-direction: column; max-width: 100%; overflow-wrap: anywhere; }
+.pronunciation-en { font-size: .95rem; color: #d9e7fa; }
+.pronunciation-ko { font-size: .79rem; color: #90a2ba; margin-top: 4px; }
+.coach-theme button { background: #3473c5; border-color: #5388c9; }
+.coach-theme button:hover:not(:disabled) { background: #4789df; }
+.coach-theme button.secondary, .coach-theme .scenario-chips button { background: #26374c; border-color: #516781; color: #e0ebfc; }
+.coach-theme button.text-button { color: #a7c6f5; }
+.coach-theme select, .coach-theme input[type=text], .coach-theme input[type=number], .coach-theme textarea { background: #111c2a; color: #e8f1ff; border-color: #53677f; width: 100%; max-width: 100%; min-width: 0; }
+.coach-theme #mode { max-width: 100%; }
+.coach-theme .fine, .coach-theme footer, .coach-theme #mode-help, .coach-theme ul, .coach-theme .empty { color: #a2b3c8; }
+.coach-theme .notice { background: #24364b; border-color: #769ac4; }
+.coach-theme .error { background: #42272b; color: #ffd1cd; }
+.coach-theme .actions .check, .coach-theme fieldset { border-color: #465a71; }
+.coach-theme #status { background: #233e40; color: #c0e4db; max-width: 100%; overflow-wrap: anywhere; }
+.coach-theme #reply-status { color: #a9bfd8; }
+.coach-theme a { color: #a6cafa; }
+.coach-theme input[type=checkbox] { accent-color: #6b9cde; }
+.coach-theme :focus-visible { outline-color: #abd4ff; }
+.coach-theme .section-heading { margin-bottom: 12px; }
+#practice-settings { padding: 12px 14px; }
+#practice-settings input[type=number] { padding: 9px; border-radius: 8px; }
+#practice-answer-text { font-size: 1.1rem; overflow-wrap: anywhere; }
+#practice-feedback p, #practice-summary p { overflow-wrap: anywhere; }
+#practice-summary ul { max-height: none; }
+#practice-next { margin-bottom: 18px; }
+.coach-theme .materials-link { font-size: .85rem; padding: 0 10px; }
+.coach-theme footer { font-size: .75rem; }
+#meeting-view.running { display: flex; flex-direction: column; }
+#meeting-view.running .workspace { order: -1; }
+#meeting-view.running .workspace .transcript-panel { order: 2; }
+#practice-view.running { display: flex; flex-direction: column; }
+#practice-view.running #practice-conversation { order: -2; }
+#practice-view.running #practice-feedback, #practice-view.running #practice-summary { order: -1; }
+@media (max-width: 520px) {
+  .coach-shell { padding: 18px 12px 30px; }
+  .coach-theme .card { padding: 18px; }
+  .coach-strip { gap: 8px; padding: 10px; }
+  #coach-status { width: 100%; margin-left: 0; }
+  .mode-chips button { font-size: .76rem; padding: 7px 9px; }
+  .coach-theme .answer { font-size: 1.2rem; }
+}

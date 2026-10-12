@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2317634f'/%3E%3Cpath d='M8 10h16v10H14l-6 4z' fill='white'/%3E%3C/svg%3E">
+    <title>My meeting materials</title>
+  </head>
+  <body>
+    <main class="materials-page">
+      <nav aria-label="Page navigation"><a href="/" id="back-to-meeting">Back to the meeting page</a></nav>
+      <header>
+        <span class="eyebrow">PREPARE BEFORE YOUR MEETING</span>
+        <h1>My meeting materials</h1>
+        <p>Upload documents before your trip, check what is indexed, and keep useful context ready for meeting replies.</p>
+      </header>
+      <section class="card" aria-labelledby="materials-auth-title">
+        <h2 id="materials-auth-title">Your materials account</h2>
+        <p>This tab signs in separately. Tokens stay in memory only; refreshing closes this tab's signed-in state. Your meeting continues in its original tab.</p>
+        <button id="materials-signin" type="button" disabled>Sign in securely</button>
+        <button id="materials-reconnect" type="button" class="secondary">Reload service configuration</button>
+        <p id="materials-auth-status" role="status">Loading service configuration…</p>
+      </section>
+      <section id="materials-host" class="card" aria-label="Upload and indexed meeting materials"></section>
+      <section class="card materials-help" aria-labelledby="formats-title">
+        <h2 id="formats-title">Prepare useful material</h2>
+        <p>Supported: PPTX, DOCX, text-based PDF, Markdown, UTF-8 notes and common code files. Files must be at most 5 MiB each. The service reports document and chunk quotas above.</p>
+        <p><strong>Text only:</strong> text inside images, screenshots, charts and diagrams is not read. Scanned PDFs need text recognition first. Slide text and notes can be extracted from PPTX, but images/diagram text inside slides are NOT read. Legacy .doc and .ppt are unsupported; save as DOCX/PPTX or a text-based PDF.</p>
+        <ul>
+          <li>Use one topic per file and put that topic in the title.</li>
+          <li>Add a glossary of names and terms, and a short Q&amp;A document.</li>
+          <li>Write key decisions, facts and explanations as text, not only in screenshots.</li>
+          <li>Hidden/build folders, binaries and unsupported file types are skipped with counts before upload.</li>
+        </ul>
+        <p>Indexing does not guarantee that a document supports every answer. Verify references before relying on a suggested reply. No microphone or screen capture runs on this page.</p>
+      </section>
+    </main>
+    <script type="module" src="/src/materials-page.ts"></script>
+  </body>
+</html>

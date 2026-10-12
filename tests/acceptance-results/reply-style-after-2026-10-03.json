@@ -1,0 +1,151 @@
+{
+  "runId": "style-after",
+  "startedAt": "2026-10-02T15:27:23.587Z",
+  "steps": [
+    {
+      "name": "note created",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "q1 reply received",
+      "ok": true,
+      "detail": "21 words"
+    },
+    {
+      "name": "q2 reply received",
+      "ok": true,
+      "detail": "18 words"
+    },
+    {
+      "name": "q3 reply received",
+      "ok": true,
+      "detail": "23 words"
+    },
+    {
+      "name": "q4 reply received",
+      "ok": true,
+      "detail": "19 words"
+    },
+    {
+      "name": "q5 reply received",
+      "ok": true,
+      "detail": "11 words"
+    },
+    {
+      "name": "q6 reply received",
+      "ok": true,
+      "detail": "20 words"
+    },
+    {
+      "name": "note deleted",
+      "ok": true,
+      "detail": "HTTP 204"
+    }
+  ],
+  "sessions": [
+    {
+      "label": "q1",
+      "question": "Can you tell us what the main risk is for the Zephyr rollout and how you plan to reduce it?",
+      "grounding": "grounded",
+      "route": "knowledge",
+      "sources": [
+        "Zephyr rollout meeting notes"
+      ],
+      "text": "The main risk is a slow database migration. We’ll reduce it by running the migration a week early on a copy.",
+      "wordCount": 21,
+      "sentenceCount": 2,
+      "maxSentenceWords": 13,
+      "longWords": 0,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q2",
+      "question": "Why did the team choose a staged rollout instead of releasing everything at once?",
+      "grounding": "grounded",
+      "route": "knowledge",
+      "sources": [
+        "Zephyr rollout meeting notes"
+      ],
+      "text": "To limit blast radius and catch problems early. We can test each step and roll back if needed.",
+      "wordCount": 18,
+      "sentenceCount": 2,
+      "maxSentenceWords": 10,
+      "longWords": 0,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q3",
+      "question": "What is the difference between latency and throughput and which one matters more for this service?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "Latency is how long one request takes; throughput is how many requests we can handle. Which matters more depends on the service’s goal.",
+      "wordCount": 23,
+      "sentenceCount": 2,
+      "maxSentenceWords": 15,
+      "longWords": 1,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q4",
+      "question": "Could you walk us through your plan for the next two weeks and what support do you need from us?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "I don’t have a set plan to share right now. Please tell me what support you want from us.",
+      "wordCount": 19,
+      "sentenceCount": 2,
+      "maxSentenceWords": 10,
+      "longWords": 0,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q5",
+      "question": "We noticed the error rate went up last night. Do you know what caused it?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "I’m not sure. Let me check and get back to you.",
+      "wordCount": 11,
+      "sentenceCount": 2,
+      "maxSentenceWords": 8,
+      "longWords": 0,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    },
+    {
+      "label": "q6",
+      "question": "How would you explain the benefit of this architecture to a non-technical stakeholder?",
+      "grounding": "no_matches",
+      "route": "knowledge",
+      "sources": [],
+      "text": "It makes the system easier to change and less likely to break. We can update parts without affecting everything else.",
+      "wordCount": 20,
+      "sentenceCount": 2,
+      "maxSentenceWords": 12,
+      "longWords": 1,
+      "formatting": false,
+      "prefix": false,
+      "errors": []
+    }
+  ],
+  "stats": {
+    "n": 6,
+    "meanWords": 18.666666666666668,
+    "maxWords": 23,
+    "formatted": 0,
+    "prefixed": 0
+  },
+  "finishedAt": "2026-10-02T15:28:32.074Z",
+  "ok": true
+}

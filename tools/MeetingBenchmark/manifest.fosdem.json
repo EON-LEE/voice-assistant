@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "url": "https://video.fosdem.org/2025/k4601/fosdem-2025-6822-panel-discussion-5-years-of-jmap-experiences-and-outlook.av1.webm",
+    "eventUrl": "https://fosdem.org/2025/schedule/event/fosdem-2025-6822-panel-discussion-5-years-of-jmap-experiences-and-outlook/",
+    "title": "Panel discussion: 5 years of JMAP - experiences and outlook",
+    "sha256": "3ddcf8418e7f1672068a01ce2f5e7c6fa455dbd96ca59e8041056abc1aeabb97",
+    "license": "CC-BY-2.0-BE",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0/be/deed.en",
+    "attribution": ["FOSDEM 2025", "TELLIER Benoit", "Hans-Jorg Happel", "Ben Bucksch", "Mauro De Gennaro", "Zhivko Vasilev"]
+  },
+  "reference": {
+    "kind": "published-automatic-captions",
+    "humanVerified": false,
+    "provenance": "FOSDEM published captions mentioned in the earlier acceptance report; not independently aligned or verified. Not a ground-truth transcript.",
+    "text": null
+  },
+  "clips": [
+    {"id": "meeting-introduction", "startSeconds": 54, "endSeconds": 70, "speechEnd": null},
+    {"id": "technical-question", "startSeconds": 331, "endSeconds": 360, "speechEnd": null},
+    {"id": "multi-speaker-followup", "startSeconds": 355, "endSeconds": 398, "speechEnd": null}
+  ]
+}

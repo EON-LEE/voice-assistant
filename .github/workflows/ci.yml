@@ -1,0 +1,97 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Acquire verified Bicep compiler
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'bicep.exe'
+          Invoke-WebRequest 'https://github.com/Azure/bicep/releases/download/v0.47.16/bicep-win-x64.exe' -OutFile $path
+          $expected = '3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c'
+          if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $expected) { throw 'Bicep checksum mismatch.' }
+      - name: Verify all local acceptance gates
+        shell: pwsh
+        run: |
+          .\scripts\verify-release.ps1 -InstallBrowsers `
+            -BicepPath (Join-Path $env:RUNNER_TEMP 'bicep.exe') `
+            -ReportPath (Join-Path $env:RUNNER_TEMP 'release-verification.json')
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: ${{ runner.temp }}/release-verification.json
+          if-no-files-found: warn
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
+          if-no-files-found: ignore
+      - name: Upload browser test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-report
+          path: tests/VoiceAssistant.Web.E2E/playwright-report/
+          if-no-files-found: ignore
+
+  linux-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build non-root Linux web image
+        run: docker build --file src/VoiceAssistant.Api/Dockerfile --tag voice-assistant:test .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: Install locked browser test dependencies
+        working-directory: tests/VoiceAssistant.Web.E2E
+        run: npm ci --no-audit --no-fund
+      - name: Run container and verify browser lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id=$(docker run --detach --rm \
+            --env ASPNETCORE_ENVIRONMENT=Development \
+            --env Provider__Mode=Fake voice-assistant:test)
+          trap 'docker stop "$container_id" >/dev/null' EXIT
+          version=$(node -p "require('./tests/VoiceAssistant.Web.E2E/node_modules/playwright/package.json').version")
+          docker run --rm --network "container:$container_id" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/work" \
+            --workdir /work/tests/VoiceAssistant.Web.E2E \
+            --env CI=true \
+            --env VOICE_ASSISTANT_WEB_URL=http://localhost:8080 \
+            --env VOICE_ASSISTANT_BACKEND_E2E=1 \
+            --env VOICE_ASSISTANT_API_EXTERNAL=1 \
+            "mcr.microsoft.com/playwright:v${version}-noble" \
+            node node_modules/@playwright/test/cli.js test
+      - name: Upload Linux browser test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-browser-test-report
+          path: tests/VoiceAssistant.Web.E2E/playwright-report/
+          if-no-files-found: ignore
