@@ -131,6 +131,16 @@ text, first complete sentence, clip-cut observation and human-annotated speech
 end; missing acoustic annotations and insufficient percentile samples stay
 unknown. Do not compare the invalid historical clips with corrected inputs.
 
+For recurring deck- or script-based demo preparation, use
+[MeetingScenarioEval](tools/MeetingScenarioEval/README.md). It extracts PowerPoint text read-only (including legacy OLE
+presentations with a misleading `.pptx` extension), normalizes slide text and notes, expands declarative scenario plans,
+runs the production reply prompt with grounded facts, and scores unsupported claims, missing numbers or negation,
+question-intent loss, generic answers, abstention, and first-response latency. The Intent Intelligence fixture includes
+executive, skeptical-customer, methodology, product-value, evidence/privacy, rollout, and unknown-answer challenges.
+Run `ReplyQualityEval` with `EVAL_TIMING_ONLY=1` on AMI/ICSI transcripts before enabling paid reply generation and judging.
+The October 14 representative run and its limitations are recorded in
+`tests/acceptance-results/meeting-demo-quality-2026-10-14.json`.
+
 ### Measured first release
 
 The [September 23 comparison](tests/acceptance-results/latency-improvements-2026-09-23.json)

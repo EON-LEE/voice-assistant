@@ -249,6 +249,28 @@ public sealed partial class ApiTests
     }
 
     [Fact]
+    public async Task DirectQuestionBypassesReplySettleWhileStatementStillWaits()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 1000 }));
+        await Receive(socket);
+
+        provider.Emit(new("statement", 1, "The dashboard separates evergreen and trending signals.", true));
+        await Until(socket, "transcript.final");
+        await Task.Delay(300);
+        Assert.Equal(0, provider.Answers);
+
+        provider.Emit(new("question", 1, "How do you support the 1.4 million post figure?", true));
+        using var immediate = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
+        while (provider.Answers == 0)
+            await Task.Delay(10, immediate.Token);
+        Assert.Equal(1, provider.Answers);
+        Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("1.4 million"));
+    }
+
+    [Fact]
     public async Task PendingPrefetchDoesNotBlockAudioCancelOrStopAndNeverLeaksObsoleteResponse()
     {
         const string query = "What is our customer delivery plan?";

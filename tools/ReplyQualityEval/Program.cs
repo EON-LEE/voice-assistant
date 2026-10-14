@@ -3,14 +3,34 @@ using Azure.Core;
 using ReplyQualityEval;
 using VoiceAssistant.Api;
 
-// Usage: ReplyQualityEval <out.json> <zip>|<meeting>[|<startSeconds>] ...
+// Usage:
+// ReplyQualityEval <out.json> <zip>|<meeting>[|<startSeconds>] ...
+// ReplyQualityEval --scenarios <suite.json> <out.json>
 // Replays human-transcribed meetings with real timing through the production reply trigger and prompt,
 // treats one participant as "ME", and scores timing (vs. when ME actually spoke) and suggestion quality.
-var output = args[0];
+if (args.Length < 2)
+{
+    Console.Error.WriteLine("Usage: ReplyQualityEval <out.json> <zip>|<meeting>[|<startSeconds>] ...");
+    Console.Error.WriteLine("   or: ReplyQualityEval --scenarios <suite.json> <out.json>");
+    Console.Error.WriteLine("Set EVAL_TIMING_ONLY=1 before running representative corpus timing checks without model calls.");
+    return 2;
+}
 var models = new Models(new EnvToken(), Environment.GetEnvironmentVariable("EVAL_OPENAI_ENDPOINT") ?? "https://voice-ai-2cmx22yjxadpg.openai.azure.com/",
     Environment.GetEnvironmentVariable("EVAL_CHAT_DEPLOYMENT") ?? "meeting-chat");
+if (args[0] == "--scenarios")
+{
+    if (args.Length != 3)
+    {
+        Console.Error.WriteLine("Usage: ReplyQualityEval --scenarios <suite.json> <out.json>");
+        return 2;
+    }
+    await ScenarioRunner.RunAsync(args[1], args[2], models);
+    return 0;
+}
+var output = args[0];
 const double Window = 300;
 var Settle = double.Parse(Environment.GetEnvironmentVariable("EVAL_SETTLE") ?? "2.5", System.Globalization.CultureInfo.InvariantCulture);
+var timingOnly = Environment.GetEnvironmentVariable("EVAL_TIMING_ONLY") == "1";
 var gate = new SemaphoreSlim(3);
 var results = new List<object>();
 var rows = new List<string[]>();
@@ -26,8 +46,7 @@ foreach (var spec in args.Skip(1))
     var mode = Environment.GetEnvironmentVariable("EVAL_MODE") ?? "baseline";
     var candidates = mode == "own-voice" ? Simulate(all, clip, Settle, target, skipOwn: true)
         : timing[Settle];
-    if (Environment.GetEnvironmentVariable("EVAL_TIMING_ONLY") == "1") candidates = [];
-    await Task.WhenAll(candidates.Select(async candidate =>
+    if (!timingOnly) await Task.WhenAll(candidates.Select(async candidate =>
     {
         await gate.WaitAsync();
         try
@@ -40,11 +59,12 @@ foreach (var spec in args.Skip(1))
         }
         finally { gate.Release(); }
     }));
-    var latency = candidates.Count == 0 ? 1.3 : candidates.Select(c => c.LatencySeconds).Order().ElementAt(candidates.Count / 2);
+    var latency = timingOnly || candidates.Count == 0
+        ? 1.3 : candidates.Select(c => c.LatencySeconds).Order().ElementAt(candidates.Count / 2);
     foreach (var (name, filter) in new (string, Func<Candidate, bool>)[]
         { ("every unit", _ => true), ("questions only", c => c.Question), ("AI turn check", c => c.RespondNow),
           ("question or AI", c => c.Question || c.RespondNow) })
-        rows.Add(Score(parts[1], name, candidates.Where(filter).ToList(), turns, latency));
+        rows.Add(Score(parts[1], name, candidates.Where(filter).ToList(), turns, latency, quality: !timingOnly));
     foreach (var s in new[] { 0.0, 0.5, 1.0, 1.5, 3.5 })
         rows.Add(Score(parts[1], $"every unit, settle {s}s (timing only)", s == 1.5 || s == 3.5 ? timing[s] : Simulate(all, clip, s, target), turns, latency, quality: false));
     foreach (var s in new[] { 0.0, 0.5, 1.0, 1.5 })
@@ -68,6 +88,7 @@ foreach (var policy in rows.Select(r => r[1]).Distinct())
     string Mean(int i) => group.Select(r => r[i]).Where(v => v != "-").Select(v => double.Parse(v.TrimEnd('%'))).DefaultIfEmpty(double.NaN).Average() is var m && double.IsNaN(m) ? "-" : (group[0][i].EndsWith('%') ? $"{m:F0}%" : $"{m:F2}");
     Console.WriteLine(string.Join(" | ", new[] { "ALL", policy }.Concat(Enumerable.Range(2, 7).Select(Mean))));
 }
+return 0;
 
 static string[] Score(string meeting, string policy, List<Candidate> triggers, List<Utterance> turns, double latency, bool quality = true)
 {
@@ -100,9 +121,11 @@ static List<Candidate> Simulate(List<Utterance> all, List<Utterance> clip, doubl
         pending.Add(u);
         var nextSpeech = index + 1 < all.Count ? all[index + 1].Start + 0.5 : double.MaxValue;
         var longWait = u.FinalAt - pendingSince > 12;
-        double? fires = nextSpeech > u.FinalAt + settle ? u.FinalAt + settle : longWait && nextSpeech > u.FinalAt + 0.3 ? u.FinalAt + 0.3 : null;
-        if (fires is null) continue;
         var texts = pending.Select(p => p.Text).ToArray();
+        double? fires = ReplyTrigger.BypassesSettle(texts) ? u.FinalAt :
+            nextSpeech > u.FinalAt + settle ? u.FinalAt + settle :
+            longWait && nextSpeech > u.FinalAt + 0.3 ? u.FinalAt + 0.3 : null;
+        if (fires is null) continue;
         var decision = ReplyTrigger.Evaluate(texts);
         if (decision == ReplyDecision.Wait) continue;
         if (decision == ReplyDecision.Reply)

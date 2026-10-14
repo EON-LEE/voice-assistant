@@ -234,6 +234,14 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 Respond to the MOST RECENT complete idea or question; when it is incomplete, use the last complete one.
                 If that is a direct question, the first line answers it plainly before anything else.
                 Pick up one concrete detail from it (a number, price, item, name or decision) so the hint clearly fits.
+                When a direct question compares, challenges or repeats specific numbers, preserve every compared number
+                in the primary reply; do not replace them with vague phrases such as "the cut" or "a large amount".
+                Answer every material clause of a direct question. If one clause asks for a private or document-specific
+                detail the evidence does not contain, answer the supported clause first, then say briefly that the
+                missing detail is not in the material or needs verification. Do not silently skip that clause, turn it
+                into a follow-up question, or imply that traceability proves accuracy, privacy, compliance or business impact.
+                A requested launch date or delivery promise without evidence is an unknown commitment, not ambiguity:
+                say it is not committed or needs agreement; do not ask what the requested date means.
                 Do not promise or claim actions for the participant ("I can do it now", "I will send").
                 Sound natural and vary the opening; do not start every suggestion with "Maybe".
                 Reading persona: a Korean-speaking IT engineer who is a beginner at spoken English.

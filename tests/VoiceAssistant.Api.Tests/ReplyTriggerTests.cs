@@ -25,4 +25,12 @@ public sealed class ReplyTriggerTests
         Assert.True(ReplyTrigger.ContainsQuestion(["We start Monday.", "How about the budget"]));
         Assert.False(ReplyTrigger.ContainsQuestion(["We start Monday.", "OK."]));
     }
+
+    [Theory]
+    [InlineData(true, "Could we use 1.4 million posts?")]
+    [InlineData(true, "What should we do next")]
+    [InlineData(false, "We should review the 1.4 million posts.")]
+    [InlineData(false, "Yeah.")]
+    public void OnlySubstantiveQuestionsBypassSettle(bool expected, params string[] pending) =>
+        Assert.Equal(expected, ReplyTrigger.BypassesSettle(pending));
 }

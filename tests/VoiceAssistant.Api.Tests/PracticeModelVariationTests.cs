@@ -359,6 +359,11 @@ public sealed class PracticeModelVariationTests
         Assert.DoesNotContain("SOUNDS", system);
         Assert.DoesNotContain("chunk", system);
         Assert.Contains("do not explain, coach, or speculate", system);
+        Assert.Contains("Preserve whether the input is a question, statement, request, command", system);
+        Assert.Contains("Preserve negation and uncertainty", system);
+        Assert.Contains("percentage, currency", system);
+        Assert.Contains("may, might, can, could, should, must", system);
+        Assert.Contains("API names and code identifiers", system);
         Assert.Equal(1024, body.RootElement.GetProperty("max_completion_tokens").GetInt32());
     }
 

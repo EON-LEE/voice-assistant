@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "name": "Sulwhasoo Intent Intelligence US working session",
+  "source": "Intent_Intelligence_US_Session_v2.pptx, 10 slides, read-only extraction",
+  "maxFirstResponseMs": 5000,
+  "facts": [
+    {
+      "id": "support-tool",
+      "sourceSlide": 2,
+      "text": "Intent Intelligence is a support tool for reviewing U.S. customer conversations. It is not a sales forecast, a replacement for research or judgment, or a final answer.",
+      "matchAny": ["support tool", "review customer conversations", "not a sales forecast", "not sales forecast", "one input"]
+    },
+    {
+      "id": "cep-definition",
+      "sourceSlide": 3,
+      "text": "CEP means Category Entry Point: a situation where a customer looks for a product. It combines a topic with the situation and need.",
+      "matchAny": ["Category Entry Point", "situation", "need"]
+    },
+    {
+      "id": "cep-parts",
+      "sourceSlide": 3,
+      "text": "Each CEP contains the situation, need, buying factors, and evidence in original posts.",
+      "matchAny": ["buying factors", "original posts", "evidence"]
+    },
+    {
+      "id": "data-volume",
+      "sourceSlide": 4,
+      "text": "The current deck says the pipeline starts with about 9.7 million U.S. social posts and product reviews over two years and retains about 1.4 million customer posts after removing about 86 percent as ads, brand posts, duplicates, or off-topic content.",
+      "matchAny": ["9.7 million", "9.7M"]
+    },
+    {
+      "id": "data-method",
+      "sourceSlide": 4,
+      "text": "AI reads each post in context, extracts a situation and need when present, and merges similar meanings into one CEP.",
+      "matchAny": ["reads each post in context", "similar", "one CEP"]
+    },
+    {
+      "id": "evidence-links",
+      "sourceSlide": 4,
+      "text": "Customer posts are the main source, and each CEP links to its original posts.",
+      "matchAny": ["links to", "original posts", "source posts"]
+    },
+    {
+      "id": "cep-types",
+      "sourceSlide": 5,
+      "text": "CEPs are classified as evergreen, trending, or event-driven based on how they change over time.",
+      "matchAny": ["evergreen", "trending", "event-driven"]
+    },
+    {
+      "id": "dashboard-screens",
+      "sourceSlide": 7,
+      "text": "The dashboard has Signals, Market & Competition, and Customer CEPs screens.",
+      "matchAny": ["Signals", "Market & Competition", "Customer CEPs"]
+    },
+    {
+      "id": "feedback-method",
+      "sourceSlide": 8,
+      "text": "The proposed review is to examine 5–10 CEPs together and collect short comments about realism, usefulness, product fit, use, and scope.",
+      "matchAny": ["5–10", "5-10", "real", "useful"]
+    },
+    {
+      "id": "next-phase-input",
+      "sourceSlide": 9,
+      "text": "The next phase asks which decisions, sources, competitors, and review frequency would be most useful.",
+      "matchAny": ["decisions", "sources", "competitors", "launch", "campaign", "product-page", "monthly", "quarterly", "cadence"]
+    }
+  ],
+  "unknowns": [
+    {
+      "id": "accuracy",
+      "text": "The deck does not state precision, recall, accuracy, confidence thresholds, or a guarantee that every post is classified correctly.",
+      "abstainMatchAny": ["not specified", "does not state", "need to validate", "need validation", "cannot guarantee", "not sure", "let me check"],
+      "forbiddenClaims": ["95% accuracy", "guarantee", "every post is correct"]
+    },
+    {
+      "id": "privacy",
+      "text": "The deck does not specify PII handling, consent, retention, source licenses, legal review, or privacy controls.",
+      "abstainMatchAny": ["not specified", "need to confirm", "privacy review", "legal review"],
+      "forbiddenClaims": ["fully compliant", "no personal data", "all consented", "stored for 30 days"]
+    },
+    {
+      "id": "roi",
+      "text": "The deck does not claim revenue lift, conversion improvement, forecast accuracy, or campaign ROI.",
+      "abstainMatchAny": ["not a sales forecast", "does not claim", "not specified", "measure in a pilot", "not a guaranteed"],
+      "forbiddenClaims": ["increase sales", "conversion lift", "guaranteed ROI", "20%"]
+    },
+    {
+      "id": "rollout-commitment",
+      "text": "The deck does not provide a committed launch date, production SLA, final owner, or approved rollout scope.",
+      "abstainMatchAny": ["not committed", "not specified", "need to agree", "needs to be agreed", "need to confirm"],
+      "forbiddenClaims": ["launch next month", "production-ready", "Microsoft will deliver", "SLA"]
+    },
+    {
+      "id": "latest-counts",
+      "text": "The speaker notes say the latest 9.7 million, 1.4 million, and 86 percent figures must be confirmed before the session.",
+      "abstainMatchAny": ["about", "current deck", "confirm", "approximately"],
+      "forbiddenClaims": ["exactly 9.7", "exactly 1.4", "final audited"]
+    },
+    {
+      "id": "model-details",
+      "text": "The deck does not name the AI model, training data, embedding method, clustering algorithm, or threshold settings.",
+      "abstainMatchAny": ["not specified", "does not name", "need to confirm", "implementation detail"],
+      "forbiddenClaims": ["GPT-5", "k-means", "fine-tuned", "0.8 threshold"]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "executive-value",
+      "category": "executive-qa",
+      "title": "Executive asks what the dashboard changes",
+      "script": [
+        {"speaker": "presenter", "text": "This is the current version of Intent Intelligence for U.S. customer conversations."},
+        {"speaker": "customer", "text": "What decision can this dashboard improve, and is it a sales forecast?"}
+      ],
+      "expectedFactIds": ["support-tool", "next-phase-input"],
+      "requiredFactIds": ["support-tool"],
+      "unknownIds": ["roi"],
+      "requiredAbstainIds": [],
+      "answerHints": [
+        "Position it as one evidence input for launches, campaigns, or product-page reviews.",
+        "State clearly that it is not a sales forecast and does not prove ROI."
+      ]
+    },
+    {
+      "id": "skeptical-volume",
+      "category": "skeptical-customer",
+      "title": "Customer challenges the large filtering claim",
+      "script": [
+        {"speaker": "presenter", "text": "The current deck shows a two-year U.S. source set."},
+        {"speaker": "customer", "text": "You went from 9.7 million posts to 1.4 million. Why should I trust an 86% removal rate?"}
+      ],
+      "expectedFactIds": ["data-volume", "data-method", "evidence-links"],
+      "requiredFactIds": ["data-volume", "evidence-links"],
+      "unknownIds": ["accuracy", "latest-counts"],
+      "answerHints": [
+        "Repeat that the figures are approximate and list the removed categories.",
+        "Use source links for inspection, but do not claim an accuracy rate."
+      ],
+      "preserve": {"tokens": ["9.7 million", "1.4 million", "86%"], "numbers": false}
+    },
+    {
+      "id": "technical-method",
+      "category": "technical-methodology",
+      "title": "Data scientist asks how CEPs are produced",
+      "script": [
+        {"speaker": "customer", "text": "How does the system turn posts into CEPs, and which clustering model and threshold do you use?"}
+      ],
+      "expectedFactIds": ["cep-definition", "cep-parts", "data-method"],
+      "requiredFactIds": ["data-method"],
+      "unknownIds": ["model-details"],
+      "answerHints": [
+        "Describe contextual extraction of situation and need followed by grouping similar meanings.",
+        "Say the deck does not specify model or threshold details."
+      ]
+    },
+    {
+      "id": "product-use",
+      "category": "product-value",
+      "title": "Marketing lead asks how to use the outputs",
+      "script": [
+        {"speaker": "customer", "text": "How would evergreen, trending, and event-driven CEPs change our product and content work?"}
+      ],
+      "expectedFactIds": ["cep-types", "support-tool"],
+      "requiredFactIds": ["cep-types"],
+      "unknownIds": ["roi"],
+      "requiredAbstainIds": [],
+      "answerHints": [
+        "Connect evergreen to always-on content, trending to small tests, and event-driven to campaign reaction.",
+        "Keep the team as the decision owner and avoid performance promises."
+      ]
+    },
+    {
+      "id": "evidence-privacy",
+      "category": "evidence-privacy",
+      "title": "Privacy reviewer challenges traceability and controls",
+      "script": [
+        {"speaker": "customer", "text": "Can I inspect the evidence, and are you fully compliant with privacy, consent, and retention requirements?"}
+      ],
+      "expectedFactIds": ["evidence-links"],
+      "unknownIds": ["privacy"],
+      "answerHints": [
+        "State that CEPs link to original posts for evidence review.",
+        "Do not claim privacy compliance; request confirmation from the privacy and legal owners."
+      ]
+    },
+    {
+      "id": "rollout-plan",
+      "category": "rollout-next-step",
+      "title": "Sponsor asks for a rollout plan",
+      "script": [
+        {"speaker": "customer", "text": "What should we do after this session, how often should we review it, and can you launch next month?"}
+      ],
+      "expectedFactIds": ["feedback-method", "next-phase-input"],
+      "requiredFactIds": ["feedback-method"],
+      "unknownIds": ["rollout-commitment"],
+      "requiredAbstainIds": ["rollout-commitment"],
+      "answerHints": [
+        "Propose reviewing 5–10 CEPs, updating criteria, and agreeing monthly, quarterly, or on-demand cadence.",
+        "Do not accept a launch date or make a delivery commitment."
+      ],
+      "preserve": {"anyOf": [["5–10", "5-10", "five to ten"]], "numbers": false}
+    },
+    {
+      "id": "unknown-accuracy",
+      "category": "unknown-answer",
+      "title": "Question not answered by the deck",
+      "script": [
+        {"speaker": "customer", "text": "What are the measured precision and recall for CEP extraction by source?"}
+      ],
+      "expectedFactIds": ["support-tool"],
+      "requiredFactIds": [],
+      "unknownIds": ["accuracy"],
+      "answerHints": [
+        "Say those measurements are not in the material.",
+        "Offer to validate them by source before using the dashboard as evidence."
+      ]
+    },
+    {
+      "id": "screen-priority",
+      "category": "product-value",
+      "title": "User asks which dashboard screen to start with",
+      "script": [
+        {"speaker": "customer", "text": "Which screen should our regular review start with, and can we drill into the source?"}
+      ],
+      "expectedFactIds": ["dashboard-screens", "evidence-links", "next-phase-input"],
+      "requiredFactIds": ["evidence-links"],
+      "unknownIds": ["rollout-commitment"],
+      "requiredAbstainIds": [],
+      "answerHints": [
+        "Suggest starting with Signals, then Market & Competition, then Customer CEPs, while treating this as a proposed workflow.",
+        "Confirm that a CEP can be opened to inspect original posts."
+      ]
+    }
+  ]
+}

@@ -147,7 +147,14 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             {
                                 if (pendingSpeech.Count == 0) pendingSince = message.Timestamp;
                                 pendingSpeech.Add(transcript.Text);
-                                ScheduleSettle(lifetime);
+                                if (ReplyTrigger.BypassesSettle(pendingSpeech))
+                                {
+                                    pendingSpeech.Clear();
+                                    settleNumber++;
+                                    if (responseActive) responsePending = true;
+                                    else await StartResponseAsync(lifetime.Token, manual: false);
+                                }
+                                else ScheduleSettle(lifetime);
                             }
                             else if (responseActive) responsePending = true;
                             else await StartResponseAsync(lifetime.Token, manual: false);

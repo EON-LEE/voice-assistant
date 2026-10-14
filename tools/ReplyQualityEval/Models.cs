@@ -27,29 +27,34 @@ public sealed class Models(TokenCredential credential, string endpoint, string d
     private readonly ChatClient chat = new AzureOpenAIClient(new Uri(endpoint), credential).GetChatClient(deployment);
 
     /// <summary>Production prompt and parser, exactly as the deployed service uses them.</summary>
-    public async Task Suggest(Candidate candidate, IReadOnlyList<Utterance> history)
+    public Task Suggest(Candidate candidate, IReadOnlyList<Utterance> history) =>
+        Suggest(candidate, history, new("no_matches", []));
+
+    public async Task Suggest(Candidate candidate, IReadOnlyList<Utterance> history, Grounding grounding)
     {
         for (var attempt = 1; ; attempt++)
         {
-            try { await SuggestOnce(candidate, history); return; }
+            try { await SuggestOnce(candidate, history, grounding); return; }
             catch (System.ClientModel.ClientResultException ex) when (ex.Status == 429 && attempt < 6)
             { await Task.Delay(3000 * attempt); }
         }
     }
 
-    private async Task SuggestOnce(Candidate candidate, IReadOnlyList<Utterance> history)
+    private async Task SuggestOnce(Candidate candidate, IReadOnlyList<Utterance> history, Grounding grounding)
     {
         var watch = Stopwatch.StartNew();
+        double? firstResponse = null;
         string primary = "", alternative = "";
         await foreach (var update in provider.AnswerWithSuggestionsAsync(
-            history.TakeLast(12).Select(u => new ConversationTurn(u.Text)).ToArray(), new Grounding("no_matches", []),
+            history.TakeLast(12).Select(u => new ConversationTurn(u.Text)).ToArray(), grounding,
             SessionOptions.Legacy, "knowledge", CancellationToken.None))
         {
+            if (firstResponse is null && update.Text.Length > 0) firstResponse = watch.Elapsed.TotalSeconds;
             primary += update.Text;
             if (update.Alternative is not null) alternative = update.Alternative;
         }
         candidate.Primary = primary; candidate.Alternative = alternative;
-        candidate.LatencySeconds = watch.Elapsed.TotalSeconds;
+        candidate.LatencySeconds = firstResponse ?? watch.Elapsed.TotalSeconds;
     }
 
     /// <summary>Turn classifier: does the latest speech invite the listening participants to respond now?</summary>

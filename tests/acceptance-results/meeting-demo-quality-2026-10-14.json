@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "source": {
+    "name": "Intent_Intelligence_US_Session_v2.pptx",
+    "formatDetected": "ole-binary",
+    "slidesExtractedReadOnly": 10,
+    "sourceModified": false
+  },
+  "scenarioEvaluation": {
+    "scenarios": 8,
+    "categories": [
+      "executive-qa",
+      "skeptical-customer",
+      "technical-methodology",
+      "product-value",
+      "evidence-privacy",
+      "rollout-next-step",
+      "unknown-answer"
+    ],
+    "liveProductionPrompt": {
+      "passed": 7,
+      "total": 8,
+      "unsupportedClaims": 0,
+      "overGenericAnswers": 0,
+      "latencyPassThresholdMs": 5000,
+      "latencyPassRate": 1.0,
+      "medianFirstResponseMs": 1519.5,
+      "maxFirstResponseMs": 4821,
+      "knownFailure": "The skeptical-volume reply preserved 1.4 million and 86% but omitted 9.7 million, source-link evidence, and explicit accuracy/latest-count uncertainty."
+    },
+    "deterministicScorerFixture": {
+      "passed": 8,
+      "total": 8,
+      "unsupportedClaims": 0,
+      "overGenericAnswers": 0,
+      "medianFirstResponseMs": 760
+    }
+  },
+  "replyTimingOnly": {
+    "corpora": [
+      {
+        "name": "AMI",
+        "meeting": "ES2002a",
+        "windowSeconds": "510-810",
+        "target": "B",
+        "targetTurns": 9
+      },
+      {
+        "name": "ICSI",
+        "meeting": "Bdb001",
+        "windowSeconds": "270-570",
+        "target": "F",
+        "targetTurns": 16
+      }
+    ],
+    "defaultSettleSeconds": 2.5,
+    "overallDefaultPolicy": {
+      "suggestionsPerMinute": 4.0,
+      "turnRecall": 0.74,
+      "timely": 0.46,
+      "ownSpeech": 0.50
+    },
+    "overallQuestionOnly": {
+      "suggestionsPerMinute": 2.3,
+      "turnRecall": 0.50,
+      "timely": 0.56,
+      "ownSpeech": 0.58
+    },
+    "note": "Timing-only uses a fixed 1.3 second display-latency assumption and makes no model or LLM-judge calls. Questions bypass settle at final-transcript time; statements and fragments retain settle."
+  },
+  "verification": {
+    "status": "LOCAL_PASS_LIVE_NOT_VERIFIED",
+    "apiTestsPassed": 625,
+    "liveProbeTestsPassed": 83,
+    "webUnitTestsPassed": 145,
+    "browserTestsPassed": 55,
+    "browserTestsSkipped": 3,
+    "meetingBenchmarkTestsPassed": 128,
+    "meetingBenchmarkTestsSkipped": 1,
+    "meetingScenarioToolTestsPassed": 5,
+    "infrastructureOfflineChecksPassed": 201,
+    "liveAzureDeployment": "NOT_RUN",
+    "realTabSharing": "NOT_RUN"
+  },
+  "limitations": [
+    "The live scenario sample is one nondeterministic model run, not a statistical quality guarantee.",
+    "The live run exercised Azure OpenAI reply generation with supplied grounding, not Azure AI Search retrieval.",
+    "The AMI and ICSI samples cover one five-minute window per corpus.",
+    "No original presentation content or SharePoint URL is stored in this result."
+  ]
+}

@@ -18,7 +18,7 @@ public static partial class Corpus
     public static List<Utterance> Load(string zipPath, string meeting)
     {
         using var zip = ZipFile.OpenRead(zipPath);
-        var pattern = new Regex($@"(^|/){Regex.Escape(meeting)}\.([A-Z])\.words\.xml$");
+        var pattern = new Regex($@"(^|/){Regex.Escape(meeting)}\.(?<speaker>[^./]+)\.words\.xml$", RegexOptions.IgnoreCase);
         var utterances = new List<Utterance>();
         foreach (var entry in zip.Entries)
         {
@@ -34,7 +34,7 @@ public static partial class Corpus
             void Flush()
             {
                 var value = Tidy(text.ToString());
-                if (value.Length > 0) utterances.Add(new(match.Groups[2].Value, start, end, value));
+                if (value.Length > 0) utterances.Add(new(match.Groups["speaker"].Value, start, end, value));
                 text.Clear();
             }
             foreach (var word in words)
