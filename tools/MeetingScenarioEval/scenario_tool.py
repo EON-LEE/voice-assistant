@@ -15,13 +15,25 @@ NUMBER = re.compile(r"(?<!\w)(?:[$€£])?\d+(?:[.,]\d+)*(?:\s?(?:%|million|bill
 NEGATION = re.compile(r"\b(?:no|not|never|cannot|can't|won't|without|unknown|unavailable)\b", re.I)
 QUESTION = re.compile(r"(?:\?|^\s*(?:what|how|why|when|where|who|which|can|could|would|will|do|does|did|is|are|should|may|might)\b)", re.I)
 GENERIC = re.compile(r"^(?:that(?:'s| is) (?:interesting|a good point)|i agree|good question|let(?:'s| us) discuss|could you explain more)[.!]?$", re.I)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PUBLISHABLE = {"public", "synthetic"}
 
 
 def read_json(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
-def write_json(path: str, value: Any) -> None:
+def ensure_publish_boundary(path: str, classification: str) -> None:
+    target = Path(path).resolve()
+    if classification not in PUBLISHABLE and target.is_relative_to(REPO_ROOT):
+        raise PermissionError(
+            "Confidential/private output must stay outside the repository. "
+            "Use the session artifact directory or another private path."
+        )
+
+
+def write_json(path: str, value: Any, classification: str) -> None:
+    ensure_publish_boundary(path, classification)
     target = Path(path)
     if target.exists():
         raise FileExistsError(f"Choose a new output path; output is not overwritten: {target}")
@@ -33,7 +45,7 @@ def clean(value: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def normalize(extracted: dict[str, Any]) -> dict[str, Any]:
+def normalize(extracted: dict[str, Any], classification: str) -> dict[str, Any]:
     slides = []
     for slide in extracted["slides"]:
         text = clean(slide.get("text", ""))
@@ -41,6 +53,7 @@ def normalize(extracted: dict[str, Any]) -> dict[str, Any]:
         slides.append({"number": slide["number"], "text": text, "notes": notes})
     return {
         "schemaVersion": 1,
+        "classification": classification,
         "sourceName": extracted["sourceName"],
         "sourceFormat": extracted["sourceFormat"],
         "slideCount": len(slides),
@@ -50,6 +63,9 @@ def normalize(extracted: dict[str, Any]) -> dict[str, Any]:
 
 
 def expand(plan: dict[str, Any]) -> dict[str, Any]:
+    classification = plan.get("classification")
+    if classification not in {"confidential", "private", *PUBLISHABLE}:
+        raise ValueError("plan classification must be confidential, private, public, or synthetic")
     facts = {item["id"]: item for item in plan["facts"]}
     unknowns = {item["id"]: item for item in plan["unknowns"]}
     scenarios = []
@@ -73,6 +89,7 @@ def expand(plan: dict[str, Any]) -> dict[str, Any]:
         )
     return {
         "schemaVersion": 1,
+        "classification": classification,
         "name": plan["name"],
         "source": plan["source"],
         "scenarios": scenarios,
@@ -204,6 +221,9 @@ def main() -> int:
     normalize_parser = commands.add_parser("normalize")
     normalize_parser.add_argument("--input", required=True)
     normalize_parser.add_argument("--output", required=True)
+    normalize_parser.add_argument(
+        "--classification", required=True, choices=["confidential", "private", "public", "synthetic"]
+    )
     generate_parser = commands.add_parser("generate")
     generate_parser.add_argument("--plan", required=True)
     generate_parser.add_argument("--output", required=True)
@@ -216,13 +236,13 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "normalize":
-        write_json(args.output, normalize(read_json(args.input)))
+        write_json(args.output, normalize(read_json(args.input), args.classification), args.classification)
     elif args.command == "generate":
         suite = expand(read_json(args.plan))
         errors = validate_suite(suite)
         if errors:
             raise ValueError("\n".join(errors))
-        write_json(args.output, suite)
+        write_json(args.output, suite, suite["classification"])
     elif args.command == "validate":
         errors = validate_suite(read_json(args.scenarios))
         if errors:
@@ -230,7 +250,8 @@ def main() -> int:
             return 1
         print("PASS: scenario suite is complete and valid.")
     elif args.command == "score":
-        write_json(args.output, score(read_json(args.scenarios), read_json(args.responses)))
+        suite = read_json(args.scenarios)
+        write_json(args.output, score(suite, read_json(args.responses)), suite["classification"])
     return 0
 
 

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "classification": "synthetic",
+  "scenarioEvaluation": {
+    "name": "Synthetic market signals working session",
+    "scenarios": 8,
+    "deterministicScorerFixture": {
+      "passed": 8,
+      "total": 8,
+      "unsupportedClaims": 0,
+      "overGenericAnswers": 0,
+      "medianFirstResponseMs": 760,
+      "latencyMeasurementType": "fixture-authored"
+    }
+  },
+  "scope": {
+    "productionPromptSerialization": "covered by API tests",
+    "liveConfidentialAzureEvaluation": "STOPPED",
+    "timingSimulation": "reported separately from audio ASR E2E",
+    "audioAsrE2E": "not established by this result"
+  },
+  "limitations": [
+    "All names, figures, facts, and scenarios in the committed fixture are synthetic.",
+    "The deterministic responses test evaluator behavior, not nondeterministic live model quality.",
+    "The 760 ms median is calculated from authored fixture inputs and is not measured model, network, streaming, browser, or Azure latency.",
+    "Timing simulation uses human transcripts and is not an audio recognition test."
+  ]
+}

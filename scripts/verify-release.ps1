@@ -96,8 +96,8 @@ try {
     }
     Invoke-Verification 'meeting-scenario-evaluation' {
         $tool = Join-Path $root 'tools\MeetingScenarioEval\scenario_tool.py'
-        $plan = Join-Path $root 'tools\MeetingScenarioEval\intent-intelligence-us.plan.json'
-        $responses = Join-Path $root 'tools\MeetingScenarioEval\intent-intelligence-us.responses.json'
+        $plan = Join-Path $root 'tools\MeetingScenarioEval\synthetic-market-signals.plan.json'
+        $responses = Join-Path $root 'tools\MeetingScenarioEval\synthetic-market-signals.responses.json'
         $suite = Join-Path ([IO.Path]::GetTempPath()) ("meeting-scenarios-" + [Guid]::NewGuid().ToString('N') + '.json')
         $score = Join-Path ([IO.Path]::GetTempPath()) ("meeting-score-" + [Guid]::NewGuid().ToString('N') + '.json')
         try {

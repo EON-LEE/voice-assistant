@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $InputPath,
     [Parameter(Mandatory = $true)]
-    [string] $OutputPath
+    [string] $OutputPath,
+    [ValidateSet('Confidential', 'Private', 'Public', 'Synthetic')]
+    [string] $Classification = 'Confidential'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +22,12 @@ if (Test-Path -LiteralPath $outputFile) {
 $outputParent = Split-Path $outputFile -Parent
 if (-not (Test-Path -LiteralPath $outputParent -PathType Container)) {
     throw "Output directory does not exist: $outputParent"
+}
+$repoRoot = [IO.Path]::GetFullPath((Split-Path (Split-Path $PSScriptRoot -Parent) -Parent))
+$insideRepository = $outputFile.StartsWith($repoRoot + [IO.Path]::DirectorySeparatorChar,
+    [StringComparison]::OrdinalIgnoreCase)
+if ($Classification -in @('Confidential', 'Private') -and $insideRepository) {
+    throw 'Confidential/private extraction output must stay outside the repository. Use a session artifact or other private path.'
 }
 
 $bytes = [IO.File]::ReadAllBytes($inputFile)
@@ -84,6 +92,7 @@ try {
     }
     $result = [ordered]@{
         schemaVersion = 1
+        classification = $Classification.ToLowerInvariant()
         sourceName = [IO.Path]::GetFileName($inputFile)
         sourceFormat = $format
         sourceSignature = $signature

@@ -1,1 +1,5 @@
 __pycache__/
+*.confidential.json
+*.private.json
+local-private/
+private/

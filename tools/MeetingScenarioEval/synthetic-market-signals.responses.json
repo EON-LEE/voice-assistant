@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "suite": "Synthetic market signals working session",
+  "results": [
+    {"scenarioId": "executive-value", "response": "It is a support tool for review decisions, not a sales forecast or ROI claim.", "firstResponseMs": 850},
+    {"scenarioId": "skeptical-volume", "response": "The synthetic example keeps 2.1 million from 12.4 million after an 83% filter. It links to public source posts, but accuracy is not shown.", "firstResponseMs": 700},
+    {"scenarioId": "technical-method", "response": "It reads posts in context and groups similar meanings into one signal. The model and threshold are not specified.", "firstResponseMs": 900},
+    {"scenarioId": "product-use", "response": "Evergreen supports steady work, while trending and event-driven signals need faster review. It does not prove ROI.", "firstResponseMs": 880},
+    {"scenarioId": "evidence-privacy", "response": "Each signal links to public source posts. Privacy, consent, and retention controls are not specified.", "firstResponseMs": 780},
+    {"scenarioId": "rollout-plan", "response": "Review 5–10 signals, collect comments, and agree a cadence. A next-month launch is not committed.", "firstResponseMs": 650},
+    {"scenarioId": "unknown-accuracy", "response": "The material does not show precision or recall, so those metrics need verification by source.", "firstResponseMs": 620},
+    {"scenarioId": "screen-priority", "response": "Start with Signals, then use the situation screen to open public source posts. The cadence remains a team choice.", "firstResponseMs": 740}
+  ]
+}

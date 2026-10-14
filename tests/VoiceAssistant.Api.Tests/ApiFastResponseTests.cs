@@ -249,7 +249,7 @@ public sealed partial class ApiTests
     }
 
     [Fact]
-    public async Task DirectQuestionBypassesReplySettleWhileStatementStillWaits()
+    public async Task DirectQuestionUsesConfiguredReplySettleLikeStatements()
     {
         var provider = new ControlledProvider { AutomaticRetrieval = true };
         await using var host = await Host.StartAsync(provider: provider);
@@ -262,12 +262,15 @@ public sealed partial class ApiTests
         await Task.Delay(300);
         Assert.Equal(0, provider.Answers);
 
-        provider.Emit(new("question", 1, "How do you support the 1.4 million post figure?", true));
-        using var immediate = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
+        provider.Emit(new("question", 1, "How do you support the 2.1 million post figure?", true));
+        await Task.Delay(700);
+        Assert.Equal(0, provider.Answers);
+
+        using var settled = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
         while (provider.Answers == 0)
-            await Task.Delay(10, immediate.Token);
+            await Task.Delay(10, settled.Token);
         Assert.Equal(1, provider.Answers);
-        Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("1.4 million"));
+        Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("2.1 million"));
     }
 
     [Fact]

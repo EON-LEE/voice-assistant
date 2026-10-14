@@ -2,6 +2,15 @@
 
 Installation-free TypeScript/Vite frontend for the same-origin Azure-hosted API. End users open a URL; no Windows app, extension, or download is needed. Tab capture never requests microphone permission; the explicit in-person microphone mode does. The preserved desktop project is not a dependency.
 
+The build contains two meeting surfaces with intentionally separate settings and defaults:
+
+| Page | Purpose | Defaults | Persistence | Korean output |
+| --- | --- | --- | --- | --- |
+| `/live.html` | Current compact overlay, including the `LiveCoach.exe` WebOverlay host | `grounded`, semantic segmentation, 1100ms silence fallback | WebOverlay/browser profile sign-in plus documented overlay preferences | `translationOnly`; Korean meaning without Hangul reading generation |
+| `/index.html` | Existing full browser meeting/practice UI | `balanced`, 500ms end silence | Meeting/profile/session settings stay in memory and clear on reload; auth client uses memory storage | Korean meaning plus approximate Hangul reading |
+
+Do not infer one page's defaults or persisted state from the other.
+
 ## Live overlay page (`/live.html`) — same screen as the desktop overlay
 
 `live.html` reproduces the desktop **Overlay v2** layout (550×860 dark panel, recognized English/Korean
@@ -94,7 +103,16 @@ npm run dev
 
 Vite serves `http://127.0.0.1:5173` and proxies `/api` (including WebSockets) to `http://localhost:5080`, preserving the incoming Host header. Serve `dist` from the ASP.NET API's same-origin static root in Azure; no Vite development server is needed in production. The frontend contains no cloud secrets or build-time tenant config.
 
-The production build is multi-page: `dist/index.html` is the meeting UI and `dist/materials.html` is the dedicated materials UI. Vite emits their shared JS/CSS dependencies under `dist/assets`. The API's existing `UseDefaultFiles` / `UseStaticFiles` serves both without new routes. **`dotnet publish` alone does not build or copy frontend files**: the existing API Dockerfile builds Vite and copies the complete `dist` into the published `wwwroot`. For local published-output validation, build the web, run `dotnet publish .\src\VoiceAssistant.Api -c Release -o <isolated-output>`, then copy the complete web `dist` into `<isolated-output>\wwwroot`, matching that Docker step. Do not copy only `index.html` or only one page's bundle.
+The production build is multi-page: `dist/live.html` is the current compact overlay,
+`dist/index.html` is the existing full meeting/practice UI, and `dist/materials.html`
+is the dedicated materials UI. Vite emits their shared JS/CSS dependencies under
+`dist/assets`. The API's existing `UseDefaultFiles` / `UseStaticFiles` serves them
+without new routes. **`dotnet publish` alone does not build or copy frontend files**:
+the existing API Dockerfile builds Vite and copies the complete `dist` into the
+published `wwwroot`. For local published-output validation, build the web, run
+`dotnet publish .\src\VoiceAssistant.Api -c Release -o <isolated-output>`, then copy
+the complete web `dist` into `<isolated-output>\wwwroot`, matching that Docker step.
+Do not copy only one HTML page or only one page's bundle.
 
 For isolated local integration runs set `VOICE_ASSISTANT_DEV_API=http://localhost:5084` before starting Vite; the default stays unchanged. `/health` is proxied to the same target for local E2E readiness checks. This is development-server configuration only, not production routing.
 

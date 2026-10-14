@@ -14,15 +14,17 @@ class ScenarioToolTests(unittest.TestCase):
             {
                 "sourceName": "deck.ppt",
                 "sourceFormat": "ole-binary",
-                "slides": [{"number": 1, "text": "  Title \r\n\r\n  1.4   million ", "notes": ""}],
-            }
+                "slides": [{"number": 1, "text": "  Title \r\n\r\n  2.1   million ", "notes": ""}],
+            },
+            "synthetic",
         )
-        self.assertEqual("Title\n1.4 million", result["slides"][0]["text"])
+        self.assertEqual("Title\n2.1 million", result["slides"][0]["text"])
 
     def test_expansion_resolves_fact_and_unknown_ids(self):
         suite = tool.expand(
             {
                 "name": "sample",
+                "classification": "synthetic",
                 "source": "deck",
                 "facts": [{"id": "f", "text": "Fact", "matchAny": ["fact"]}],
                 "unknowns": [{"id": "u", "text": "Unknown", "abstainMatchAny": ["check"], "forbiddenClaims": ["yes"]}],
@@ -47,6 +49,7 @@ class ScenarioToolTests(unittest.TestCase):
         suite = tool.expand(
             {
                 "name": "sample",
+                "classification": "synthetic",
                 "source": "deck",
                 "facts": [{"id": "f", "text": "Fact", "matchAny": ["fact"]}],
                 "unknowns": [{"id": "u", "text": "Unknown", "abstainMatchAny": ["check"], "forbiddenClaims": ["yes"]}],
@@ -66,11 +69,17 @@ class ScenarioToolTests(unittest.TestCase):
         )
         self.assertFalse(suite["scenarios"][0]["expectedFacts"][0]["required"])
 
+    def test_confidential_output_is_blocked_inside_repository(self):
+        output = Path(__file__).with_name("must-not-be-created.confidential.json")
+        with self.assertRaises(PermissionError):
+            tool.write_json(str(output), {"classification": "confidential"}, "confidential")
+        self.assertFalse(output.exists())
+
     def test_score_flags_hallucination_generic_answer_and_latency(self):
         scenario = {
             "id": "s",
             "script": [{"speaker": "customer", "text": "Can it guarantee 95% accuracy?"}],
-            "expectedFacts": [{"id": "f", "matchAny": ["1.4 million"], "required": True}],
+            "expectedFacts": [{"id": "f", "matchAny": ["2.1 million"], "required": True}],
             "mustAbstain": [
                 {
                     "id": "accuracy",

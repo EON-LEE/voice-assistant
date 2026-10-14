@@ -30,10 +30,6 @@ public static partial class ReplyTrigger
         return IsQuestion(text, Sentences().Split(text).Select(Normalize).Where(sentence => sentence.Length > 0).ToArray());
     }
 
-    /// <summary>Questions are complete response units and do not need the configured statement settle delay.</summary>
-    public static bool BypassesSettle(IReadOnlyList<string> pending) =>
-        Evaluate(pending) == ReplyDecision.Reply && ContainsQuestion(pending);
-
     private static bool IsQuestion(string text, string[] sentences) =>
         text.Contains('?') || sentences.Any(sentence => QuestionStart().IsMatch(LeadingFiller().Replace(sentence, "")));
 

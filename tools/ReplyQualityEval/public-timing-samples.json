@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "classification": "public",
+  "description": "Public AMI/ICSI transcript timing simulation. This is not an audio ASR evaluation. The first six samples reproduce the prior five-minute windows exactly; the remaining samples are new windows.",
+  "priorReference": {
+    "source": "Session-local eval-baseline.json, eval-ownvoice.json, eval-settle1.json, and eval-timing.json",
+    "settle1Summary": {
+      "recallPercentApprox": 64,
+      "timelyPercentApprox": 41,
+      "relevanceOutOf5": 4.47,
+      "usefulnessOutOf5": 4.16,
+      "alignmentOutOf5": 3.64,
+      "churnPerMinute": 4.27
+    },
+    "comparisonCaveat": "Compare only after identifying corpus, exact window, trigger policy, model/judge use, and latency assumptions. Timing-only transcript simulation does not provide LLM quality scores or audio ASR evidence."
+  },
+  "samples": [
+    {"set": "prior-exact", "corpus": "AMI", "meeting": "ES2002d", "startSeconds": 420, "targetSpeaker": "A"},
+    {"set": "prior-exact", "corpus": "AMI", "meeting": "IS1009c", "startSeconds": 1470, "targetSpeaker": "A"},
+    {"set": "prior-exact", "corpus": "AMI", "meeting": "TS3003c", "startSeconds": 1290, "targetSpeaker": "D"},
+    {"set": "prior-exact", "corpus": "ICSI", "meeting": "Bmr005", "startSeconds": 1890, "targetSpeaker": "E"},
+    {"set": "prior-exact", "corpus": "ICSI", "meeting": "Bro018", "startSeconds": 450, "targetSpeaker": "D"},
+    {"set": "prior-exact", "corpus": "ICSI", "meeting": "Bed008", "startSeconds": 1650, "targetSpeaker": "E"},
+    {"set": "new-window", "corpus": "AMI", "meeting": "ES2002a", "startSeconds": 120},
+    {"set": "new-window", "corpus": "AMI", "meeting": "ES2002a", "startSeconds": 800},
+    {"set": "new-window", "corpus": "AMI", "meeting": "ES2004a", "startSeconds": 120},
+    {"set": "new-window", "corpus": "AMI", "meeting": "ES2004a", "startSeconds": 740},
+    {"set": "new-window", "corpus": "AMI", "meeting": "IS1009a", "startSeconds": 120},
+    {"set": "new-window", "corpus": "AMI", "meeting": "IS1009a", "startSeconds": 500},
+    {"set": "new-window", "corpus": "AMI", "meeting": "TS3003a", "startSeconds": 120},
+    {"set": "new-window", "corpus": "AMI", "meeting": "TS3003a", "startSeconds": 1170},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bdb001", "startSeconds": 120},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bdb001", "startSeconds": 2580},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bed002", "startSeconds": 120},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bed002", "startSeconds": 3570},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bed003", "startSeconds": 120},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bed003", "startSeconds": 3190},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bmr001", "startSeconds": 120},
+    {"set": "new-window", "corpus": "ICSI", "meeting": "Bmr001", "startSeconds": 1870}
+  ],
+  "evaluationKinds": {
+    "timingSimulation": true,
+    "audioAsrE2E": false,
+    "llmJudge": false
+  }
+}
