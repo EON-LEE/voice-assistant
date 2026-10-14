@@ -1,42 +1,35 @@
 # voice-assistant
 
 An Azure-backed English meeting coach that displays short replies for the user
-to read aloud. The in-person Windows client uses a physical microphone and a
-translucent topmost overlay; the existing installation-free browser client
-supports shared meeting audio. Neither sends meeting messages or makes
+to read aloud. The current Windows path is `VoiceAssistant.WebOverlay`: a small
+WebView2 host for `/live.html` that supports microphone and tab/system audio.
+The installation-free browser client provides the same live page. Neither sends meeting messages or makes
 commitments on the user's behalf. Read-aloud playback is explicitly requested.
 
-## In-person Windows client (portable)
+## Current Windows live coach
 
-The Windows client's main live surface is the overlay: recognized English/Korean
-conversation, one or two persistent English/Korean suggested replies, and source
-information appear together. Right-click for secondary setup, login, materials,
-pause, stop or exit; there are no visible expand/close/opacity controls.
-It uses Entra public-client authentication
-and the same Azure Speech, Azure OpenAI and owner-authorized Azure AI Search
-API as the browser. This workflow does not capture Teams or system playback.
-Audio requires explicit consent and Start; launching the app does not capture.
-Earlier recognized conversation is used by default for follow-up retrieval and
-reply generation; AI suggestions are never treated as things the user said.
+`src/VoiceAssistant.WebOverlay` publishes `LiveCoach.exe`, which hosts the current
+`/live.html` UI in a transparent, always-on-top WebView2 window. The page supports
+an in-person microphone and browser tab/system-audio sharing; capture still requires
+explicit Start, browser/OS permission, and participant consent. Launching the host
+does not capture audio. See the [WebOverlay instructions](src/VoiceAssistant.WebOverlay/README.md).
 
-Publish a self-contained **portable folder**, without an installer:
+Publish a self-contained folder:
 
 ```powershell
-.\scripts\desktop\Publish.ps1 -OutputDirectory C:\Apps\MeetingCoach
+dotnet publish .\src\VoiceAssistant.WebOverlay -c Release -r win-x64 --self-contained true -o C:\Apps\LiveCoach
 ```
 
-Choose a new or empty folder outside the repository, keep all companion files,
-and double-click `Open-Meeting-Coach.cmd`. See
-[publishing instructions](scripts/desktop/README.md) and
-[native client instructions](src/VoiceAssistant.Desktop/README.md).
+Keep all companion files and run `LiveCoach.exe`. The preserved
+`VoiceAssistant.Desktop` WPF microphone-only client and `scripts\desktop\Publish.ps1`
+are legacy/prototype paths, not the recommended live client.
 
-The native implementation is undergoing acceptance. A successful build or
+The WebOverlay host and browser page still require live acceptance for the intended
+account, network, audio source, and meeting environment. A successful build or
 offline test is not proof of interactive Entra login, physical microphone
-recognition, a complete live practice round, or focus/transparency above
-PowerPoint. The browser's glass styling and Picture-in-Picture do not make
-PowerPoint visible through a browser window.
+recognition, tab/system-audio recognition, or focus/transparency above PowerPoint.
 
-## Existing browser application
+## Browser application
 
 Deployed application: https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io
 
@@ -70,6 +63,17 @@ Captured video is not sent to the server; only shared audio is processed.
 If the selected source contains no audio track, the app must explain this and
 stop rather than silently use the microphone.
 
+The two meeting pages intentionally keep separate defaults:
+
+| Page | Intended path | Session defaults | Korean assist |
+| --- | --- | --- | --- |
+| `/live.html` | Current overlay and `LiveCoach.exe` | Grounded, semantic segmentation, 1100ms silence fallback | `translationOnly`; no Hangul reading generation |
+| `/index.html` | Existing full browser UI | Balanced, 500ms end silence | Korean translation plus approximate Hangul reading |
+
+Settings do not transfer between these pages. `/live.html` may retain its own
+WebOverlay/browser sign-in profile and overlay preferences; `/index.html` keeps
+meeting settings in memory and clears them on reload.
+
 The initial implementation separates streaming speech recognition from text
 generation. Foundry-hosted models provide English replies, while Azure AI Search
 provides optional document grounding. Voice Live and multi-tool Foundry agents
@@ -80,11 +84,12 @@ are possible later alternatives, not prerequisites for displaying text replies.
 | Component | Location | Responsibility |
 | --- | --- | --- |
 | Browser app | `src/VoiceAssistant.Web` | Audio-sharing consent, transcription, readable replies |
+| Transparent web host | `src/VoiceAssistant.WebOverlay` | Hosts `/live.html` in the current always-on-top Windows overlay |
 | ASP.NET Core API | `src/VoiceAssistant.Api` | Authentication, audio recognition, retrieval, streaming generation |
 | Wire contract | `contracts` | Versioned client/server message definitions |
 | Azure infrastructure | `infra` | Parameterized deployment and prerequisites |
 | Component tests | `tests` | Offline provider, protocol, and state tests |
-| Portable Windows client | `src/VoiceAssistant.Desktop` | Physical microphone, translucent meeting overlay and separate practice |
+| Legacy Windows prototype | `src/VoiceAssistant.Desktop` | Preserved microphone-only WPF prototype and separate practice |
 
 The browser, API, and infrastructure components are integrated from parallel
 worktrees. Passing offline tests is not evidence of a successful Azure
@@ -131,7 +136,23 @@ text, first complete sentence, clip-cut observation and human-annotated speech
 end; missing acoustic annotations and insufficient percentile samples stay
 unknown. Do not compare the invalid historical clips with corrected inputs.
 
+For recurring deck- or script-based demo preparation, use
+[MeetingScenarioEval](tools/MeetingScenarioEval/README.md). It extracts PowerPoint text read-only (including legacy OLE
+presentations with a misleading `.pptx` extension), normalizes slide text and notes, expands declarative scenario plans,
+runs the production reply prompt with grounded facts, and scores unsupported claims, missing numbers or negation,
+question-intent loss, generic answers, abstention, and first-response latency. The committed fixture is fully synthetic
+and includes executive, skeptical-reviewer, methodology, product-value, evidence/privacy, rollout, and unknown-answer challenges.
+Run `ReplyQualityEval` with `EVAL_TIMING_ONLY=1` on AMI/ICSI transcripts before enabling paid reply generation and judging.
+The synthetic evaluator contract and its limitations are recorded in
+`tests/acceptance-results/meeting-scenario-synthetic-2026-10-14.json`.
+Its 760ms median is copied from deterministic fixture inputs to test scorer
+behavior; it is not an observed model, network, streaming, or UI latency.
+
 ### Measured first release
+
+The dated counts and measurements below are historical acceptance records for
+specific revisions and environments. They are not the current release approval
+state and must not be read as proof that today's build, tenant, or live path is approved.
 
 The [September 23 comparison](tests/acceptance-results/latency-improvements-2026-09-23.json)
 uses the same corrected clips and empty context on the actual Azure deployment.
@@ -158,8 +179,8 @@ a larger real-meeting sample remain future validation, not completed work.
 * **Microphone mode:** Live → Audio source → *Microphone (in-person)* uses the same PCM pipeline, transcript, reply, pin, pause and stop controls as tab capture. It still needs internet and sends the room audio to Azure; inform participants as your company/customer policy requires. See the Web README for the in-person checklist.
 * **My meeting materials:** open **Manage my meeting materials** in a new tab, or visit `/materials.html` before your trip. Sign in separately in that tab, upload notes, meeting minutes, slides (`.pptx`), documents (`.docx`, `.pdf` text layer), text/Markdown, transcripts (`.vtt/.srt`) and code files/folders, or paste notes. Review per-file progress and indexed-document/chunk quotas, retry failed rows, and delete selected documents with confirmation. The meeting tab stays running. Only extracted text chunks and embeddings are stored (Azure AI Search, visible only to your Entra object ID) until deletion; original files are not stored. Images/diagram text are not read; legacy `.doc`/`.ppt` are unsupported. Use one topic per file, topic-bearing titles, and text-based glossary/Q&A notes. Contract: `contracts/knowledge-v1.md`.
 * **Longer sessions:** the maximum session length is the deployment setting `sessionMaxMinutes` (currently 90). At the limit the app says so and you click Start again.
-* **Verified (2026-10-01):** API 429 tests, web 89 unit tests and 38 browser tests (including real Chromium fake-microphone audio into the local Fake API and real upload/list/delete against it); infra checks pass. On the deployed Azure app with the operator identity: anonymous access 401, a pasted note and an uploaded Markdown file were indexed, a spoken English question (Windows SAPI synthesized, original) was transcribed and answered from the uploaded note with that note as the only reference, then after deletion no uploaded evidence was used; a legacy `.doc` was rejected. Record: `tests/acceptance-results/materials-2026-10-01.json`.
-* **Reply style (tuned 2026-10-03):** replies are plain text for reading aloud: at most 2 short sentences and 25 words, simple everyday English (about B1), no markdown, lists, quotes or "You could say" prefixes, and one short line such as "I'm not sure. Let me check and get back to you." when the facts are not available. Measured on the deployed app with 6 original synthesized English questions (grounded mode, one uploaded note, deleted afterwards): mean 25.5 -> 18.7 words, longest 44 -> 23 words, no formatting artifacts before or after. This is a small sample, not a general quality guarantee. Records: `tests/acceptance-results/reply-style-before-2026-10-03.json` and `reply-style-after-2026-10-03.json`.
+* **Historical verification (2026-10-01):** API 429 tests, web 89 unit tests and 38 browser tests (including real Chromium fake-microphone audio into the local Fake API and real upload/list/delete against it); infra checks passed for that revision. On the deployed Azure app with the operator identity: anonymous access 401, a pasted note and an uploaded Markdown file were indexed, a spoken English question (Windows SAPI synthesized, original) was transcribed and answered from the uploaded note with that note as the only reference, then after deletion no uploaded evidence was used; a legacy `.doc` was rejected. Record: `tests/acceptance-results/materials-2026-10-01.json`.
+* **Historical reply-style tuning (2026-10-03):** the recorded revision targeted plain, short read-aloud replies. Six original synthesized English questions reduced mean length from 25.5 to 18.7 words and the longest reply from 44 to 23 words. This dated sample is not the current prompt contract, release approval, or a general quality guarantee. Records: `tests/acceptance-results/reply-style-before-2026-10-03.json` and `reply-style-after-2026-10-03.json`.
 * **Not verified:** a physical microphone in a real room, the browser microphone against Azure (the live test streamed PCM through the real WebSocket instead), interactive tenant sign-in, `.pdf/.docx/.pptx` on Azure (covered by in-process tests only), 30–90 minute real sessions, US-region latency and large code-base uploads.
 
 ## English coach: Korean assist, read-aloud and practice rounds
@@ -198,7 +219,8 @@ npm ci
 npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-Open `http://127.0.0.1:5173`. The explicit offline demo does not use meeting
+Open `http://127.0.0.1:5173/live.html` for the current overlay, or
+`http://127.0.0.1:5173/index.html` for the existing full browser UI. The explicit offline demo does not use meeting
 audio or Azure. Live and local synthetic modes additionally need the API;
 see each component's configuration guide.
 

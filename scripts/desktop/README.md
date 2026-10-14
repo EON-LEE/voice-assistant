@@ -1,4 +1,9 @@
-# Publish the in-person Windows coach
+# Publish the legacy WPF prototype
+
+This script publishes the preserved `VoiceAssistant.Desktop` microphone-only
+prototype. It is not the recommended current Windows path. For microphone plus
+tab/system audio in the current `/live.html` UI, publish
+[`VoiceAssistant.WebOverlay`](../../src/VoiceAssistant.WebOverlay/README.md).
 
 Run from a Windows checkout with the .NET 8 SDK:
 

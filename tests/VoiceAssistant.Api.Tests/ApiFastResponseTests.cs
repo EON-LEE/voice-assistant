@@ -249,6 +249,31 @@ public sealed partial class ApiTests
     }
 
     [Fact]
+    public async Task DirectQuestionUsesConfiguredReplySettleLikeStatements()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 1000 }));
+        await Receive(socket);
+
+        provider.Emit(new("statement", 1, "The dashboard separates evergreen and trending signals.", true));
+        await Until(socket, "transcript.final");
+        await Task.Delay(300);
+        Assert.Equal(0, provider.Answers);
+
+        provider.Emit(new("question", 1, "How do you support the 2.1 million post figure?", true));
+        await Task.Delay(700);
+        Assert.Equal(0, provider.Answers);
+
+        using var settled = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
+        while (provider.Answers == 0)
+            await Task.Delay(10, settled.Token);
+        Assert.Equal(1, provider.Answers);
+        Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("2.1 million"));
+    }
+
+    [Fact]
     public async Task PendingPrefetchDoesNotBlockAudioCancelOrStopAndNeverLeaksObsoleteResponse()
     {
         const string query = "What is our customer delivery plan?";

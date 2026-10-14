@@ -25,4 +25,5 @@ public sealed class ReplyTriggerTests
         Assert.True(ReplyTrigger.ContainsQuestion(["We start Monday.", "How about the budget"]));
         Assert.False(ReplyTrigger.ContainsQuestion(["We start Monday.", "OK."]));
     }
+
 }

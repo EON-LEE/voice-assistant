@@ -47,6 +47,15 @@ public sealed class ChatSerializationTests
         Assert.Contains("Korean-speaking IT engineer", handler.RequestBody);
         Assert.Contains("CEFR A2-B1", handler.RequestBody);
         Assert.Contains("at most 18 words", handler.RequestBody);
+        Assert.Contains("preserve every compared number", handler.RequestBody);
+        Assert.Contains("Answer every material clause", handler.RequestBody);
+        Assert.Contains("use up to 24 words across both", handler.RequestBody);
+        Assert.Contains("complete the evidence or uncertainty", handler.RequestBody);
+        Assert.Contains("several material clauses", handler.RequestBody);
+        Assert.DoesNotContain("three or more specific numbers", handler.RequestBody);
+        Assert.Contains("missing detail is not in the material or needs verification", handler.RequestBody);
+        Assert.Contains("Do not silently skip that clause", handler.RequestBody);
+        Assert.Contains("unknown commitment, not ambiguity", handler.RequestBody);
     }
 
     [Fact]

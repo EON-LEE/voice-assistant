@@ -1,4 +1,9 @@
-# In-person English Coach for Windows
+# Legacy in-person English Coach prototype for Windows
+
+This WPF microphone-only client is preserved for compatibility and prototype
+testing. New Windows use should prefer
+[`VoiceAssistant.WebOverlay`](../VoiceAssistant.WebOverlay/README.md), which hosts
+the current `/live.html` UI and supports microphone plus tab/system audio.
 
 A native .NET 8 WPF app whose **main live surface is the overlay itself**: recognized English/Korean conversation above one or two English/Korean suggestions and document sources. Login, microphone consent and materials remain in a secondary settings window, accessed by right-clicking the overlay (or the keyboard context-menu key). It is **not a Teams client or bot**. Meeting mode captures the selected physical microphone only; it never captures speaker/output loopback, records audio, posts messages, advances slides, or installs global keyboard hooks.
 

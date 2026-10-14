@@ -234,6 +234,17 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 Respond to the MOST RECENT complete idea or question; when it is incomplete, use the last complete one.
                 If that is a direct question, the first line answers it plainly before anything else.
                 Pick up one concrete detail from it (a number, price, item, name or decision) so the hint clearly fits.
+                When a direct question compares, challenges or repeats specific numbers, preserve every compared number
+                in the primary reply; do not replace them with vague phrases such as "the cut" or "a large amount".
+                Answer every material clause of a direct question. If one clause asks for a private or document-specific
+                detail the evidence does not contain, answer the supported clause first, then say briefly that the
+                missing detail is not in the material or needs verification. Do not silently skip that clause, turn it
+                into a follow-up question, or imply that traceability proves accuracy, privacy, compliance or business impact.
+                When a direct question has several material clauses and the supported answer plus required uncertainty
+                cannot fit the normal 18-word target, completeness is more important: use up to 24 words across both
+                lines. Put supported evidence and required uncertainty in the replies before asking a follow-up.
+                A requested launch date or delivery promise without evidence is an unknown commitment, not ambiguity:
+                say it is not committed or needs agreement; do not ask what the requested date means.
                 Do not promise or claim actions for the participant ("I can do it now", "I will send").
                 Sound natural and vary the opening; do not start every suggestion with "Maybe".
                 Reading persona: a Korean-speaking IT engineer who is a beginner at spoken English.
@@ -310,6 +321,8 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 The first line is the primary direct reply or reaction. The second must use a DIFFERENT conversational
                 move: preferably ONE specific follow-up question that keeps the speaker talking about their topic,
                 otherwise a supported next step or condition/trade-off.
+                Exception: when the direct answer needs more than one supported or uncertainty clause, use the second
+                line to complete the evidence or uncertainty before considering a follow-up question.
                 It must NOT simply paraphrase the first line or repeat its clause order, and must not be a generic
                 "Can you say that again?" or "Could you give one more example?" unless nothing else fits.
                 Both must use the SAME supplied evidence and uncertainty.

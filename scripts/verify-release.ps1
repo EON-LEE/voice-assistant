@@ -94,6 +94,31 @@ try {
         & $Python -m unittest discover -s (Join-Path $root 'tools\MeetingBenchmark') -p 'test_*.py' -v
         if ($LASTEXITCODE -ne 0) { throw 'Meeting boundary and latency-analysis tests failed.' }
     }
+    Invoke-Verification 'meeting-scenario-evaluation' {
+        $tool = Join-Path $root 'tools\MeetingScenarioEval\scenario_tool.py'
+        $plan = Join-Path $root 'tools\MeetingScenarioEval\synthetic-market-signals.plan.json'
+        $responses = Join-Path $root 'tools\MeetingScenarioEval\synthetic-market-signals.responses.json'
+        $suite = Join-Path ([IO.Path]::GetTempPath()) ("meeting-scenarios-" + [Guid]::NewGuid().ToString('N') + '.json')
+        $score = Join-Path ([IO.Path]::GetTempPath()) ("meeting-score-" + [Guid]::NewGuid().ToString('N') + '.json')
+        try {
+            & $Python -m unittest discover -s (Join-Path $root 'tools\MeetingScenarioEval') -p 'test_*.py' -v
+            if ($LASTEXITCODE -ne 0) { throw 'Meeting scenario tool tests failed.' }
+            & $Python $tool generate --plan $plan --output $suite
+            if ($LASTEXITCODE -ne 0) { throw 'Meeting scenario generation failed.' }
+            & $Python $tool score --scenarios $suite --responses $responses --output $score
+            if ($LASTEXITCODE -ne 0) { throw 'Meeting scenario scoring failed.' }
+            $result = Get-Content -LiteralPath $score -Raw | ConvertFrom-Json
+            if ($result.passed -ne $result.total -or $result.hallucinationCount -ne 0 -or
+                $result.overGenericCount -ne 0 -or $result.latencyPassRate -ne 1) {
+                throw 'Meeting scenario scorer fixture did not meet its fail-closed quality contract.'
+            }
+            & $Dotnet build (Join-Path $root 'tools\ReplyQualityEval\ReplyQualityEval.csproj') --configuration Release --nologo
+            if ($LASTEXITCODE -ne 0) { throw 'ReplyQualityEval failed to build.' }
+        }
+        finally {
+            Remove-Item -LiteralPath $suite, $score -ErrorAction SilentlyContinue
+        }
+    }
     Invoke-Verification 'live-probe-job-template' {
         $compiled = [IO.Path]::GetTempFileName()
         try {

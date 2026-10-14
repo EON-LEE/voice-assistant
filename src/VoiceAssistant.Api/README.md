@@ -13,10 +13,10 @@ $env:ASPNETCORE_URLS = 'http://localhost:5080'
 dotnet run --project .\src\VoiceAssistant.Api\VoiceAssistant.Api.csproj
 ```
 
-For the coordinator-provided portable SDK, first set:
+For a portable SDK installed outside `PATH`, first set its local directory:
 
 ```powershell
-$env:DOTNET_ROOT = 'C:\Users\eonlee.REDMOND\.copilot\session-state\94af7cb9-a5ba-44f9-baac-b89831b37a39\files\dotnet'
+$env:DOTNET_ROOT = 'C:\Tools\dotnet'
 $env:PATH = "$env:DOTNET_ROOT;$env:PATH"
 ```
 

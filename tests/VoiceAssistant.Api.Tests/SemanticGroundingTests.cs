@@ -225,6 +225,9 @@ public sealed class SemanticGroundingTests
         var messages = body.RootElement.GetProperty("messages").EnumerateArray().ToArray();
         var policy = messages[0].GetProperty("content").GetString()!;
         Assert.Contains("at most 2 short sentences and at most 18 words", policy);
+        Assert.Contains("use up to 24 words across both", policy);
+        Assert.Contains("several material clauses", policy);
+        Assert.DoesNotContain("three or more specific numbers", policy);
         Assert.Contains("simple everyday words", policy);
         Assert.Contains("Never use markdown", policy);
         Assert.Contains("Plain English text only", policy);
