@@ -76,6 +76,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private int generationNumber;
     private bool responseActive;
     private bool responsePending;
+    private ConversationTurn[]? pendingResponseHistory;
+    private string? pendingResponseTurn;
     private readonly List<string> pendingSpeech = [];
     private long pendingSince;
     private int settleNumber;
@@ -149,8 +151,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                                 pendingSpeech.Add(transcript.Text);
                                 ScheduleSettle(lifetime);
                             }
-                            else if (responseActive) responsePending = true;
-                            else await StartResponseAsync(lifetime.Token, manual: false);
+                            else if (responseActive)
+                            {
+                                PreparePendingResponse(1);
+                            }
+                            else await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 1);
                         }
                         else
                         {
@@ -164,10 +169,14 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                     case "settle" when message.Generation == settleNumber && pendingSpeech.Count > 0:
                         var decision = ReplyTrigger.Evaluate(pendingSpeech);
                         if (decision == ReplyDecision.Wait) break;
+                        var currentSegments = pendingSpeech.Count;
                         pendingSpeech.Clear();
                         if (decision == ReplyDecision.Discard) break;
-                        if (responseActive) responsePending = true;
-                        else await StartResponseAsync(lifetime.Token, manual: false);
+                        if (responseActive)
+                        {
+                            PreparePendingResponse(currentSegments);
+                        }
+                        else await StartResponseAsync(lifetime.Token, manual: false, currentSegments);
                         break;
                     case "response.request":
                         if (options.TranscribeOnly) await ErrorAsync("transcribe_only", "This session only transcribes speech.", false, lifetime.Token);
@@ -175,7 +184,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         else
                         {
                             pendingSpeech.Clear(); settleNumber++;
-                            await StartResponseAsync(lifetime.Token, manual: true);
+                            await StartResponseAsync(lifetime.Token, manual: true, currentSegments: 1);
                         }
                         break;
                     case "response.cancel":
@@ -209,7 +218,13 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }, lifetime.Token);
                         if (message.ModelResponse) responseMeasurement?.CompletedSent();
                         responseActive = false;
-                        if (responsePending) await StartResponseAsync(lifetime.Token, manual: false);
+                        if (responsePending)
+                        {
+                            var completedQueueHistory = pendingResponseHistory;
+                            var completedQueueTurn = pendingResponseTurn;
+                            await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 0,
+                                preparedHistory: completedQueueHistory, preparedTurn: completedQueueTurn);
+                        }
                         break;
                     case "generation.error" when message.Generation == generationNumber && responseActive:
                         var failure = (ProviderException)message.Value!;
@@ -233,10 +248,20 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         else
                         {
                             var pending = responsePending;
+                            var pendingHistory = pendingResponseHistory;
+                            var pendingTurn = pendingResponseTurn;
                             await CancelResponseAsync(lifetime.Token);
                             responsePending = pending;
+                            pendingResponseHistory = pendingHistory;
+                            pendingResponseTurn = pendingTurn;
                         }
-                        if (responsePending) await StartResponseAsync(lifetime.Token, manual: false);
+                        if (responsePending)
+                        {
+                            var recoveryQueueHistory = pendingResponseHistory;
+                            var recoveryQueueTurn = pendingResponseTurn;
+                            await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 0,
+                                preparedHistory: recoveryQueueHistory, preparedTurn: recoveryQueueTurn);
+                        }
                         break;
                 }
             }
@@ -421,17 +446,38 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         return new(data.ToArray(), result.MessageType);
     }
 
-    private async Task StartResponseAsync(CancellationToken lifetime, bool manual)
+    private void PreparePendingResponse(int currentSegments)
     {
+        pendingResponseHistory = CreateFocusedHistory(currentSegments);
+        pendingResponseTurn = lastTurn;
+        responsePending = true;
+    }
+
+    private ConversationTurn[] CreateFocusedHistory(int currentSegments)
+    {
+        if (currentSegments < 1 || currentSegments > conversation.Count)
+            throw new InvalidOperationException("Current response segments must identify recent conversation turns.");
+        var focusStart = conversation.Count - currentSegments;
+        var focusedConversation = conversation.Select((turn, index) =>
+            turn with { CurrentResponseTarget = index >= focusStart }).ToArray();
+        return earlierTranscripts.With(focusedConversation);
+    }
+
+    private async Task StartResponseAsync(CancellationToken lifetime, bool manual, int currentSegments,
+        ConversationTurn[]? preparedHistory = null, string? preparedTurn = null)
+    {
+        var history = preparedHistory ?? CreateFocusedHistory(currentSegments);
+        if (history.Length == 0) throw new InvalidOperationException("Response history cannot be empty.");
         await CancelResponseAsync(lifetime);
         generation?.Dispose();
         generation = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         generation.CancelAfter(TimeSpan.FromSeconds(30));
         responseId = Guid.NewGuid().ToString("N");
-        responseTurn = lastTurn;
-        var prior = earlierTranscripts.With(conversation.Take(conversation.Count - 1).ToArray());
-        responseRoute = ResponseRouting.Select(conversation[^1].Text, options, prior);
-        var prefetched = prefetch?.Take(responseTurn!, conversation[^1].Text, responseRoute, prior);
+        responseTurn = preparedTurn ?? lastTurn;
+        var prior = history.Take(history.Length - 1).ToArray();
+        var targetText = history[^1].Text;
+        responseRoute = ResponseRouting.Select(targetText, options, prior);
+        var prefetched = prefetch?.Take(responseTurn!, targetText, responseRoute, prior);
         retrievalPrefetched = prefetched is not null;
         responseActive = true;
         responseMeasurement = new(lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual);
@@ -441,7 +487,6 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         retired.RemoveAll(task => task.IsCompletedSuccessfully);
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
         var token = generation.Token;
-        var history = earlierTranscripts.With(conversation);
         var route = responseRoute;
         generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, token, lifetime));
     }
@@ -449,6 +494,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private async Task CancelResponseAsync(CancellationToken cancellation)
     {
         responsePending = false;
+        pendingResponseHistory = null;
+        pendingResponseTurn = null;
         generation?.Cancel();
         generationNumber++;
         if (!responseActive) return;

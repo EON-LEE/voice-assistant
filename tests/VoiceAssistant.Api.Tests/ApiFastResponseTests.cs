@@ -222,6 +222,62 @@ public sealed partial class ApiTests
         Assert.Equal("three", next.GetProperty("turnId").GetString());
         Assert.Equal(2, provider.Answers);
         Assert.Equal(3, provider.LastHistory!.Length);
+        Assert.False(provider.LastHistory[0].CurrentResponseTarget);
+        Assert.False(provider.LastHistory[1].CurrentResponseTarget);
+        Assert.True(provider.LastHistory[2].CurrentResponseTarget);
+    }
+
+    [Fact]
+    public async Task GenerationFailurePreservesLatestQueuedResponseTarget()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true, FailFirstAnswer = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, Start);
+        await Receive(socket);
+        provider.Emit(new("one", 1, "What is our delivery plan?", true));
+        await provider.FirstAnswerStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        provider.Emit(new("two", 1, "Who owns the launch decision?", true));
+        await Until(socket, "transcript.final");
+        provider.FirstAnswerRelease.SetResult();
+        Assert.Equal("provider_failed", (await Until(socket, "error")).GetProperty("code").GetString());
+        var recovered = await Until(socket, "response.completed");
+        if (recovered.GetProperty("turnId").GetString() == "one")
+            recovered = await Until(socket, "response.completed");
+        Assert.Equal("two", recovered.GetProperty("turnId").GetString());
+        Assert.Equal(2, provider.Answers);
+        Assert.Equal(2, provider.LastHistory!.Length);
+        Assert.False(provider.LastHistory[0].CurrentResponseTarget);
+        Assert.True(provider.LastHistory[1].CurrentResponseTarget);
+    }
+
+    [Fact]
+    public async Task SettledQueuedTargetIsNotContaminatedByNewerUnresolvedFragment()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true, FailFirstAnswer = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "conversation", replySettleMs = 300 }));
+        await Receive(socket);
+        provider.Emit(new("one", 1, "What is our delivery plan?", true));
+        await provider.FirstAnswerStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        provider.Emit(new("two", 1, "Who owns the launch decision?", true));
+        await Until(socket, "transcript.final");
+        await Task.Delay(450);
+        provider.Emit(new("fragment", 1, "And", true));
+        await Until(socket, "transcript.final");
+        provider.FirstAnswerRelease.SetResult();
+        Assert.Equal("provider_failed", (await Until(socket, "error")).GetProperty("code").GetString());
+        var recovered = await Until(socket, "response.completed");
+        Assert.Equal("two", recovered.GetProperty("turnId").GetString());
+        Assert.Equal(2, provider.Answers);
+        var history = Assert.IsType<ConversationTurn[]>(provider.LastHistory);
+        Assert.Equal(["What is our delivery plan?", "Who owns the launch decision?"],
+            history.Select(turn => turn.Text));
+        Assert.False(history[0].CurrentResponseTarget);
+        Assert.True(history[1].CurrentResponseTarget);
+        await Task.Delay(400);
+        Assert.Equal(2, provider.Answers);
     }
 
     [Fact]
@@ -245,7 +301,11 @@ public sealed partial class ApiTests
         Assert.True(completed.GetProperty("respondNow").GetBoolean());
         await Task.Delay(900);
         Assert.Equal(1, provider.Answers);
-        Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("remote control"));
+        var history = Assert.IsType<ConversationTurn[]>(provider.LastHistory);
+        Assert.Contains(history, turn => turn.Text.Contains("remote control"));
+        Assert.Equal(2, history.Count(turn => turn.CurrentResponseTarget));
+        Assert.True(history[^2].CurrentResponseTarget);
+        Assert.True(history[^1].CurrentResponseTarget);
     }
 
     [Fact]
@@ -270,7 +330,9 @@ public sealed partial class ApiTests
         while (provider.Answers == 0)
             await Task.Delay(10, settled.Token);
         Assert.Equal(1, provider.Answers);
-        Assert.Contains(provider.LastHistory!, turn => turn.Text.Contains("2.1 million"));
+        var history = Assert.IsType<ConversationTurn[]>(provider.LastHistory);
+        Assert.Contains(history, turn => turn.Text.Contains("2.1 million"));
+        Assert.Equal(2, history.Count(turn => turn.CurrentResponseTarget));
     }
 
     [Fact]
@@ -411,6 +473,7 @@ public sealed partial class ApiTests
         public System.Threading.Channels.Channel<string> RetrievalQueries { get; } =
             System.Threading.Channels.Channel.CreateUnbounded<string>();
         public bool AutomaticRetrieval { get; set; }
+        public bool FailFirstAnswer { get; init; }
         public bool IgnoreCancellation { get; init; }
         public ManualResetEventSlim? BlockRetrieval { get; init; }
         public SessionOptions? SpeechOptions { get; private set; }
@@ -421,6 +484,8 @@ public sealed partial class ApiTests
         public int Answers;
         public bool Disposed { get; private set; }
         public TaskCompletionSource RetrievalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource FirstAnswerStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource FirstAnswerRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource AudioWritten { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<Grounding> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation) =>
@@ -445,10 +510,16 @@ public sealed partial class ApiTests
         public async IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
             SessionOptions options, string route, [EnumeratorCancellation] CancellationToken cancellation)
         {
-            Answers++;
+            var answerNumber = Interlocked.Increment(ref Answers);
             LastHistory = conversation.ToArray();
             AnswerOptions = options;
             Route = route;
+            if (FailFirstAnswer && answerNumber == 1)
+            {
+                FirstAnswerStarted.TrySetResult();
+                await FirstAnswerRelease.Task.WaitAsync(cancellation);
+                throw new ProviderException("provider_failed", "Synthetic first answer failure.");
+            }
             await Task.Yield();
             cancellation.ThrowIfCancellationRequested();
             yield return "Here is a concise response grounded only in the supplied context.";

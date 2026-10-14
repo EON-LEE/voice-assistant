@@ -28,6 +28,24 @@ public sealed class SessionOptionsAndRoutingTests
         Assert.Throws<InvalidOperationException>(() => Parse("""{"semanticSegmentation":"true"}"""));
     }
 
+    [Fact]
+    public void SpeechPhraseHintsPreserveConfiguredOrderAndSemanticSegmentation()
+    {
+        var phrases = new[] { "WebSocket", "PCM", "Conversation only", "translationOnly" };
+        var applied = new List<string>();
+        AzureMeetingProvider.AddPhraseHints(phrases, applied.Add);
+        Assert.Equal(phrases, applied);
+
+        var options = Parse("""
+            {"phrases":["WebSocket","PCM","Conversation only","translationOnly"],
+             "semanticSegmentation":true,"endSilenceMs":700}
+            """);
+        var config = AzureMeetingProvider.CreateSpeechConfig(
+            new() { SpeechRegion = "eastus" }, "test-token", options);
+        Assert.Equal("Semantic", config.GetProperty(PropertyId.Speech_SegmentationStrategy));
+        Assert.Equal(phrases, options.Phrases);
+    }
+
     public static IEnumerable<object[]> RoutingCases()
     {
         string[] technical = ["an API", "REST", "JMAP", "JSON", "HTTP", "HTTPS", "WebSockets", "OAuth",

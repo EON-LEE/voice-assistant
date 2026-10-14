@@ -31,23 +31,32 @@ public sealed class Models(TokenCredential credential, string endpoint, string d
         Suggest(candidate, history, new("no_matches", []));
 
     public async Task Suggest(Candidate candidate, IReadOnlyList<Utterance> history, Grounding grounding)
+        => await Suggest(candidate, history, grounding, SessionOptions.Legacy, "knowledge");
+
+    public async Task Suggest(Candidate candidate, IReadOnlyList<Utterance> history, Grounding grounding,
+        SessionOptions options, string responseRoute)
     {
         for (var attempt = 1; ; attempt++)
         {
-            try { await SuggestOnce(candidate, history, grounding); return; }
+            try { await SuggestOnce(candidate, history, grounding, options, responseRoute); return; }
             catch (System.ClientModel.ClientResultException ex) when (ex.Status == 429 && attempt < 6)
             { await Task.Delay(3000 * attempt); }
         }
     }
 
-    private async Task SuggestOnce(Candidate candidate, IReadOnlyList<Utterance> history, Grounding grounding)
+    private async Task SuggestOnce(Candidate candidate, IReadOnlyList<Utterance> history, Grounding grounding,
+        SessionOptions options, string responseRoute)
     {
         var watch = Stopwatch.StartNew();
         double? firstResponse = null;
         string primary = "", alternative = "";
+        var recent = history.TakeLast(12).ToArray();
+        var currentCount = Math.Clamp(candidate.Pending.Length, 1, recent.Length);
+        var focusStart = recent.Length - currentCount;
+        var conversation = recent.Select((utterance, index) =>
+            new ConversationTurn(utterance.Text, index >= focusStart)).ToArray();
         await foreach (var update in provider.AnswerWithSuggestionsAsync(
-            history.TakeLast(12).Select(u => new ConversationTurn(u.Text)).ToArray(), grounding,
-            SessionOptions.Legacy, "knowledge", CancellationToken.None))
+            conversation, grounding, options, responseRoute, CancellationToken.None))
         {
             if (firstResponse is null && update.Text.Length > 0) firstResponse = watch.Elapsed.TotalSeconds;
             primary += update.Text;
