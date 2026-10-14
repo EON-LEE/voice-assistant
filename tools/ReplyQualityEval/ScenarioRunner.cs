@@ -33,7 +33,13 @@ public static class ScenarioRunner
                 pending,
                 ReplyTrigger.ContainsQuestion(pending),
                 false);
-            await models.Suggest(candidate, history, new("grounded", evidence));
+            var mode = suite.TryGetProperty("responseMode", out var configuredMode)
+                ? configuredMode.GetString() ?? "grounded"
+                : "grounded";
+            var route = mode == "conversation" ? "transcript" : "knowledge";
+            var grounding = mode == "conversation" ? new Grounding("disabled", []) : new Grounding("grounded", evidence);
+            await models.Suggest(candidate, history, grounding,
+                SessionOptions.Legacy with { ResponseMode = mode }, route);
             results.Add(new
             {
                 scenarioId = scenario.GetProperty("id").GetString(),

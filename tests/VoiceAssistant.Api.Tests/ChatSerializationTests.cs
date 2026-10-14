@@ -56,6 +56,16 @@ public sealed class ChatSerializationTests
         Assert.Contains("missing detail is not in the material or needs verification", handler.RequestBody);
         Assert.Contains("Do not silently skip that clause", handler.RequestBody);
         Assert.Contains("unknown commitment, not ambiguity", handler.RequestBody);
+        Assert.Contains("CURRENT RESPONSE TARGET", handler.RequestBody);
+        Assert.Contains("OLDER CONTEXT", handler.RequestBody);
+        Assert.Contains("Never substitute an answer to older context", handler.RequestBody);
+        Assert.Contains("cover every named option in the primary reply", handler.RequestBody);
+        Assert.Contains("silently check the primary reply against every material clause and named option", handler.RequestBody);
+        Assert.Contains("The alternative does not count toward the primary reply", handler.RequestBody);
+        Assert.Contains("Untrusted response focus", handler.RequestBody);
+        Assert.Contains("independently safe and useful", handler.RequestBody);
+        Assert.Contains("never use the alternative to defer required information", handler.RequestBody);
+        Assert.Contains("How does it help?", handler.RequestBody);
     }
 
     [Fact]

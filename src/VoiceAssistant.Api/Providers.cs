@@ -4,7 +4,7 @@ public sealed record Transcript(string TurnId, int Revision, string Text, bool F
 public sealed record Source(string Title, string Url, DateTimeOffset? UpdatedAt);
 public sealed record Evidence(string Content, Source Source);
 public sealed record Grounding(string Status, IReadOnlyList<Evidence> Documents);
-public sealed record ConversationTurn(string Text);
+public sealed record ConversationTurn(string Text, bool CurrentResponseTarget = false);
 public sealed record SpeechCancellation(
     Microsoft.CognitiveServices.Speech.CancellationReason Reason,
     Microsoft.CognitiveServices.Speech.CancellationErrorCode ErrorCode);
