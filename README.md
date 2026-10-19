@@ -31,6 +31,19 @@ recognition, tab/system-audio recognition, or focus/transparency above PowerPoin
 
 ## Browser application
 
+The current `/live.html` page and `VoiceAssistant.WebOverlay` host prioritize
+one completed English suggestion and its response-bound question, with Korean
+meaning below. Streaming drafts do not replace the reading sentence; the
+previous completed answer is explicitly labeled while a newer one is prepared.
+Hold answer freezes that answer and its question locally without pausing
+capture or model requests. Release it to show the latest completed answer.
+Use the separate Pause control in the right-click menu to stop sending audio.
+Conversation history, alternative wording and source details are collapsed
+under the disclosure. Grounding warnings and connection errors remain visible.
+The overlay remains resizable, including narrow windows and enlarged text.
+This presentation change does not establish answer accuracy or real-meeting
+usability; the older microphone-only desktop prototype is unchanged.
+
 Deployed application: https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io
 
 The deployed API uses the real Azure provider; the UI deliberately starts in a

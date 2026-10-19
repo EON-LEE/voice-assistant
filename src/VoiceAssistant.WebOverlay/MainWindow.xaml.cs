@@ -38,9 +38,10 @@ public partial class MainWindow : Window
             fakeAudioFile = path;
         }
         settings = ShellSettings.Load(dataFolder);
-        if (settings.Width is >= 360 and <= 1200) Width = settings.Width;
-        if (settings.Height is >= 400) Height = Math.Min(settings.Height, SystemParameters.WorkArea.Height);
-        else Height = Math.Min(Height, SystemParameters.WorkArea.Height);
+        if (double.IsFinite(settings.Width) && settings.Width >= MinWidth) Width = settings.Width;
+        if (double.IsFinite(settings.Height) && settings.Height >= MinHeight) Height = settings.Height;
+        Width = Math.Min(Width, Math.Max(MinWidth, SystemParameters.WorkArea.Width));
+        Height = Math.Min(Height, Math.Max(MinHeight, SystemParameters.WorkArea.Height));
         if (settings.Left is { } left && settings.Top is { } top && IsOnScreen(left, top)) { Left = left; Top = top; }
         else { Left = SystemParameters.WorkArea.Right - Width - 24; Top = SystemParameters.WorkArea.Top + 24; }
         Loaded += async (_, _) => await InitializeWebAsync();
