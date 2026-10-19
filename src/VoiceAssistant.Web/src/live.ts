@@ -8,6 +8,7 @@ import { defaultOptions, type SessionOptions } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
 import type { ServerEvent } from "./protocol.js";
 import { LiveState, answers, isTransientFailure, translationChunks, type LiveReply } from "./live-state.js";
+import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
 
 let liveDocument = document;
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -36,6 +37,9 @@ let translations = new AbortController();
 const meetingKo = new Map<string, string>();
 const failedTurns = new Map<string, string>();
 const replyKo = new Map<string, string[]>();
+// The server pushes a Korean line with each reply line; a line it cannot provide falls back to the translation request.
+const pushes = new PushedKorean(korean => /[\uac00-\ud7a3]/u.test(korean) || auth.isFake && korean.startsWith("[fake-ko] "));
+let pushing = false;
 
 interface StoredSettings { deviceId: string; responseMode: SessionOptions["responseMode"]; topic: string; audioSource: "microphone" | "display" }
 const settingsKey = "live-coach-settings";
@@ -68,8 +72,9 @@ topic.addEventListener("change", saveSettings);
 audioSource.addEventListener("change", () => { renderAudioSource(); saveSettings(); });
 
 function sessionOptions(): SessionOptions {
+  // endSilenceMs is required by the options validator but has no effect under semantic segmentation.
   return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
-    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 1000 };
+    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 1000, replyKorean: true };
 }
 
 // ---------- Live session lifecycle with automatic reconnect ----------
@@ -91,7 +96,7 @@ async function startLive(): Promise<void> {
     render(); return;
   }
   translations.abort(); translations = new AbortController();
-  state.resetSession(); meetingKo.clear(); failedTurns.clear(); replyKo.clear();
+  state.resetSession(); meetingKo.clear(); failedTurns.clear(); replyKo.clear(); pushes.clear(); pushing = false;
   active = true; paused = false; attempt = 0; readyAt = 0; connectionMessage = ""; warning = "";
   liveChannel?.postMessage("started");
   connect();
@@ -131,7 +136,7 @@ function connect(): void {
 }
 
 function onFailure(error: Error): void {
-  ready = false;
+  ready = false; pushing = false; pushes.expire();
   const message = error.message;
   if (!active) { render(); return; }
   if (!isTransientFailure(message)) {
@@ -156,7 +161,7 @@ function onFailure(error: Error): void {
 }
 
 async function stopLive(message = ""): Promise<void> {
-  active = false; reconnecting = false; ready = false;
+  active = false; reconnecting = false; ready = false; pushing = false; pushes.expire();
   clearTimeout(reconnectTimer); reconnectTimer = undefined;
   const current = session; session = undefined;
   connectionMessage = message;
@@ -166,9 +171,10 @@ async function stopLive(message = ""): Promise<void> {
 }
 
 function onEvent(e: ServerEvent): void {
+  if (e.type === "response.korean") { pushes.record(e); return; }
   state.apply(e);
   if (e.type === "session.ready") {
-    ready = true; reconnecting = false; readyAt = Date.now(); connectionMessage = "";
+    ready = true; reconnecting = false; readyAt = Date.now(); connectionMessage = ""; pushing = e.replyKorean === true;
     if (paused) session?.pause(true);
   }
   if (e.type === "transcript.final") void translateTurn(e.turnId!, e.text!);
@@ -213,21 +219,27 @@ async function translateTurn(turnId: string, text: string): Promise<void> {
     meetingKo.set(turnId, failureLabel(error)); failedTurns.set(turnId, text); schedule();
   }
 }
-async function translateReply(reply: LiveReply): Promise<void> {
+async function translateReply(reply: LiveReply, retry = false): Promise<void> {
   const signal = translations.signal, values = answers(reply);
   const result = values.map(() => "한국어 번역 중…");
   replyKo.set(reply.id, result); schedule();
   await Promise.all(values.map(async (english, index) => {
-    try { result[index] = await translate("reply", english, signal); }
+    try { result[index] = await replyLine(reply.id, index, english, retry, signal); }
     catch (error) { if (!signal.aborted) result[index] = `${failureLabel(error)} · 우클릭으로 재시도`; }
     if (!signal.aborted) schedule();
   }));
   const keep = new Set([state.current?.id, state.lastCompleted?.id, state.display?.id]);
   for (const id of replyKo.keys()) if (!keep.has(id)) replyKo.delete(id);
+  pushes.prune(keep);
+}
+/** The server's pushed line when it has one in time; otherwise (or on a retry) the client translates the line itself. */
+async function replyLine(responseId: string, index: number, english: string, retry: boolean, signal: AbortSignal): Promise<string> {
+  const pushed = await pushes.wait(responseId, index, pushing && !retry ? pushedKoreanWaitMs : 0, signal);
+  return pushed ?? translate("reply", english, signal);
 }
 function retryTranslations(): void {
   const display = state.display;
-  if (display?.complete) void translateReply(display);
+  if (display?.complete) void translateReply(display, true);
   for (const [turnId, text] of failedTurns) void translateTurn(turnId, text);
 }
 

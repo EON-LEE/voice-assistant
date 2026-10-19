@@ -42,7 +42,7 @@ Optional top-level `session.start.options` is immutable for this socket:
 {"responseMode":"balanced","profile":{"name":"Mina","role":"Software engineer","project":"Evaluating email client interoperability"},"profileConfirmed":true,"topic":"Email protocols","phrases":["JMAP","IMAP","CONDSTORE","QRESYNC"],"endSilenceMs":500}
 ```
 
-The example profile is fictional test data, not the user's identity. Missing options preserve legacy `grounded` mode and700ms segmentation silence. Missing individual properties use those same defaults; the new browser explicitly sends `balanced`/500ms. Allowed modes are `balanced`, `grounded`, `conversation`. Profile name/role/project limits are100/160/300 characters; topic300. Any nonempty profile requires explicit `profileConfirmed:true`; edit/reset confirmation in the browser before starting another session. Phrase list is at most40 nonblank strings, each at most64 characters, at most2048 total characters. Silence is an integer350..1500ms inclusive. Unknown options/profile fields, duplicate fields, wrong types, control characters, unconfirmed profile and oversized values fail as `invalid_start`. JSON null is not an omission. No profile/topic/phrase is persisted or logged.
+The example profile is fictional test data, not the user's identity. Missing options preserve legacy `grounded` mode and700ms segmentation silence. Missing individual properties use those same defaults; the new browser explicitly sends `balanced`/500ms. Allowed modes are `balanced`, `grounded`, `conversation`. Profile name/role/project limits are100/160/300 characters; topic300. Any nonempty profile requires explicit `profileConfirmed:true`; edit/reset confirmation in the browser before starting another session. Phrase list is at most40 nonblank strings, each at most64 characters, at most2048 total characters. Silence is an integer350..1500ms inclusive and applies to silence segmentation and recognition-only sessions; it has no effect under `semanticSegmentation` (see below). Unknown options/profile fields, duplicate fields, wrong types, control characters, unconfirmed profile and oversized values fail as `invalid_start`. JSON null is not an omission. No profile/topic/phrase is persisted or logged.
 
 Optional `transcribeOnly` (boolean, default false, JSON null is not an omission) makes the socket recognition-only for practice mode: `transcript.partial/final` are emitted as usual but there is no automatic response, no Search and no model call, and `response.request` returns `error` `code:"transcribe_only"`, `retryable:false` while the session continues. See `practice-v1.md`.
 
@@ -58,8 +58,25 @@ Routing: `grounded` always retrieves. `conversation` explicitly skips Search and
 Optional `semanticSegmentation` (boolean, default false) selects Azure Speech's sentence-oriented
 `Semantic` strategy for continuous meeting captions. Native meeting mode enables it by default;
 the legacy/browser silence strategy is unchanged. Recognition-only practice keeps silence-based
-boundaries even if the flag is present. Semantic segmentation aims for complete sentences, not
+boundaries even if the flag is present. While Semantic segmentation is active (the flag without
+`transcribeOnly`), `endSilenceMs` is still validated but the server does not send it to Speech, so it
+has no effect on the boundaries. Semantic segmentation aims for complete sentences, not
 speaker diarization or guaranteed grammatical correction; partial text remains provisional.
+
+Optional `replySettleMs` (integer, `0` or `300..5000`, default `0`; JSON null is not an omission) makes the server answer the
+gathered meaning of recent speech instead of every final utterance. After each final the server waits this long for more
+speech, and new speech re-arms the wait, so a question split across several finals becomes one reply. Backchannels such as
+`Yeah.` are discarded, a question or direct request (`Tell me about yourself.`, `Walk us through the rollout.`) is answered,
+and a statement is answered once it reaches 12 words; a shorter statement keeps waiting for more context. The wait shortens to
+`min(replySettleMs, 300)` ms when the gathered speech is a question or request that ends like a finished sentence (it does not
+end on a preposition, auxiliary, article or conjunction), and to 300 ms once speech has been gathered for more than 12 seconds.
+While the server waits it already retrieves for the latest final. `response.request` replies at once. `0` keeps one reply per
+final utterance.
+
+Optional `replyKorean` (boolean, default false, JSON null is not an omission) asks the server to translate every reply line into
+Korean and push it as `response.korean`, so the client needs no second HTTP request after `response.completed`. `session.ready`
+then carries `"replyKorean":true`. A client that did not opt in receives neither that field nor `response.korean` events, and
+the server makes no translation calls for it. A server that does not know the option rejects the start as `invalid_start`.
 
 Text commands: `{"type":"response.request"}`, `{"type":"response.cancel"}`, `{"type":"session.stop"}`. Manual request uses the latest finalized utterance; before any final it returns a retryable `no_transcript` error. At most 10 commands/second. A finalized utterance automatically starts a response when idle. While a reply is active, new partials do not cancel it and the latest final is queued; intermediate queued finals remain in recognized history. Completion/failure starts the latest queued reply. Manual regeneration/cancellation and stop invalidate obsolete generation immediately and clear queued work. Clients match active response/turn IDs, retain completed suggestions and label previous-question replies. Socket writes are serialized.
 
@@ -69,11 +86,12 @@ For a clear individual/group introduction request with any confirmed profile fie
 
 | type | Additional fields |
 | --- | --- |
-| `session.ready` | `protocolVersion: 1` |
+| `session.ready` | `protocolVersion: 1`; `replyKorean: true` only when the client opted in with `replyKorean` |
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
 | `response.started` | `responseId: string`, `turnId: string` |
 | `response.delta` | `responseId`, `turnId`, `text: string` (append) |
 | `response.completed` | `responseId`, `turnId`, `text: string` (complete replacement), `suggestions: string[]` (1–2 English replies, primary first), `sources: [{title,url,updatedAt}]`, `grounding`, `responseRoute: transcript\|profile\|knowledge`, `retrievalPrefetched: boolean` |
+| `response.korean` | `responseId`, `turnId`, `index: 0\|1` (0 = primary reply, 1 = alternative), and either `korean: string` (1–400 characters, mainly Hangul) or `failed: true` with no `korean` property. Sent only to clients that opted in with `replyKorean` |
 | `response.cancelled` | `responseId`, `turnId` |
 | `error` | `code: string`, `message: string` (safe user-facing detail), `retryable: boolean` |
 
@@ -90,17 +108,28 @@ reply uses a distinct conversational move rather than synonym-only paraphrasing.
 A missing, duplicate, multiline, oversized or over-25-word
 alternative is discarded; deterministic profile replies and grounding failures have only one suggestion.
 Suggestions share completion-level grounding/sources; they are not individually verified citations.
-Korean translations are client enrichment, not part of this English API field. Neither primary nor
+Korean translations are client enrichment, not part of this English API field; a client that opted in with `replyKorean`
+receives them as separate `response.korean` events (below). Neither primary nor
 alternative is inserted into conversation history: only actual finalized recognition segments are context.
 No suggestion implies the participant spoke it or committed to an action.
+
+`response.korean` (only for clients that set `replyKorean`) delivers exactly one Korean line per suggestion line of every
+completed reply: `index` 0 for the primary, 1 for the alternative. Each is either a translation or `failed:true` when none could
+be produced, and the client then translates that line itself. Translation runs beside the answer and never delays it. The
+primary line's event can arrive before `response.completed`, as soon as the first line of the stream is complete; the
+alternative's translation starts when the stream ends, so its event can arrive before or after `response.completed`. A reply
+cancelled while it was still active publishes no Korean afterwards; a completed reply keeps its Korean even after a newer reply
+starts. The server translates with the meeting topic plus the configured phrases and retrieved evidence titles as context,
+keeps those names as written, and reads a work-meeting `owner` as the responsible person (담당), not legal ownership. Each
+translation call is limited to 10 seconds. Fake emits `[fake-ko] ` followed by the English line.
 
 Fake: >=640 nonzero audio bytes emit deterministic partial+final once per utterance. Further nonzero audio is ignored until >=16000 consecutive zero bytes (500 ms silence). All-zero audio never fabricates speech. Transcript: `Could you briefly explain the next steps?` Answer: `Let's confirm the goal, agree on the next action, and assign an owner.` Response uses three timed primary deltas; completion includes the synthetic alternative `Let's agree on the goal and next step, then choose an owner.` Fake is synthetic test behavior, not recognition.
 
 ## Grounding
 
-The additive `responseRoute` describes the selected context path, not answer correctness: `transcript` and `profile` skip Search and use `grounding:disabled` with empty sources; `knowledge` may result in any existing grounding state. `retrievalPrefetched:true` means an already-started partial retrieval (including an in-flight or failed one) was selected for the exact final utterance, not a latency or relevance guarantee. It remains false for transcript/profile routes and fresh final retrieval.
+The additive `responseRoute` describes the selected context path, not answer correctness: `transcript` and `profile` skip Search and use `grounding:disabled` with empty sources; `knowledge` may result in any existing grounding state. `retrievalPrefetched:true` means a retrieval that had already started for this utterance, from a stable partial or from its final transcript (including an in-flight or failed one), was selected for the final text, not a latency or relevance guarantee. It remains false for transcript/profile routes and when the reply has to start its own retrieval.
 
-For knowledge routes only, partial text with at least20 characters and4 whitespace-separated words is eligible after250ms without a changed normalized partial. At most3 speculative retrievals start per utterance. There is one active speculative worker/candidate per socket/identity; revisions cancel obsolete work, and a noncooperative provider occupies that worker rather than spawning unbounded replacements. Reuse requires the **same turn and exact lowercase/whitespace-normalized text**. Punctuation, apostrophes, decimals, minus signs, dates, numbers and negations are preserved; a punctuation-only final change can intentionally miss the cache. No cross-user or cross-session cache exists; ACL uses the ticket-bound identity. Explicit cancel/stop invalidates speculative work. Matched retrieval failure remains visible as `grounding_unavailable`, never a success-shaped fallback. Unmatched speculative results are discarded and final retrieval runs normally.
+For knowledge routes only, partial text with at least20 characters and4 whitespace-separated words is eligible after250ms without a changed normalized partial. At most 3 speculative retrievals start per utterance. A **final** transcript that is worth a reply is retrieved at once, with no debounce, and does not count toward that limit; it also promotes an identical candidate that is still waiting out the debounce. There is one active speculative worker/candidate per socket/identity; revisions and speech of a later turn cancel obsolete speculative work, but never a retrieval that a reply is already waiting for: that one finishes on its own and cannot be reused afterwards. A noncooperative provider occupies that worker rather than spawning unbounded replacements, and a retrieval that has not started yet is never handed to a reply. Reuse requires the **same turn and the same text after folding case, whitespace and punctuation at the edges of words** (a speech partial and its final differ in exactly these). Apostrophes, decimals, minus signs, dates, numbers and negations inside words are preserved, so `can` / `cannot` / `can't` and `10` / `100` never match. No cross-user or cross-session cache exists; ACL uses the ticket-bound identity. Explicit cancel/stop invalidates speculative work. Matched retrieval failure remains visible as `grounding_unavailable`, never a success-shaped fallback. Unmatched speculative results are discarded and final retrieval runs normally.
 
 Retrieval is context-aware by default for knowledge routes. Without another model call, one shared
 query builder combines up to four preceding actual recognition segments plus up to three older
@@ -109,8 +138,8 @@ characters), in chronological order, within4096 characters total. The older quer
 the earliest, middle and latest available segments preceding the four recent segments.
 Oversized segments preserve their beginning and end with an omission marker. This supplies topic words for
 follow-ups such as “When can we ship it?”; it is bounded context, not guaranteed pronoun resolution.
-Partial prefetch uses the same builder and may be reused only when **both** the exact final text and
-the bounded context query match. Changed/pruned context invalidates reuse. A manual retry uses the
+Prefetch (from a partial or from the final itself) uses the same builder and may be reused only when **both**
+the final text, compared as described above, and the bounded context query match. Changed/pruned context invalidates reuse. A manual retry uses the
 same actual recognition history; generated suggestions are never spoken-history substitutes.
 Search owner prefiltering and no-cross-session/identity isolation are unchanged.
 

@@ -309,7 +309,7 @@ public sealed partial class ApiTests
     }
 
     [Fact]
-    public async Task DirectQuestionUsesConfiguredReplySettleLikeStatements()
+    public async Task CompleteQuestionAfterStatementRepliesOnceAfterShortSettleWithBothTurns()
     {
         var provider = new ControlledProvider { AutomaticRetrieval = true };
         await using var host = await Host.StartAsync(provider: provider);
@@ -323,7 +323,7 @@ public sealed partial class ApiTests
         Assert.Equal(0, provider.Answers);
 
         provider.Emit(new("question", 1, "How do you support the 2.1 million post figure?", true));
-        await Task.Delay(700);
+        await Task.Delay(100);
         Assert.Equal(0, provider.Answers);
 
         using var settled = new CancellationTokenSource(TimeSpan.FromMilliseconds(700));
@@ -333,6 +333,117 @@ public sealed partial class ApiTests
         var history = Assert.IsType<ConversationTurn[]>(provider.LastHistory);
         Assert.Contains(history, turn => turn.Text.Contains("2.1 million"));
         Assert.Equal(2, history.Count(turn => turn.CurrentResponseTarget));
+    }
+
+    [Theory]
+    [InlineData("Tell me about yourself.")]
+    [InlineData("Walk us through the project timeline.")]
+    [InlineData("Let's talk about the budget.")]
+    public async Task RequestWithoutQuestionMarkRepliesAfterShortSettleInsteadOfStayingSilent(string request)
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 1000 }));
+        await Receive(socket);
+
+        provider.Emit(new("request", 1, request, true));
+        await Task.Delay(100);
+        Assert.Equal(0, provider.Answers);
+
+        var completed = await Until(socket, "response.completed");
+        Assert.Equal("request", completed.GetProperty("turnId").GetString());
+        Assert.Equal(1, provider.Answers);
+    }
+
+    [Fact]
+    public async Task HesitationFragmentWaitsForItsContinuationAndGetsOneMergedReply()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 1000 }));
+        await Receive(socket);
+
+        // Speech-to-text often punctuates the unfinished first half of a sentence as a question.
+        provider.Emit(new("fragment", 1, "Could you walk us through?", true));
+        await Until(socket, "transcript.final");
+        await Task.Delay(500);
+        Assert.Equal(0, provider.Answers);
+
+        provider.Emit(new("rest", 1, "The timeline for the next two weeks.", true));
+        var completed = await Until(socket, "response.completed");
+        Assert.Equal("rest", completed.GetProperty("turnId").GetString());
+        await Task.Delay(700);
+        Assert.Equal(1, provider.Answers);
+        var history = Assert.IsType<ConversationTurn[]>(provider.LastHistory);
+        Assert.Equal(["Could you walk us through?", "The timeline for the next two weeks."],
+            history.Where(turn => turn.CurrentResponseTarget).Select(turn => turn.Text));
+    }
+
+    [Fact]
+    public async Task IncompleteFragmentStillRepliesAfterTheFullSettleWindowIfNothingFollows()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 600 }));
+        await Receive(socket);
+
+        provider.Emit(new("fragment", 1, "Could you walk us through?", true));
+        await Task.Delay(400);
+        Assert.Equal(0, provider.Answers);
+        var completed = await Until(socket, "response.completed");
+        Assert.Equal("fragment", completed.GetProperty("turnId").GetString());
+        Assert.Equal(1, provider.Answers);
+    }
+
+    [Fact]
+    public async Task FinalQuestionStartsGroundingRetrievalBeforeTheSettleWindowEndsAndReusesIt()
+    {
+        var provider = new ControlledProvider { AutomaticRetrieval = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 1000 }));
+        await Receive(socket);
+
+        provider.Emit(new("question", 1, "Which vendor did we pick for the data migration?", true));
+        await provider.RetrievalQueries.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(0, provider.Answers);
+
+        var completed = await Until(socket, "response.completed");
+        Assert.True(completed.GetProperty("retrievalPrefetched").GetBoolean());
+        Assert.Equal(1, provider.Retrievals);
+        Assert.Equal(1, provider.Answers);
+    }
+
+    [Fact]
+    public async Task SpeechOfTheNextTurnNeverTurnsAWaitingReplyIntoAGroundingError()
+    {
+        var provider = new ControlledProvider();
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 300 }));
+        await Receive(socket);
+
+        provider.Emit(new("question", 1, "Which vendor did we pick for the data migration?", true));
+        await provider.RetrievalStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        // The reply takes over the running retrieval before it announces itself.
+        await Until(socket, "response.started");
+
+        provider.Emit(new("follow-up", 1, "And what about", false));
+        provider.Emit(new("follow-up", 2, "And what about the rollout dates", false));
+        // Events are handled in order: once the second partial is echoed, the first one has reached the prefetch.
+        await Until(socket, "transcript.partial");
+        await Until(socket, "transcript.partial");
+        provider.Release.SetResult(new("no_matches", []));
+
+        JsonElement completed;
+        while (TypeOf(completed = await Receive(socket)) != "response.completed")
+            Assert.NotEqual("error", TypeOf(completed));
+        Assert.Equal("no_matches", completed.GetProperty("grounding").GetString());
+        Assert.True(completed.GetProperty("retrievalPrefetched").GetBoolean());
+        Assert.Equal(1, provider.Answers);
     }
 
     [Fact]
@@ -476,6 +587,10 @@ public sealed partial class ApiTests
         public bool FailFirstAnswer { get; init; }
         public bool IgnoreCancellation { get; init; }
         public ManualResetEventSlim? BlockRetrieval { get; init; }
+        public Func<string, TranslationContext, CancellationToken, Task<string?>>? Translate { get; init; }
+        public TaskCompletionSource? HoldAlternative { get; init; }
+        public System.Collections.Concurrent.ConcurrentQueue<(string English, TranslationContext Context)> Translations { get; } = new();
+        public TaskCompletionSource TurnSignalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SessionOptions? SpeechOptions { get; private set; }
         public SessionOptions? AnswerOptions { get; private set; }
         public string? Route { get; private set; }
@@ -529,7 +644,20 @@ public sealed partial class ApiTests
         {
             await foreach (var text in AnswerAsync(conversation, grounding, options, route, cancellation))
                 yield return new(text);
-            if (Alternative is not null) yield return new("", Alternative);
+            if (Alternative is null) yield break;
+            yield return new("", PrimaryDone: true);
+            if (HoldAlternative is not null) await HoldAlternative.Task.WaitAsync(cancellation);
+            yield return new("", Alternative);
+        }
+        public Task<bool> ShouldRespondAsync(IReadOnlyList<ConversationTurn> conversation, CancellationToken cancellation)
+        {
+            TurnSignalStarted.TrySetResult();
+            return Task.FromResult(conversation.Count > 0 && ReplyTrigger.ContainsQuestion([conversation[^1].Text]));
+        }
+        public Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation)
+        {
+            Translations.Enqueue((english, context));
+            return Translate is null ? Task.FromResult<string?>(null) : Translate(english, context, cancellation);
         }
         private sealed class Stream(Action write, Action dispose) : ISpeechStream
         {

@@ -50,4 +50,21 @@ public sealed class ReplySuggestionsTests
         parser.Append("First answer.\n");
         Assert.Equal("response_limit", Assert.Throws<ProviderException>(() => parser.Append(new string('x', 8000))).Code);
     }
+
+    [Fact]
+    public void PrimaryIsDoneExactlyWhenTheSecondLineBegins()
+    {
+        var parser = new ReplySuggestions();
+        Assert.False(parser.PrimaryDone);
+        parser.Append("\r\n  ");
+        Assert.False(parser.PrimaryDone);
+        parser.Append("First ");
+        parser.Append("answer.");
+        Assert.False(parser.PrimaryDone);
+        Assert.Equal("", parser.Append("\n"));
+        Assert.True(parser.PrimaryDone);
+        parser.Append("Second answer.");
+        Assert.True(parser.PrimaryDone);
+        Assert.Equal("Second answer.", parser.Alternative);
+    }
 }

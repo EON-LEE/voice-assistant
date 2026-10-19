@@ -14,10 +14,10 @@ internal static class PracticeDiagnostics
             "schema:pronunciation:english_chunk:type_or_length" or "schema:pronunciation:hangul_chunk" or
             "schema:pronunciation:rejoin" or "schema:pronunciation:rejoin:word_sequence" or
             "schema:pronunciation:rechunk:ko_count" or "schema:pronunciation:input_word" or
-            "schema:text:question" or "schema:points" or "schema:clarity" or
+            "schema:text:question" or "schema:text:repeat" or "schema:points" or "schema:clarity" or
             "schema:feedbackKo" or "schema:headlineKo" or "schema:strengthsKo" or "schema:improveKo" or "schema:phrases")
             return category;
-        string[] fields = ["text:english_style", "correctedEnglish:style", "easierEnglish:style", "english_style", "korean", "feedbackKo"];
+        string[] fields = ["text:english_style", "correctedEnglish:style", "easierEnglish:style", "english_style", "korean", "feedbackKo", "points:ko"];
         string[] rules = ["type", "empty", "max_characters", "control_character", "whitespace", "no_english",
             "max_words", "max_sentences", "characters", "meta_commentary", "list_prefix", "url", "no_hangul", "hangul_first", "symbols", "markup"];
         foreach (var field in fields)
@@ -25,6 +25,12 @@ internal static class PracticeDiagnostics
                 if (category == "schema:" + field + ":" + rule) return category;
         return "schema:output";
     }
+
+    // Fixed wording for the retry prompt; only allowlisted rule names reach it, never model or user text.
+    internal static string Hint(string? category) => SafeRule(category) == "schema:text:repeat"
+        ? " The line repeated an earlier partner line, so ask about a different point."
+        : "";
+
     internal static void Failure(ILogger logger, string operation, Exception error, int attempt)
     {
         var endpoint = operation is "enrich" or "speak" or "turn" or "suggest" or "feedback" or "summary" ? operation : "unknown";

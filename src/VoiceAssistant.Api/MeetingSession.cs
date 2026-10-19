@@ -87,10 +87,25 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private string responseRoute = "knowledge";
     private bool retrievalPrefetched;
     private readonly List<Task> retired = [];
+    private readonly List<Task> translations = [];
+    private KoreanScope? koreanScope;
     private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false);
     private sealed record AudioMessage(byte[] Bytes);
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
     private sealed record Completion(string Text, string[] Suggestions, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched, bool RespondNow = false);
+    private sealed record KoreanLine(KoreanScope Scope, int Index, string? Korean);
+
+    /// <summary>Tracks the Korean lines of one response; a response cancelled before it completed never publishes any.</summary>
+    private sealed class KoreanScope(string responseId, string? turnId)
+    {
+        private readonly string?[] lines = new string?[2];
+        public string ResponseId { get; } = responseId;
+        public string? TurnId { get; } = turnId;
+        public volatile bool Abandoned;
+        /// <summary>False when this exact text is already being translated for the line.</summary>
+        public bool Begin(int index, string english) { lock (lines) { if (lines[index] == english) return false; lines[index] = english; return true; } }
+        public bool IsCurrent(int index, string english) { lock (lines) return lines[index] == english; }
+    }
 
     public async Task RunAsync(CancellationToken requestAborted, CancellationToken superseded = default)
     {
@@ -113,7 +128,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 options,
                 transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
                 error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
-            await SendAsync(new { type = "session.ready", protocolVersion = 1 }, lifetime.Token);
+            // An opted-in client is told the server will push a Korean line for every reply line, so it knows to wait for it.
+            object ready = options.ReplyKorean
+                ? new { type = "session.ready", protocolVersion = 1, replyKorean = true }
+                : new { type = "session.ready", protocolVersion = 1 };
+            await SendAsync(ready, lifetime.Token);
             // Cancelling a pending ReceiveAsync aborts the socket; retain it until the fatal time-limit event is sent.
             receiver = ReceiveLoopAsync(receiving.Token);
             await foreach (var message in events.Reader.ReadAllAsync(lifetime.Token))
@@ -149,7 +168,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             {
                                 if (pendingSpeech.Count == 0) pendingSince = message.Timestamp;
                                 pendingSpeech.Add(transcript.Text);
-                                ScheduleSettle(lifetime);
+                                // The reply waits out the settle window anyway, so retrieve for this final in the meantime.
+                                prefetch!.Update(transcript, earlierTranscripts.With(conversation.GetRange(0, conversation.Count - 1)));
+                                ScheduleSettle(lifetime, afterFinal: true);
                             }
                             else if (responseActive)
                             {
@@ -160,9 +181,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         else
                         {
                             prefetch!.Update(transcript, earlierTranscripts.With(conversation));
-                            // Ongoing speech postpones the reply, except a question already waiting too long.
+                            // Ongoing speech postpones the reply, except a question or request already waiting too long.
                             if (options.ReplySettleMs > 0 && pendingSpeech.Count > 0 &&
-                                !(TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.ContainsQuestion(pendingSpeech)))
+                                !(TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.InvitesReply(pendingSpeech)))
                                 ScheduleSettle(lifetime);
                         }
                         break;
@@ -197,6 +218,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         return;
                     case "closed": return;
                     case "fatal": throw (ProviderException)message.Value!;
+                    case "korean":
+                        var line = (KoreanLine)message.Value!;
+                        // A cancel can be handled while this event waits in the queue; a cancelled reply publishes no Korean.
+                        if (line.Scope.Abandoned) break;
+                        object koreanMessage = line.Korean is { } meaning
+                            ? new { type = "response.korean", responseId = line.Scope.ResponseId, turnId = line.Scope.TurnId, index = line.Index, korean = meaning }
+                            : new { type = "response.korean", responseId = line.Scope.ResponseId, turnId = line.Scope.TurnId, index = line.Index, failed = true };
+                        await SendAsync(koreanMessage, lifetime.Token);
+                        break;
                     case "delta" when message.Generation == generationNumber && responseActive:
                         await SendAsync(new { type = "response.delta", responseId, turnId = responseTurn, text = (string)message.Value! }, lifetime.Token);
                         if (message.ModelResponse) responseMeasurement?.FirstDeltaSent();
@@ -243,6 +273,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                                 responseRoute,
                                 retrievalPrefetched
                             }, lifetime.Token);
+                            // This fixed notice is not translated server-side; tell the client so it does not wait for it.
+                            if (options.ReplyKorean)
+                                await SendAsync(new { type = "response.korean", responseId, turnId = responseTurn, index = 0, failed = true }, lifetime.Token);
                             responseActive = false;
                         }
                         else
@@ -312,7 +345,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             generation?.Cancel();
             if (prefetch is not null) await prefetch.DisposeAsync();
             events.Writer.TryComplete();
-            await ObserveCleanupAsync(Task.WhenAll(retired.Append(receiver).Append(generationTask)));
+            Task[] pendingTranslations;
+            lock (translations) pendingTranslations = translations.ToArray();
+            await ObserveCleanupAsync(Task.WhenAll(retired.Concat(pendingTranslations).Append(receiver).Append(generationTask)));
             generation?.Dispose();
             if (speech is not null)
             {
@@ -325,24 +360,26 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     /// <summary>Statements wait for more context, but never longer than this before a reply is offered.</summary>
     private static readonly TimeSpan MaxGatherTime = TimeSpan.FromSeconds(12);
 
+    /// <summary>A question or request that ends like a finished sentence is answered after this short pause, not the full settle window.</summary>
+    private const int CompleteSettleMs = 300;
+
     /// <summary>The turn signal is optional: a slow or failed classifier yields "no emphasis", never an error.</summary>
     private async Task<bool> TurnSignalAsync(Task<bool> signal)
     {
         try { return await signal.WaitAsync(TimeSpan.FromMilliseconds(800)); }
-        catch (Exception) when (!signal.IsCompletedSuccessfully)
-        {
-            _ = signal.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
-            return false;
-        }
+        catch (Exception) { return false; }
     }
 
-    private void ScheduleSettle(CancellationTokenSource lifetime)
+    private void ScheduleSettle(CancellationTokenSource lifetime, bool afterFinal = false)
     {
         var number = ++settleNumber;
         var delay = TimeSpan.FromMilliseconds(options.ReplySettleMs);
-        // A long-running gathered statement is answered as soon as the speaker pauses briefly.
         if (pendingSpeech.Count > 0 && TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime)
-            delay = TimeSpan.FromMilliseconds(300);
+            // A long-running gathered statement is answered as soon as the speaker pauses briefly.
+            delay = TimeSpan.FromMilliseconds(CompleteSettleMs);
+        else if (afterFinal && ReplyTrigger.InvitesReply(pendingSpeech) && ReplyTrigger.LooksComplete(pendingSpeech))
+            // New speech re-arms the full window, so a continuation still merges into one reply.
+            delay = TimeSpan.FromMilliseconds(Math.Min(options.ReplySettleMs, CompleteSettleMs));
         _ = Task.Delay(delay, lifetime.Token).ContinueWith(task =>
         {
             if (task.IsCompletedSuccessfully) EnqueueCallback(new("settle", Generation: number), lifetime);
@@ -474,6 +511,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         generation.CancelAfter(TimeSpan.FromSeconds(30));
         responseId = Guid.NewGuid().ToString("N");
         responseTurn = preparedTurn ?? lastTurn;
+        var scope = options.ReplyKorean ? new KoreanScope(responseId, responseTurn) : null;
+        koreanScope = scope;
         var prior = history.Take(history.Length - 1).ToArray();
         var targetText = history[^1].Text;
         responseRoute = ResponseRouting.Select(targetText, options, prior);
@@ -488,7 +527,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
         var token = generation.Token;
         var route = responseRoute;
-        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, token, lifetime));
+        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, scope, token, lifetime));
     }
 
     private async Task CancelResponseAsync(CancellationToken cancellation)
@@ -499,13 +538,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         generation?.Cancel();
         generationNumber++;
         if (!responseActive) return;
+        // A reply that already completed keeps its translations; one that never completed publishes none.
+        if (koreanScope is not null) koreanScope.Abandoned = true;
         responseActive = false;
         responseMeasurement = null;
         await SendAsync(new { type = "response.cancelled", responseId, turnId = responseTurn }, cancellation);
     }
 
     private async Task GenerateAsync(int number, ConversationTurn[] history, string route,
-        Task<RetrievalOutcome>? prefetched, CancellationToken cancellation, CancellationToken lifetime)
+        Task<RetrievalOutcome>? prefetched, KoreanScope? scope, CancellationToken cancellation, CancellationToken lifetime)
     {
         try
         {
@@ -513,18 +554,23 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             {
                 cancellation.ThrowIfCancellationRequested();
                 var introduction = ProfileIntroduction.Compose(options);
+                StartKorean(scope, 0, introduction, new TranslationContext(options.Topic, options.Phrases), lifetime);
                 await events.Writer.WriteAsync(new("delta", introduction, number), cancellation);
                 await events.Writer.WriteAsync(new("complete",
                     new Completion(introduction, [introduction], [], "disabled", "profile", false), number), cancellation);
                 return;
             }
+            // Started before retrieval so the classifier has finished by the time the answer does; it only adds emphasis
+            // and never delays or blocks the suggestion. Its failure is observed here so it can never go unhandled.
+            var turnSignal = provider.ShouldRespondAsync(history, cancellation);
+            _ = turnSignal.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
             var grounding = route != "knowledge" ? new Grounding("disabled", []) :
                 prefetched is not null ? (await prefetched.WaitAsync(cancellation)).RequireGrounding() :
                 await MeetingMetrics.MeasureRetrievalAsync(provider,
                     RetrievalQuery.Build(history[^1].Text, history.Take(history.Length - 1).ToArray()), objectId, cancellation);
             var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches";
-            // Runs alongside the answer; it only adds emphasis and never delays or blocks the suggestion.
-            var turnSignal = provider.ShouldRespondAsync(history, cancellation);
+            var translation = scope is null ? TranslationContext.Empty
+                : new TranslationContext(options.Topic, KoreanTranslation.Terms(options, grounding));
             var text = new StringBuilder();
             string? alternative = null;
             await foreach (var update in provider.AnswerWithSuggestionsAsync(history, grounding, options, route, cancellation).WithCancellation(cancellation))
@@ -536,11 +582,16 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 if (update.Alternative is not null) alternative = update.Alternative;
                 if (delta.Length > 0)
                     await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse), cancellation);
+                // The first line is final as soon as the second begins, so its translation overlaps the alternative.
+                if (update.PrimaryDone) StartKorean(scope, 0, text.ToString().Trim(), translation, lifetime);
             }
             cancellation.ThrowIfCancellationRequested();
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
+            var suggestions = ReplySuggestions.Complete(text.ToString(), alternative);
+            for (var index = 0; index < suggestions.Length; index++)
+                StartKorean(scope, index, suggestions[index].Trim(), translation, lifetime);
             await events.Writer.WriteAsync(new("complete",
-                new Completion(text.ToString(), ReplySuggestions.Complete(text.ToString(), alternative),
+                new Completion(text.ToString(), suggestions,
                     grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status, route, prefetched is not null,
                     await TurnSignalAsync(turnSignal)), number,
                 ModelResponse: modelResponse), cancellation);
@@ -566,6 +617,45 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 await events.Writer.WriteAsync(new("generation.error", error, number), lifetime);
             }
         }
+    }
+
+    /// <summary>
+    /// Translates one reply line for a client that opted in. It runs beside the answer, publishes through the event loop and
+    /// never blocks the reply; a line that cannot be translated is reported as failed so the client can fall back.
+    /// </summary>
+    private void StartKorean(KoreanScope? scope, int index, string english, TranslationContext context, CancellationToken lifetime)
+    {
+        if (scope is null || english.Length == 0 || lifetime.IsCancellationRequested || !scope.Begin(index, english)) return;
+        lock (translations)
+        {
+            // Checked under the lock the cleanup also takes, so nothing starts after the final snapshot.
+            if (lifetime.IsCancellationRequested) return;
+            translations.RemoveAll(task => task.IsCompleted);
+            translations.Add(Task.Run(() => TranslateAsync(scope, index, english, context, lifetime), CancellationToken.None));
+        }
+    }
+
+    private async Task TranslateAsync(KoreanScope scope, int index, string english, TranslationContext context, CancellationToken lifetime)
+    {
+        string? korean = null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            korean = await provider.TranslateReplyAsync(english, context, timeout.Token);
+        }
+        catch (Exception exception) when (!lifetime.IsCancellationRequested)
+        {
+            logger.LogWarning("Reply translation failed: {Failure}.",
+                exception is System.ClientModel.ClientResultException client ? $"HTTP {client.Status}" : exception.GetType().Name);
+        }
+        catch (Exception)
+        {
+            return;
+        }
+        if (scope.Abandoned || !scope.IsCurrent(index, english) || lifetime.IsCancellationRequested) return;
+        try { await events.Writer.WriteAsync(new("korean", new KoreanLine(scope, index, korean)), lifetime); }
+        catch (Exception exception) when (exception is OperationCanceledException or ChannelClosedException) { }
     }
 
     private async Task SendAsync(object value, CancellationToken cancellation)

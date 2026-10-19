@@ -14,16 +14,19 @@ public sealed record SessionOptions
     public bool ProfileConfirmed { get; init; }
     public string Topic { get; init; } = "";
     public IReadOnlyList<string> Phrases { get; init; } = Array.Empty<string>();
+    /// <summary>Speech silence timeout. It is still validated, but it has no effect while Semantic segmentation is active (<see cref="SemanticSegmentation"/> without <see cref="TranscribeOnly"/>): Speech then chooses the boundaries and the server does not send the timeout.</summary>
     public int EndSilenceMs { get; init; } = 700;
     public bool TranscribeOnly { get; init; }
     public bool SemanticSegmentation { get; init; }
     /// <summary>0 = reply to every final utterance (legacy). Otherwise wait for this pause and reply to the gathered meaning.</summary>
     public int ReplySettleMs { get; init; }
+    /// <summary>Opt-in: the server also sends the Korean meaning of each reply line as <c>response.korean</c> events.</summary>
+    public bool ReplyKorean { get; init; }
     public static SessionOptions Legacy { get; } = new();
 
     internal static SessionOptions Parse(JsonElement value)
     {
-        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly", "semanticSegmentation", "replySettleMs");
+        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly", "semanticSegmentation", "replySettleMs", "replyKorean");
         var transcribeOnly = value.TryGetProperty("transcribeOnly", out var only) && only.GetBoolean();
         var mode = Text(value, "responseMode", 20, "grounded");
         if (mode is not ("balanced" or "grounded" or "conversation")) throw Invalid();
@@ -58,7 +61,8 @@ public sealed record SessionOptions
             Topic = Text(value, "topic", 300), Phrases = phrases.AsReadOnly(), EndSilenceMs = silence,
             TranscribeOnly = transcribeOnly,
             SemanticSegmentation = value.TryGetProperty("semanticSegmentation", out var semantic) && semantic.GetBoolean(),
-            ReplySettleMs = settle
+            ReplySettleMs = settle,
+            ReplyKorean = value.TryGetProperty("replyKorean", out var korean) && korean.GetBoolean()
         };
     }
 

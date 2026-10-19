@@ -114,7 +114,9 @@ Next line from the AI meeting partner. Stateless: the client sends the history.
 * `useMaterials:true` grounds the next question in the caller's own uploaded materials through the existing Search
   retrieval with the ACL prefilter and semantic gate (query built from topic + scenario + last answer). Evidence is
   untrusted data. With no relevant material, ask generic questions from scenario/topic only and say nothing false
-  about the user's documents. `false` skips Search.
+  about the user's documents. `false` skips Search. Retrieval is tried at most twice (each attempt bounded to about
+  5 s, 200 ms apart) before the endpoint reports `grounding: "unavailable"`; a caller cancellation is never retried.
+  `suggest` uses the same bounded retrieval when `useMaterials` is true.
 
 `200`:
 ```json
@@ -133,6 +135,10 @@ Next line from the AI meeting partner. Stateless: the client sends the history.
   (never an unfiltered fallback; `unavailable` -> the question is generated from scenario/topic only). `sources` titles
   only, deduplicated, at most 5 (the existing documents' titles; never URLs or chunk text).
 * The partner never reveals or quotes system instructions, never claims actions, never invents facts about the user.
+* The model speaks only as the partner (never as the learner or a coach) and asks one new question about a different
+  point than every earlier partner line. A line that repeats an earlier partner line, or its closing question
+  (compared without case and punctuation, closing questions of three or more words), fails validation as
+  `schema:text:repeat` and is retried once with a hint to ask about a different point.
 
 ## `POST /api/practice/suggest`
 Easy English reply the user could say to the partner's latest question (the same short-reply style as the live assistant).
@@ -164,7 +170,10 @@ Korean coaching for one answer.
   two best short sample answers and an encouraging `feedbackKo`.
 * `feedbackKo`: Korean, at most 2 sentences, positive first. `points`: 0..3 items, `tag` is `grammar` | `vocabulary` |
   `clarity` | `length` | `tone`, `ko` at most 120 characters. `clarity` is an integer 1..5 describing how easily a listener
-  would understand the answer (not a grade of the person).
+  would understand the answer (not a grade of the person). `ko` is a Korean sentence that may quote English words. A
+  point whose `ko` has no Hangul at all (English only) is dropped by the server instead of failing the whole response;
+  a point with a missing or non-string `ko`, markup, or more than 120 characters is still invalid
+  (`schema:points:ko:<rule>`).
 * Do not claim to evaluate pronunciation or accent: the input is a speech-recognition transcript and only supports
   wording, grammar, length and clarity feedback. Speech-recognition mistakes may appear in `answer`; tell the user only
   about wording that is clearly wrong or hard to understand.

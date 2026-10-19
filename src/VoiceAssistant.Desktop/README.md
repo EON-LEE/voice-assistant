@@ -69,7 +69,7 @@ Supported settings include `Mode`, `Endpoint`, `Origin`, `Authority`, `TenantId`
 
 Native meeting captions default to Azure Speech semantic segmentation, which prefers sentence-ending
 boundaries instead of treating each short pause as a complete sentence. Partials remain live/provisional.
-Set `SemanticSegmentation:false` to restore silence segmentation; its native fallback is1100ms.
+Set `SemanticSegmentation:false` to restore silence segmentation, which uses `EndSilenceMs` (1100 ms by default). Under semantic segmentation `EndSilenceMs` is not sent to Speech and has no effect.
 Recognition-only practice uses silence boundaries. Semantic segmentation does not fix microphone noise
 or guarantee complete grammar; it is not speaker diarization.
 

@@ -21,6 +21,7 @@ public sealed class SessionOptionsAndRoutingTests
         var options = Parse("""{"semanticSegmentation":true,"endSilenceMs":1100}""");
         var captions = AzureMeetingProvider.CreateSpeechConfig(new() { SpeechRegion = "eastus" }, "test-token", options);
         Assert.Equal("Semantic", captions.GetProperty(PropertyId.Speech_SegmentationStrategy));
+        Assert.Equal("", captions.GetProperty(PropertyId.Speech_SegmentationSilenceTimeoutMs));
         var practice = AzureMeetingProvider.CreateSpeechConfig(new() { SpeechRegion = "eastus" }, "test-token",
             options with { TranscribeOnly = true });
         Assert.NotEqual("Semantic", practice.GetProperty(PropertyId.Speech_SegmentationStrategy));
@@ -130,6 +131,44 @@ public sealed class SessionOptionsAndRoutingTests
     public void NormalizationOnlyFoldsCaseAndWhitespace() =>
         Assert.Equal("we cannot ship 10.", ResponseRouting.Normalize("  We  CANNOT \tship 10. "));
 
+    [Theory]
+    [InlineData("We can ship 10.", "We cannot ship 10.")]
+    [InlineData("We can ship 10.", "We can ship 100.")]
+    [InlineData("We are ready", "We are not ready")]
+    [InlineData("Ship on 2026-09-23", "Ship on 2026-09-24")]
+    [InlineData("We can't ship", "We can ship")]
+    [InlineData("Ship 1.5 units", "Ship 15 units")]
+    [InlineData("Set -5 degrees", "Set 5 degrees")]
+    [InlineData("Deploy version 1.2", "Deploy version 12")]
+    [InlineData("Deadline is 9/10", "Deadline is 910")]
+    [InlineData("We can't ship", "We cant ship")]
+    [InlineData("We can’t ship", "We cant ship")]
+    public void PrefetchIdentityKeepsMeaningfulDifferences(string left, string right) =>
+        Assert.NotEqual(ResponseRouting.Identity(left), ResponseRouting.Identity(right));
+
+    [Theory]
+    [InlineData("What is our plan?", "what is our plan")]
+    [InlineData("Hello, world.", "hello world")]
+    [InlineData("We can’t ship.", "We can't ship")]
+    [InlineData("She said \"ship it\".", "she said ship it")]
+    [InlineData("So, what is our plan?", "so what is our plan")]
+    [InlineData("We can ship 10.", "We can ship 10")]
+    [InlineData("Ship 1.5 units!", "ship 1.5 units")]
+    [InlineData("What   is\tour plan…", "WHAT IS OUR PLAN")]
+    public void PrefetchIdentityIgnoresOnlyCaseWhitespaceAndWordEdgePunctuation(string left, string right) =>
+        Assert.Equal(ResponseRouting.Identity(left), ResponseRouting.Identity(right));
+
+    [Theory]
+    [InlineData("ok", false, false)]
+    [InlineData("tell me", true, false)]
+    [InlineData("tell me", false, false)]
+    [InlineData("who owns it", true, true)]
+    [InlineData("who owns it", false, false)]
+    [InlineData("supercalifragilistic", true, false)]
+    [InlineData("what is our customer delivery plan", false, true)]
+    public void FinalsNeedFewerWordsThanPartialsToBeWorthRetrieving(string text, bool final, bool expected) =>
+        Assert.Equal(expected, ResponseRouting.Substantive(text, final));
+
     [Fact]
     public void HistoryCanRequireKnowledgeButCannotInventAnAnswerForAmbiguousFragments()
     {
@@ -160,7 +199,8 @@ public sealed class SessionOptionsAndRoutingTests
             """{"endSilenceMs":349}""", """{"endSilenceMs":1501}""", """{"endSilenceMs":500.5}""",
             """{"endSilenceMs":"500"}""", """{"endSilenceMs":99999999999999}""",
             """{"phrases":"JMAP"}""", """{"phrases":[null]}""", """{"phrases":[""]}""", """{"phrases":["\n"]}""",
-            """{"topic":true}""", """{"topic":"a\nb"}""", """{"responseMode":"balanced","responseMode":"grounded"}""" })
+            """{"topic":true}""", """{"topic":"a\nb"}""", """{"responseMode":"balanced","responseMode":"grounded"}""",
+            """{"replyKorean":"true"}""", """{"replyKorean":1}""", """{"replyKorean":null}""" })
             yield return [value];
         yield return [JsonSerializer.Serialize(new { profile = new { name = new string('a', 101) }, profileConfirmed = true })];
         yield return [JsonSerializer.Serialize(new { profile = new { role = new string('a', 161) }, profileConfirmed = true })];
@@ -191,6 +231,15 @@ public sealed class SessionOptionsAndRoutingTests
         }));
         Assert.Equal(silence, options.EndSilenceMs);
         Assert.Equal(2048, options.Phrases.Sum(phrase => phrase.Length));
+    }
+
+    [Fact]
+    public void ReplyKoreanIsAnOptInBooleanThatDefaultsToOff()
+    {
+        Assert.False(SessionOptions.Legacy.ReplyKorean);
+        Assert.False(Parse("""{"responseMode":"balanced"}""").ReplyKorean);
+        Assert.False(Parse("""{"replyKorean":false}""").ReplyKorean);
+        Assert.True(Parse("""{"replyKorean":true}""").ReplyKorean);
     }
 
     private static SessionOptions Parse(string json)

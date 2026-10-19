@@ -111,6 +111,81 @@ public sealed class PracticeAlignmentAndRulesTests
         Assert.Equal("schema:text:english_style:max_words", error.DiagnosticCategory);
     }
 
+    [Fact]
+    public void FeedbackPointsWithoutHangulAreDroppedAndTheRestKept()
+    {
+        var mixed = PracticeOutputs.Validate(FeedbackWithPoints("""
+            [{"tag":"grammar","ko":"Use the present simple."},
+             {"tag":"vocabulary","ko":"\"database migration\"이 자연스러워요."},
+             {"tag":"clarity","ko":""}]
+            """), new("feedback"));
+        var kept = Assert.Single(mixed.GetProperty("points").EnumerateArray());
+        Assert.Equal("vocabulary", kept.GetProperty("tag").GetString());
+        var none = PracticeOutputs.Validate(
+            FeedbackWithPoints("""[{"tag":"grammar","ko":"Use the present simple."}]"""), new("feedback"));
+        Assert.Empty(none.GetProperty("points").EnumerateArray());
+    }
+
+    [Theory]
+    [InlineData("""[{"tag":"grammar"}]""", "schema:points")]
+    [InlineData("""[{"tag":"accent","ko":"발음을 연습해 보세요."}]""", "schema:points")]
+    [InlineData("""[{"tag":"grammar","ko":null}]""", "schema:points:ko:type")]
+    [InlineData("""[{"tag":"grammar","ko":123}]""", "schema:points:ko:type")]
+    [InlineData("""[{"tag":"grammar","ko":"좋아요 <b>굵게</b>"}]""", "schema:points:ko:markup")]
+    public void OtherInvalidFeedbackPointsStillFailWithTheirOwnCategory(string points, string category)
+    {
+        var failure = Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(FeedbackWithPoints(points), new("feedback")));
+        Assert.Equal(category, failure.DiagnosticCategory);
+    }
+
+    [Fact]
+    public void FeedbackPointLongerThanTheLimitFailsWithItsOwnCategory()
+    {
+        string Point(int length) => FeedbackWithPoints($$"""[{"tag":"grammar","ko":"{{new string('가', length)}}"}]""");
+        PracticeOutputs.Validate(Point(120), new("feedback"));
+        var failure = Assert.Throws<PracticeException>(() => PracticeOutputs.Validate(Point(121), new("feedback")));
+        Assert.Equal("schema:points:ko:max_characters", failure.DiagnosticCategory);
+    }
+
+    private static PracticeRequest TurnAfter(params string[] lines) => new("turn", Scenario: new("interview", "", 2), MaxTurns: 6,
+        History: lines.Select((line, index) => new PracticeHistory(index % 2 == 0 ? "partner" : "user", line)).ToArray());
+
+    private static readonly string[] Earlier =
+    [
+        "Thanks for joining. What backend project did you work on most recently?", "I built a billing API.",
+        "Nice. How did you test it?", "With unit tests."
+    ];
+
+    [Theory]
+    [InlineData("Thanks for joining. What backend project did you work on most recently?")]
+    [InlineData("Nice. How did you test it?")]
+    [InlineData("Great. What backend project did you work on most recently?")]
+    [InlineData("Okay. HOW did you test it?")]
+    public void PartnerTurnRepeatingAnEarlierPartnerLineOrItsClosingQuestionIsRejected(string text)
+    {
+        var error = Assert.Throws<PracticeException>(() =>
+            PracticeOutputs.Validate(JsonSerializer.Serialize(new { text }), TurnAfter(Earlier)));
+        Assert.Equal("schema:text:repeat", error.DiagnosticCategory);
+        Assert.DoesNotContain(text, error.Message);
+    }
+
+    [Theory]
+    [InlineData("Nice. What was the hardest bug in the billing API?")]
+    [InlineData("Thanks for joining. How did you handle errors?")]
+    [InlineData("Which tools did you use for the tests?")]
+    public void PartnerTurnWithNewQuestionOrOnlyASharedAcknowledgementIsAccepted(string text) =>
+        PracticeOutputs.Validate(JsonSerializer.Serialize(new { text }), TurnAfter(Earlier));
+
+    [Fact]
+    public void ShortClosingQuestionsAndMissingHistoryNeverCountAsRepeats()
+    {
+        PracticeOutputs.Validate("""{"text":"Okay. Why?"}""", TurnAfter("Interesting. Why?", "Because it is faster."));
+        PracticeOutputs.Validate("""{"text":"Thanks for joining. What do you do?"}""", new("turn"));
+    }
+
+    private static string FeedbackWithPoints(string points) =>
+        $$"""{"correctedEnglish":"I think the main risk is slow database migration.","easierEnglish":"I think moving the data is the main risk.","feedbackKo":"좋은 답변이에요.","points":{{points}},"clarity":4}""";
+
     private static string Feedback(string korean) => JsonSerializer.Serialize(new
     {
         correctedEnglish = "I think the main risk is slow database migration. We start early.",

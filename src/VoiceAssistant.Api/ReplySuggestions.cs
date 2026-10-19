@@ -2,7 +2,8 @@ using System.Text;
 
 namespace VoiceAssistant.Api;
 
-public sealed record ReplyUpdate(string Text, string? Alternative = null);
+/// <param name="PrimaryDone">The first line is complete; everything after it belongs to the alternative.</param>
+public sealed record ReplyUpdate(string Text, string? Alternative = null, bool PrimaryDone = false);
 
 internal sealed class ReplySuggestions
 {
@@ -10,6 +11,8 @@ internal sealed class ReplySuggestions
     private bool secondLine;
     private bool primaryStarted;
     private int length;
+
+    internal bool PrimaryDone => secondLine;
 
     internal string Append(string delta)
     {

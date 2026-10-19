@@ -217,6 +217,162 @@ public sealed class PartialRetrievalTests
         second.Result.SetResult(new("no_matches", []));
     }
 
+    [Fact]
+    public async Task FinalTranscriptRetrievesImmediatelyAndIsReusedDespitePunctuationAndCase()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        cache.Update(new("turn", 1, Query, true));
+        var call = await provider.Next();
+        Assert.True(clock.ElapsedMilliseconds < 200, $"A final must not wait for the 250 ms partial debounce ({clock.ElapsedMilliseconds} ms).");
+        call.Result.SetResult(new("no_matches", []));
+        var task = cache.Take("turn", "what is our   customer delivery plan", "knowledge");
+        Assert.NotNull(task);
+        Assert.Equal("no_matches", (await task!).RequireGrounding().Status);
+        Assert.Single(provider.Calls);
+    }
+
+    [Fact]
+    public async Task FinalRetrievalIsNeitherCountedNorBlockedByThePartialStartCap()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        for (var i = 0; i < 3; i++)
+        {
+            var query = Query + " " + i;
+            cache.Update(new("turn", i, query, false));
+            (await provider.Next()).Result.SetResult(new("disabled", []));
+            await cache.Take("turn", query, "knowledge")!;
+        }
+        cache.Update(new("turn", 4, Query + " fourth", false));
+        await Task.Delay(350);
+        Assert.Equal(3, provider.Calls.Count);
+
+        const string final = "What is our customer delivery plan this quarter?";
+        cache.Update(new("turn", 5, final, true));
+        var call = await provider.Next();
+        call.Result.SetResult(new("no_matches", []));
+        Assert.Equal("no_matches", (await cache.Take("turn", final, "knowledge")!).RequireGrounding().Status);
+        Assert.Equal(4, provider.Calls.Count);
+    }
+
+    [Fact]
+    public async Task FinalPromotesIdenticalPartialThatIsStillWaitingOutItsDebounce()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        cache.Update(new("turn", 2, Query, true));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var call = await provider.Next();
+        Assert.True(clock.ElapsedMilliseconds < 200, $"The final must start the retrieval without the remaining debounce ({clock.ElapsedMilliseconds} ms).");
+        call.Result.SetResult(new("no_matches", []));
+        Assert.NotNull(cache.Take("turn", Query, "knowledge"));
+        await Task.Delay(350);
+        Assert.Single(provider.Calls);
+    }
+
+    [Fact]
+    public async Task FinalKeepsIdenticalPartialRetrievalAlreadyInFlightInsteadOfSearchingTwice()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, "What is our customer delivery plan", false));
+        var call = await provider.Next();
+        cache.Update(new("turn", 2, Query, true));
+        Assert.False(call.Cancellation.IsCancellationRequested);
+        call.Result.SetResult(new("no_matches", []));
+        Assert.Equal("no_matches", (await cache.Take("turn", Query, "knowledge")!).RequireGrounding().Status);
+        await Task.Delay(100);
+        Assert.Single(provider.Calls);
+    }
+
+    [Theory]
+    [InlineData("What is our plan for 10?", "What is our plan for 100?")]
+    [InlineData("We can deliver the customer plan.", "We cannot deliver the customer plan.")]
+    [InlineData("Our date is 2026-09-23.", "Our date is 2026-09-24.")]
+    [InlineData("Is the budget 1.5 million?", "Is the budget 15 million?")]
+    [InlineData("We can't ship the customer plan.", "We can ship the customer plan.")]
+    public async Task NeverReusesFinalRetrievalForDifferentWords(string first, string second)
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, first, true));
+        var call = await provider.Next();
+        Assert.Null(cache.Take("turn", second, "knowledge"));
+        Assert.True(call.Cancellation.IsCancellationRequested);
+    }
+
+    [Theory]
+    [InlineData("Yeah.")]
+    [InlineData("OK, good.")]
+    [InlineData("Thanks.")]
+    [InlineData("Uh huh.")]
+    public async Task BackchannelFinalsAreNotRetrieved(string text)
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, text, true));
+        await Task.Delay(150);
+        Assert.Empty(provider.Calls);
+        Assert.Null(cache.Take("turn", text, "knowledge"));
+    }
+
+    [Fact]
+    public async Task UnstartedFinalRetrievalBehindABusyWorkerIsNeverHandedToTheResponse()
+    {
+        var provider = new Provider { IgnoreCancellation = true };
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query + " first", false));
+        var busy = await provider.Next();
+        cache.Update(new("turn", 2, Query, true));
+        await Task.Delay(50);
+        Assert.Null(cache.Take("turn", Query, "knowledge"));
+        busy.Result.SetResult(new("grounded", []));
+        await Task.Delay(100);
+        Assert.Single(provider.Calls);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RetrievalAReplyAlreadyWaitsForSurvivesLaterSpeech(bool nextTurn)
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        var selected = cache.Take("turn", Query, "knowledge");
+        Assert.NotNull(selected);
+
+        // Whatever the speaker says next must not turn the answer being prepared into a grounding error.
+        const string later = "What is our customer return policy for damaged goods?";
+        var laterTurn = nextTurn ? "next" : "turn";
+        cache.Update(new(laterTurn, nextTurn ? 1 : 2, later, false));
+        Assert.False(call.Cancellation.IsCancellationRequested);
+
+        call.Result.SetResult(new("grounded", []));
+        Assert.Equal("grounded", (await selected!).RequireGrounding().Status);
+        // The later speech is still prefetched, once the single worker is free again.
+        var following = await provider.Next();
+        Assert.Equal(ResponseRouting.Normalize(later), following.Query);
+        following.Result.SetResult(new("no_matches", []));
+        Assert.Equal("no_matches", (await cache.Take(laterTurn, later, "knowledge")!).RequireGrounding().Status);
+    }
+
+    [Fact]
+    public async Task SpeechOfTheNextTurnStillCancelsRetrievalNobodyWaitsFor()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        cache.Update(new("next", 1, "What is our customer return policy for damaged goods?", false));
+        Assert.True(call.Cancellation.IsCancellationRequested);
+        Assert.Null(cache.Take("turn", Query, "knowledge"));
+    }
+
     private sealed record Call(string Query, string Oid, CancellationToken Cancellation)
     {
         internal TaskCompletionSource<Grounding> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

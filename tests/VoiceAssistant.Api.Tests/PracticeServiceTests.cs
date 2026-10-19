@@ -4,6 +4,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Azure.AI.OpenAI;
+using Microsoft.Extensions.Logging;
 using VoiceAssistant.Api.Practice;
 using Xunit;
 
@@ -59,7 +60,7 @@ public sealed class PracticeServiceTests
     }
 
     [Fact]
-    public async Task MaterialsFailureExplicitlyMarksUnavailableAndClosingNeverRetrieves()
+    public async Task MaterialsFailureRetriesOnceThenMarksUnavailableAndClosingNeverRetrieves()
     {
         var retrieval = new Retrieval { Failure = new ProviderException("grounding_unavailable", "private") };
         var model = new Model("""{"text":"What would you like to practice?"}""");
@@ -72,8 +73,69 @@ public sealed class PracticeServiceTests
         using var closing = JsonDocument.Parse(JsonSerializer.Serialize(await Service(model, retrieval).ExecuteAsync(done, "caller", CancellationToken.None)));
         Assert.True(closing.RootElement.GetProperty("done").GetBoolean());
         Assert.Equal(2, closing.RootElement.GetProperty("turn").GetInt32());
-        Assert.Equal(1, retrieval.Calls);
+        Assert.Equal(2, retrieval.Calls);
         Assert.Single(model.Retries);
+    }
+
+    [Fact]
+    public async Task TransientRetrievalFailureIsRetriedOnceAndStillGrounds()
+    {
+        var retrieval = new Retrieval
+        {
+            FailFirstCalls = 1,
+            Result = new("grounded", [new Evidence("private chunk", new Source("Plan notes", "https://private.example", null))])
+        };
+        var model = new Model("""{"text":"The review is on Thursday."}""");
+        var logger = new ListLogger<PracticeService>();
+        using var result = JsonDocument.Parse(JsonSerializer.Serialize(
+            await Service(model, retrieval, logger: logger).ExecuteAsync(Suggest(true), "caller", CancellationToken.None)));
+        Assert.Equal(2, retrieval.Calls);
+        Assert.Equal("grounded", model.Grounding!.Status);
+        Assert.Equal("grounded", result.RootElement.GetProperty("grounding").GetString());
+        var source = Assert.Single(result.RootElement.GetProperty("sources").EnumerateArray());
+        Assert.Equal("Plan notes", source.GetProperty("title").GetString());
+        Assert.Equal("Warning: Practice endpoint suggest failure retrieval_retry, HTTP status 0, attempt 1.", Assert.Single(logger.Lines));
+    }
+
+    [Fact]
+    public async Task HangingRetrievalAttemptIsBoundedAndRetried()
+    {
+        var retrieval = new Retrieval { HangFirstCall = true };
+        var model = new Model("""{"text":"Let me check the plan first."}""");
+        await Service(model, retrieval, TimeSpan.FromMilliseconds(50)).ExecuteAsync(Suggest(true), "caller", CancellationToken.None);
+        Assert.Equal(2, retrieval.Calls);
+        Assert.Equal("no_matches", model.Grounding!.Status);
+    }
+
+    [Fact]
+    public async Task RetrievalThatHangsTwiceFallsBackToUnavailableAndStillAnswers()
+    {
+        var retrieval = new Retrieval { HangAlways = true };
+        var model = new Model("""{"text":"Let me check the plan first."}""");
+        var logger = new ListLogger<PracticeService>();
+        await Service(model, retrieval, TimeSpan.FromMilliseconds(50), logger).ExecuteAsync(Suggest(true), "caller", CancellationToken.None);
+        Assert.Equal(2, retrieval.Calls);
+        Assert.Equal("unavailable", model.Grounding!.Status);
+        Assert.Single(model.Retries);
+        Assert.Equal(new[]
+        {
+            "Warning: Practice endpoint suggest failure retrieval_retry, HTTP status 0, attempt 1.",
+            "Warning: Practice endpoint suggest failure retrieval_unavailable, HTTP status 0, attempt 2."
+        }, logger.Lines);
+    }
+
+    [Fact]
+    public async Task CallerCancellationDuringRetrievalPropagatesWithoutRetry()
+    {
+        var retrieval = new Retrieval { HangFirstCall = true };
+        var model = new Model("""{"text":"Let me check the plan first."}""");
+        using var caller = new CancellationTokenSource();
+        var run = Service(model, retrieval).ExecuteAsync(Suggest(true), "caller", caller.Token);
+        for (var wait = 0; wait < 300 && retrieval.Calls == 0; wait++) await Task.Delay(10);
+        caller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        Assert.Equal(1, retrieval.Calls);
+        Assert.Empty(model.Retries);
     }
 
     [Fact]
@@ -131,8 +193,18 @@ public sealed class PracticeServiceTests
         Assert.EndsWith("</untrusted_json>", data);
     }
 
-    private static PracticeService Service(Model model, Retrieval? retrieval = null) =>
-        new(model, new FakePracticeSpeech(), retrieval ?? new(), new ServiceSettings());
+    private static PracticeService Service(Model model, Retrieval? retrieval = null, TimeSpan? attemptLimit = null,
+        ListLogger<PracticeService>? logger = null) =>
+        new(model, new FakePracticeSpeech(), retrieval ?? new(), new ServiceSettings(), logger)
+        { RetrievalAttemptLimit = attemptLimit ?? TimeSpan.FromSeconds(5) };
+    private sealed class ListLogger<T> : ILogger<T>
+    {
+        public List<string> Lines { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Lines.Add(logLevel + ": " + formatter(state, exception));
+    }
     private sealed class Model(params string[] results) : IPracticeModel
     {
         public List<bool> Retries { get; } = [];
@@ -149,13 +221,24 @@ public sealed class PracticeServiceTests
     {
         public Grounding Result { get; init; } = new("no_matches", []);
         public Exception? Failure { get; init; }
+        public int FailFirstCalls { get; init; }
+        public bool HangFirstCall { get; init; }
+        public bool HangAlways { get; init; }
         public string? Owner { get; private set; }
         public string? Query { get; private set; }
         public int Calls { get; private set; }
         public Task<Grounding> RetrieveAsync(string query, string owner, CancellationToken cancellation)
         {
-            Owner = owner; Query = query; Calls++;
-            return Failure is null ? Task.FromResult(Result) : Task.FromException<Grounding>(Failure);
+            Owner = owner; Query = query;
+            var call = ++Calls;
+            if (HangAlways || (HangFirstCall && call == 1)) return Hang(cancellation);
+            if (Failure is null && call > FailFirstCalls) return Task.FromResult(Result);
+            return Task.FromException<Grounding>(Failure ?? new ProviderException("grounding_unavailable", "private"));
+        }
+        private static async Task<Grounding> Hang(CancellationToken cancellation)
+        {
+            await Task.Delay(Timeout.Infinite, cancellation);
+            return new("no_matches", []);
         }
         public Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript, Action<ProviderException> error, CancellationToken cancellation) => throw new NotSupportedException();
         public IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding, CancellationToken cancellation) => throw new NotSupportedException();

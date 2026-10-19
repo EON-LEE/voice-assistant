@@ -21,6 +21,15 @@ for (const responseMode of ["balanced", "grounded", "conversation"] as const)
     test(`Accepts ${responseMode} at ${endSilenceMs}ms`, () => {
       assert.equal(validateOptions({ ...defaultOptions(), responseMode, endSilenceMs }).endSilenceMs, endSilenceMs);
     });
+test("replyKorean is an optional boolean that is sent only when it was set", () => {
+  assert.equal("replyKorean" in validateOptions(defaultOptions()), false);
+  assert.equal(validateOptions({ ...defaultOptions(), replyKorean: true }).replyKorean, true);
+  assert.equal(validateOptions({ ...defaultOptions(), replyKorean: false }).replyKorean, false);
+  for (const bad of ["true", 1, null])
+    assert.throws(() => validateOptions({ ...defaultOptions(), replyKorean: bad as unknown as boolean }), /replyKorean/);
+  const start = createStartMessage({ ...defaultOptions(), replyKorean: true });
+  assert.equal("options" in start && start.options.replyKorean, true);
+});
 test("Profile requires explicit confirmation and validation copies normalized values", () => {
   const input = { ...defaultOptions(), profile: { name: " Mina ", role: "Tester", project: "Fictional Lumen" }, phrases: [" Lumen "] };
   assert.throws(() => validateOptions(input), /Confirm/);

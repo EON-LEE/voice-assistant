@@ -59,6 +59,8 @@ public static class PracticeOutputs
                 var reply = English(value.GetProperty("text"), request.Operation == "turn" ? 30 : 25, 2, "text:english_style");
                 rule = "text:question";
                 if (request.Operation == "turn" && !reply.EndsWith('?')) throw PracticeException.Invalid();
+                rule = "text:repeat";
+                if (request.Operation == "turn" && RepeatsEarlierPartnerLine(reply, request.History)) throw PracticeException.Invalid();
                 break;
             case "feedback":
                 PracticeJson.Object(value, ["correctedEnglish", "easierEnglish", "feedbackKo", "points", "clarity"]);
@@ -75,7 +77,7 @@ public static class PracticeOutputs
                     rule = "points";
                     PracticeJson.Object(point, ["tag", "ko"]);
                     PracticeJson.Choice(point.GetProperty("tag"), "grammar", "vocabulary", "clarity", "length", "tone");
-                    Korean(point.GetProperty("ko"), 120);
+                    Korean(point.GetProperty("ko"), 120, rule: "points:ko");
                 }
                 rule = "clarity";
                 PracticeJson.Integer(value.GetProperty("clarity"), 1, 5);
@@ -121,6 +123,50 @@ public static class PracticeOutputs
         PracticeException Invalid(string reason) => PracticeOutputNormalization.Invalid("schema:" + rule + ":" + reason);
     }
 
+    // A partner turn that repeats an earlier partner line, or only its closing question, means the practice has stalled.
+    // A short acknowledgement alone ("Thanks.") is not enough to count as a repeat.
+    private static bool RepeatsEarlierPartnerLine(string reply, IReadOnlyList<PracticeHistory>? history)
+    {
+        if (history is null) return false;
+        var line = Comparable(reply);
+        var question = Comparable(ClosingQuestion(reply));
+        var longQuestion = question.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 3;
+        foreach (var earlier in history)
+        {
+            if (earlier.Role != "partner") continue;
+            if (line == Comparable(earlier.Text)) return true;
+            if (longQuestion && question == Comparable(ClosingQuestion(earlier.Text))) return true;
+        }
+        return false;
+    }
+
+    private static string ClosingQuestion(string text)
+    {
+        var end = text.LastIndexOf('?');
+        if (end < 0) return "";
+        var start = end == 0 ? 0 : text.LastIndexOfAny(['.', '!', '?'], end - 1) + 1;
+        return text[start..(end + 1)];
+    }
+
+    // Lowercase letters and digits with single spaces, so case, punctuation and spacing cannot hide a repeat.
+    private static string Comparable(string text)
+    {
+        var result = new System.Text.StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            if (char.IsAsciiLetterOrDigit(c)) result.Append(char.ToLowerInvariant(c));
+            else if (result.Length > 0 && result[^1] != ' ') result.Append(' ');
+        }
+        return result.ToString().Trim();
+    }
+
+    /// <summary>The checks every Korean translation must pass, for a plain-text translation outside the JSON contract.</summary>
+    internal static string TranslatedKorean(string text, int max = 400)
+    {
+        using var element = JsonDocument.Parse(JsonSerializer.Serialize(text));
+        return Korean(element.RootElement, max, translation: true);
+    }
+
     private static string Korean(JsonElement value, int max, bool translation = false, string rule = "korean")
     {
         var text = OutputText(value, max, rule);
@@ -157,7 +203,7 @@ public static class PracticeOutputs
         "suggested answer", "suggested response", "sample answer", "here is an answer", "here's an answer",
         "as an ai", "based on the information", "the user could", "you can say"
     }.Any(phrase => text.Contains(phrase, StringComparison.OrdinalIgnoreCase));
-    private static bool Hangul(char c) => c is >= '\uAC00' and <= '\uD7A3';
+    internal static bool Hangul(char c) => c is >= '\uAC00' and <= '\uD7A3';
     private static int SentenceCount(string text)
     {
         var count = 0;
