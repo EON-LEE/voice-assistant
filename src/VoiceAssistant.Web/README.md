@@ -15,13 +15,27 @@ Do not infer one page's defaults or persisted state from the other.
 
 `live.html` reproduces the desktop **Overlay v2** layout (550×860 dark panel, recognized English/Korean
 caption flow, one or two English suggestions with Korean meaning, grounding badge and sources) and its
-right-click menu (settings/materials, start, pause, regenerate, Korean retry, stop). It reuses the
+right-click menu (settings/materials, start, pause, regenerate, Korean retry, stop); start/stop and pause are also
+buttons in the header. It reuses the
 microphone, ticketed WebSocket and MSAL modules and matches the desktop behaviour:
 
 - Grounded mode by default and Azure semantic sentence segmentation. The 1100 ms `endSilenceMs` the page sends has no effect under semantic segmentation; it only satisfies the options validator.
 - `response.completed.suggestions` (1–2 replies) with distinct alternative; last completed suggestions stay visible
   while the next reply is prepared; ongoing speech never discards a started reply (`live-state.ts`).
 - **Quick row** under the status line: **문서검색 사용/미사용**, **자막** and **한국어 뜻**. Defaults are document search on (`grounded`), captions off and Korean meaning off, so a plain session shows the English answer only and makes no translation request. The choices persist in `live-coach-settings` next to the device, source and topic. **미사용** sends `responseMode:"conversation"` (no retrieval); **사용** returns to the last "on" mode chosen in Settings (`grounded` or `balanced`), and the Settings select and the quick buttons are one setting. Captions only show or hide the recognized conversation (and, with Korean on, its Korean meaning); they never reach the server.
+- **Header controls.** A **시작 / 종료** toggle and an **일시정지 / 다시 듣기** button sit in the status row. They run
+  the same actions as the menu's start, stop and pause items and follow the same states (pause only while connected).
+  시작 runs inside the click or key press, so a share picker can open; timers never open it. In LiveCoach.exe they are
+  buttons, so pressing them does not drag the window.
+- **Answer text size.** **A− / A+** next to the answer step the English answer and alternative through 85, 100, 115,
+  130 and 150 % of the default size (`answerSize` in `live-coach-settings`, applied as the `--answer-scale` CSS custom
+  property). 100 % sets no property, so the default looks exactly as before; long answers wrap and the answer area
+  scrolls instead of clipping.
+- **Keyboard and focus.** Shift+F10 or the menu key opens the menu on the focused panel or any of its buttons; ↑/↓,
+  Home and End move between items, Enter or Space chooses, Escape or Tab closes. Closing the menu or the settings
+  dialog (Escape, a choice or a click outside) returns focus to the element it was opened from, or to the panel when
+  that element is gone or turned off. Streaming replies and reconnects never move focus, so typing in Teams or
+  presenting is not interrupted.
 - A change made during a live session is sent as `session.update` when `session.ready` carries `sessionUpdate:true`. One update is in flight at a time and a later toggle is sent after the `session.updated` acknowledgement, so rapid toggling converges on the final state. It applies from the next reply, because a reply that already started keeps its settings. A server that does not announce `sessionUpdate` keeps the start-time document-search mode: the page shows "이 서버는 연결 중 문서검색 변경을 지원하지 않아요 · 다음 연결부터 적용돼요", and Stop then Start applies it. Korean meaning still works there because the page translates by itself.
 - Korean via `translationOnly` enrichment (only while 한국어 뜻 is on), chunked at 600 characters, retried 3 times on transient failure,
   with specific failure labels (rate limit, timeout, auth). Turning it off aborts pending translations and ignores late `response.korean` events.

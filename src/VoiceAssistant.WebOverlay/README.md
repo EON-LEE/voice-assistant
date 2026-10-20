@@ -4,8 +4,10 @@ A small WPF app that hosts the deployed web overlay (`/live.html`) in Microsoft 
 window background see-through. Screen, features and network connection are the web page's own; this host adds only:
 
 - Borderless, always-on-top, resizable window with a transparent background (`WebView2CompositionControl`).
+- Hidden from screen sharing and recordings by default, while still shown on your own display (see
+  [Screen sharing](#screen-sharing)).
 - Injected CSS for the hosted page only: transparent page background, panel alpha (92/80/65/50 %, default 80 %),
-  drag by the header, themed scrollbars, PiP item hidden.
+  drag by the header (its buttons still click), themed scrollbars, PiP item hidden.
 - Extra right-click items: **투명도 바꾸기**, **창 최소화**, **프로그램 종료**.
 - Microphone permission is granted only to the hosted page origin; other permission requests are denied. Screen sharing
   (`getDisplayMedia`) is not a WebView2 permission kind: the page's **탭/시스템 오디오** source opens the WebView2 share
@@ -18,7 +20,7 @@ window background see-through. Screen, features and network connection are the w
   Pop-up windows the page opens (Microsoft sign-in, the materials link) are WebView2's own windows and are not covered by
   these navigation and permission rules.
 - A fixed WebView2 profile in `%LOCALAPPDATA%\VoiceAssistant\WebOverlay\Profile` keeps the Microsoft sign-in
-  between runs. Window position, size and opacity are saved in `overlay-settings.json` next to it.
+  between runs. Window position, size, opacity and the screen-sharing choice are saved in `overlay-settings.json` next to it.
 
 Requires the Microsoft Edge WebView2 Runtime (installed with current Edge).
 
@@ -31,6 +33,20 @@ dotnet publish .\src\VoiceAssistant.WebOverlay -c Release -r win-x64 --self-cont
 `--url` accepts HTTPS, or HTTP on loopback only. `--fake-mic` is for local testing: it uses Chromium's synthetic
 microphone, enables DevTools and opens a loopback CDP port 9333 so
 `tests/VoiceAssistant.Web.E2E/verify-overlay-app.mjs` can drive the hosted page. Never use it in a real meeting.
+
+## Screen sharing
+
+When the window is created, the host calls `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`. Screen sharing (for
+example in Teams), meeting recordings and screenshots then show what is behind the overlay, while you still see it on
+your own monitor. Only the picture is affected: **Teams 앱 소리** and **PC 전체 소리** capture audio exactly as before.
+Windows 10 before version 2004 shows a black box in captures instead. If Windows refuses the call, the window simply
+stays visible to capture and everything else works. This is not a security boundary: a camera pointed at the screen
+still sees the overlay.
+
+The setting is `ExcludeFromCapture` in `%LOCALAPPDATA%\VoiceAssistant\WebOverlay\overlay-settings.json`, on unless it
+is `false`. To show the overlay in a share, for example in a demo, close LiveCoach, add `"ExcludeFromCapture": false`
+to that file and start LiveCoach again. Set it back to `true` (or remove it) to hide the overlay again. LiveCoach
+rewrites the file when it closes, so edit it only while LiveCoach is closed.
 
 ## Native Teams audio
 
