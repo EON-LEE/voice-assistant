@@ -25,6 +25,30 @@ test("Live: respondNow is parsed, validated and kept on the completed reply", ()
   assert.equal(state.display?.respondNow, true);
 });
 
+test("Live: a pushed Korean line parses strictly as either a meaning or a failure for one of the two reply lines", () => {
+  const line = (extra: object) => JSON.stringify({ type: "response.korean", turnId: "t", responseId: "r", index: 0, ...extra });
+  assert.deepEqual(parseEvent(line({ korean: "검토부터 하겠습니다." })),
+    { type: "response.korean", turnId: "t", responseId: "r", index: 0, korean: "검토부터 하겠습니다." });
+  assert.deepEqual(parseEvent(line({ index: 1, failed: true })),
+    { type: "response.korean", turnId: "t", responseId: "r", index: 1, failed: true });
+  assert.equal(parseEvent(line({ korean: "가".repeat(400) })).korean?.length, 400);
+  for (const bad of [{ korean: "가", index: 2 }, { korean: "가", index: -1 }, { korean: "가", index: "0" }, { korean: "가", index: 0.5 },
+    { korean: "가", index: null }, {}, { korean: "   " }, { korean: "가".repeat(401) }, { korean: 5 }, { korean: null },
+    { failed: false }, { failed: "yes" }, { failed: null }, { failed: true, korean: "가" }])
+    assert.throws(() => parseEvent(line(bad)), /./, JSON.stringify(bad));
+  assert.throws(() => parseEvent(JSON.stringify({ type: "response.korean", turnId: "t", index: 0, korean: "가" })), /responseId/);
+  assert.throws(() => parseEvent(JSON.stringify({ type: "response.korean", responseId: "r", index: 0, korean: "가" })), /turnId/);
+});
+
+test("Live: session.ready reports the Korean push capability only when the server set it to true", () => {
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1 })), { type: "session.ready" });
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1, replyKorean: true })),
+    { type: "session.ready", replyKorean: true });
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1, replyKorean: false })), { type: "session.ready" });
+  for (const bad of ["true", 1, null])
+    assert.throws(() => parseEvent(JSON.stringify({ type: "session.ready", replyKorean: bad })), /replyKorean/);
+});
+
 test("Live: continuous speech never discards a started reply and keeps last suggestions visible", () => {
   const state = new LiveState();
   state.apply(final("one", "Launch?"));

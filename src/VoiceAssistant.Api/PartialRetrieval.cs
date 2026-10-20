@@ -24,11 +24,14 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     private int starts;
     private bool closed;
 
-    private sealed class Candidate(string turnId, string text, string query, CancellationToken lifetime)
+    private sealed class Candidate(string turnId, string text, string query, string queryIdentity, bool immediate, CancellationToken lifetime)
     {
         internal string TurnId { get; } = turnId;
         internal string Text { get; } = text;
         internal string Query { get; } = query;
+        internal string QueryIdentity { get; } = queryIdentity;
+        // A final transcript is certain, so its retrieval skips the partial debounce and the per-turn start cap.
+        internal bool Immediate { get; } = immediate;
         internal CancellationTokenSource Cancellation { get; } = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         internal TaskCompletionSource<RetrievalOutcome> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Started { get; set; }
@@ -60,24 +63,39 @@ internal sealed class PartialRetrieval : IAsyncDisposable
 
     internal void Update(Transcript partial, IReadOnlyList<ConversationTurn>? history = null)
     {
-        var text = ResponseRouting.Normalize(partial.Text);
+        var text = ResponseRouting.Identity(partial.Text);
         var query = RetrievalQuery.Build(partial.Text, history);
+        var queryIdentity = ResponseRouting.Identity(query);
         lock (gate)
         {
             if (closed) return;
             if (turn != partial.TurnId)
             {
-                candidate?.Cancel();
+                Release();
                 turn = partial.TurnId;
                 starts = 0;
             }
-            if (candidate is { Cancelled: false } same && same.TurnId == partial.TurnId && same.Text == text && same.Query == query) return;
-            candidate?.Cancel();
-            candidate = null;
-            if (starts >= 3 || !ResponseRouting.Substantive(text) || ResponseRouting.Select(partial.Text, options, history) != "knowledge") return;
-            candidate = new(partial.TurnId, text, query, lifetime.Token);
+            // A final promotes an identical candidate that is still waiting out the partial debounce.
+            if (candidate is { Cancelled: false } same && same.TurnId == partial.TurnId && same.Text == text &&
+                same.QueryIdentity == queryIdentity && (!partial.Final || same.Started || same.Immediate)) return;
+            Release();
+            var normalized = ResponseRouting.Normalize(partial.Text);
+            var worthRetrieving = partial.Final
+                ? ResponseRouting.Substantive(normalized, final: true) && ReplyTrigger.Evaluate([partial.Text]) != ReplyDecision.Discard
+                : starts < 3 && ResponseRouting.Substantive(normalized);
+            if (!worthRetrieving || ResponseRouting.Select(partial.Text, options, history) != "knowledge") return;
+            candidate = new(partial.TurnId, text, query, queryIdentity, partial.Final, lifetime.Token);
             changed.Writer.TryWrite(true);
         }
+    }
+
+    // Newer speech replaces the candidate, but a retrieval a reply is already waiting for finishes on its own so the
+    // answer is not turned into an error. It is no longer reachable here, so nothing can reuse it afterwards.
+    // Caller holds the gate.
+    private void Release()
+    {
+        if (candidate is { Selected: false }) candidate.Cancel();
+        candidate = null;
     }
 
     internal Task<RetrievalOutcome>? Take(string turnId, string finalText, string route, IReadOnlyList<ConversationTurn>? history = null)
@@ -85,8 +103,8 @@ internal sealed class PartialRetrieval : IAsyncDisposable
         lock (gate)
         {
             if (!closed && route == "knowledge" && candidate is { Started: true, Cancelled: false } match &&
-                match.TurnId == turnId && match.Text == ResponseRouting.Normalize(finalText) &&
-                match.Query == RetrievalQuery.Build(finalText, history))
+                match.TurnId == turnId && match.Text == ResponseRouting.Identity(finalText) &&
+                match.QueryIdentity == ResponseRouting.Identity(RetrievalQuery.Build(finalText, history)))
             {
                 if (match.Selected && match.Result.Task.IsCompletedSuccessfully && match.Result.Task.Result.Failure is not null)
                 {
@@ -121,11 +139,11 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                 }
                 try
                 {
-                    await Task.Delay(250, current.Cancellation.Token);
+                    if (!current.Immediate) await Task.Delay(250, current.Cancellation.Token);
                     lock (gate)
                     {
-                        if (current != candidate || current.Cancelled || starts >= 3) continue;
-                        starts++;
+                        if (current != candidate || current.Cancelled || (!current.Immediate && starts >= 3)) continue;
+                        if (!current.Immediate) starts++;
                         current.Started = true;
                         current.Cancellation.CancelAfter(TimeSpan.FromSeconds(10));
                     }

@@ -10,6 +10,8 @@ export interface SessionOptions {
   semanticSegmentation?: boolean;
   /** Gather speech until this pause (ms) and suggest once per meaningful unit; 0 = every final utterance. */
   replySettleMs?: number;
+  /** Ask the server to push a Korean meaning for each reply line (`response.korean`) instead of a separate request per line. */
+  replyKorean?: boolean;
 }
 
 export function defaultOptions(): SessionOptions {
@@ -49,11 +51,14 @@ export function validateOptions(input: SessionOptions): SessionOptions {
   if (input.replySettleMs !== undefined && (!Number.isInteger(input.replySettleMs) ||
       input.replySettleMs !== 0 && (input.replySettleMs < 300 || input.replySettleMs > 5000)))
     throw new Error("replySettleMs must be 0 or an integer between 300 and 5000.");
+  if (input.replyKorean !== undefined && typeof input.replyKorean !== "boolean")
+    throw new Error("replyKorean must be a boolean.");
   return { responseMode: input.responseMode, profile, profileConfirmed: input.profileConfirmed,
     topic: field(input.topic, 300, "Meeting topic"), phrases, endSilenceMs: input.endSilenceMs,
     ...(input.transcribeOnly === undefined ? {} : { transcribeOnly: input.transcribeOnly }),
     ...(input.semanticSegmentation === undefined ? {} : { semanticSegmentation: input.semanticSegmentation }),
-    ...(input.replySettleMs === undefined ? {} : { replySettleMs: input.replySettleMs }) };
+    ...(input.replySettleMs === undefined ? {} : { replySettleMs: input.replySettleMs }),
+    ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }) };
 }
 
 export function parsePhrases(text: string): string[] {

@@ -282,6 +282,64 @@ public sealed class PracticeModelVariationTests
     }
 
     [Fact]
+    public async Task FeedbackWithAnEnglishOnlyPointKeepsTheOtherPointsWithoutRetry()
+    {
+        using var handler = new Responses("""
+            {"correctedEnglish":"I think the review is on Thursday.","easierEnglish":"The review is on Thursday.",
+            "feedbackKo":"날짜를 분명하게 말했어요.",
+            "points":[{"tag":"grammar","ko":"Add the word the before review."},
+                      {"tag":"vocabulary","ko":"\"review\"를 정확히 썼어요."}],"clarity":4}
+            """);
+        using var http = new HttpClient(handler);
+        var logger = new CapturingLogger<PracticeService>();
+        var result = (JsonElement)await Service(http, logger).ExecuteAsync(
+            new("feedback", Scenario: new("sales", "", 2), Question: "When is the review?", Answer: "I think review is Thursday."),
+            "caller", CancellationToken.None);
+        Assert.Equal(1, handler.Calls);
+        Assert.Empty(logger.Lines);
+        var point = Assert.Single(result.GetProperty("points").EnumerateArray());
+        Assert.Equal("vocabulary", point.GetProperty("tag").GetString());
+        using var body = JsonDocument.Parse(handler.Bodies[0]);
+        Assert.Contains("written in Hangul", body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task RepeatedPartnerLineIsRejectedAndTheRetryCarriesTheRepeatHint()
+    {
+        const string repeat = "Thanks for joining. What backend project did you work on most recently?";
+        using var handler = new Responses(JsonSerializer.Serialize(new { text = repeat }),
+            """{"text":"Nice. What was the hardest bug in that project?"}""");
+        using var http = new HttpClient(handler);
+        var logger = new CapturingLogger<PracticeService>();
+        var request = new PracticeRequest("turn", Scenario: new("interview", "", 2), MaxTurns: 6,
+            History: [new("partner", repeat), new("user", "I built a billing API.")]);
+        var result = JsonSerializer.Serialize(await Service(http, logger).ExecuteAsync(request, "caller", CancellationToken.None));
+        Assert.Contains("hardest bug", result);
+        Assert.Equal(2, handler.Calls);
+        var line = Assert.Single(logger.Lines);
+        Assert.Contains("schema:text:repeat", line);
+        Assert.Contains("attempt 1", line);
+        using var first = JsonDocument.Parse(handler.Bodies[0]);
+        using var retry = JsonDocument.Parse(handler.Bodies[1]);
+        Assert.DoesNotContain("Failed validation rule:", first.RootElement.GetProperty("messages")[0].GetProperty("content").GetString());
+        var policy = retry.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!;
+        Assert.Contains("Failed validation rule: schema:text:repeat.", policy);
+        Assert.Contains("ask about a different point", policy);
+    }
+
+    [Theory]
+    [InlineData("schema:text:repeat", "schema:text:repeat")]
+    [InlineData("schema:points:ko:no_hangul", "schema:points:ko:no_hangul")]
+    [InlineData("schema:points:ko:max_characters", "schema:points:ko:max_characters")]
+    [InlineData("schema:points:ko:private-secret", "schema:output")]
+    [InlineData("schema:text:repeat private-secret", "schema:output")]
+    public void RetryRuleAllowlistCoversTheNewCategoriesAndStillRejectsAnythingElse(string category, string expected)
+    {
+        Assert.Equal(expected, PracticeDiagnostics.SafeRule(category));
+        Assert.Equal(expected == "schema:text:repeat", PracticeDiagnostics.Hint(category).Length > 0);
+    }
+
+    [Fact]
     public void NormalizationPreservesInputSchemaAndRebuildsOriginalPronunciationCaseAndPunctuation()
     {
         var normalized = PracticeOutputs.Validate("""{"text":"  I’d  check\nfirst.  ","extra":"ignored"}""", new("suggest"));

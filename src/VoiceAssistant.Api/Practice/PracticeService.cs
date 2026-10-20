@@ -7,6 +7,31 @@ public sealed class PracticeService(IPracticeModel model, IPracticeSpeech speech
 {
     public Task<PracticeAudio> SpeakAsync(PracticeRequest request, CancellationToken cancellation) => speech.SpeakAsync(request, cancellation);
 
+    // A search call that hangs or fails once should not leave the answer ungrounded: each attempt is bounded and
+    // retried once. Worst case stays near the provider's own 10 s limit, inside the 20 s endpoint deadline.
+    internal TimeSpan RetrievalAttemptLimit { get; init; } = TimeSpan.FromSeconds(5);
+    private const int RetrievalAttempts = 2;
+
+    private async Task<Grounding> RetrieveAsync(string operation, string query, string owner, CancellationToken cancellation)
+    {
+        var log = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PracticeService>.Instance;
+        for (var attempt = 1; ; attempt++)
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            limit.CancelAfter(RetrievalAttemptLimit);
+            try { return await meeting.RetrieveAsync(query, owner, limit.Token); }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+            catch (Exception)
+            {
+                var last = attempt >= RetrievalAttempts;
+                PracticeDiagnostics.Failure(log, operation,
+                    PracticeOutputNormalization.Invalid(last ? "retrieval_unavailable" : "retrieval_retry"), attempt);
+                if (last) return new("unavailable", []);
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(200), cancellation);
+        }
+    }
+
     public async Task<object> ExecuteAsync(PracticeRequest request, string owner, CancellationToken cancellation)
     {
         var turn = request.History?.Count / 2 + 1 ?? 1;
@@ -17,14 +42,7 @@ public sealed class PracticeService(IPracticeModel model, IPracticeSpeech speech
         {
             var query = string.Join(' ', new[] { request.Topic, request.Scenario!.Kind, request.Scenario.Description,
                 request.Operation == "turn" ? request.History!.LastOrDefault()?.Text ?? "" : request.Question });
-            try { grounding = await meeting.RetrieveAsync(query, owner, cancellation); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception)
-            {
-                PracticeDiagnostics.Failure(logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PracticeService>.Instance,
-                    request.Operation, PracticeOutputNormalization.Invalid("retrieval_unavailable"), 0);
-                grounding = new("unavailable", []);
-            }
+            grounding = await RetrieveAsync(request.Operation, query, owner, cancellation);
             if (grounding.Status is not ("disabled" or "grounded" or "no_matches" or "unavailable"))
                 grounding = new("unavailable", []);
         }

@@ -6,7 +6,7 @@ The build contains two meeting surfaces with intentionally separate settings and
 
 | Page | Purpose | Defaults | Persistence | Korean output |
 | --- | --- | --- | --- | --- |
-| `/live.html` | Current compact overlay, including the `LiveCoach.exe` WebOverlay host | `grounded`, semantic segmentation, 1100ms silence fallback | WebOverlay/browser profile sign-in plus documented overlay preferences | `translationOnly`; Korean meaning without Hangul reading generation |
+| `/live.html` | Current compact overlay, including the `LiveCoach.exe` WebOverlay host | `grounded`, semantic segmentation (the 1100ms `endSilenceMs` it sends has no effect there) | WebOverlay/browser profile sign-in plus documented overlay preferences | Korean meaning without Hangul reading generation: reply lines pushed by the server (`replyKorean`), everything else and every fallback via `translationOnly` |
 | `/index.html` | Existing full browser meeting/practice UI | `balanced`, 500ms end silence | Meeting/profile/session settings stay in memory and clear on reload; auth client uses memory storage | Korean meaning plus approximate Hangul reading |
 
 Do not infer one page's defaults or persisted state from the other.
@@ -18,11 +18,16 @@ caption flow, one or two English suggestions with Korean meaning, grounding badg
 right-click menu (settings/materials, start, pause, regenerate, Korean retry, stop). It reuses the
 microphone, ticketed WebSocket and MSAL modules and matches the desktop behaviour:
 
-- Grounded mode by default, Azure semantic sentence segmentation, 1100 ms silence fallback.
+- Grounded mode by default and Azure semantic sentence segmentation. The 1100 ms `endSilenceMs` the page sends has no effect under semantic segmentation; it only satisfies the options validator.
 - `response.completed.suggestions` (1–2 replies) with distinct alternative; last completed suggestions stay visible
   while the next reply is prepared; ongoing speech never discards a started reply (`live-state.ts`).
 - Korean via `translationOnly` enrichment, chunked at 600 characters, retried 3 times on transient failure,
   with specific failure labels (rate limit, timeout, auth).
+- Reply Korean is pushed by the server: the page opts in with `replyKorean` and receives one `response.korean` event per
+  reply line (the first line can arrive before the English finishes), so it makes no per-line request. For each line it waits
+  up to 4 s for the push; when the line was reported `failed`, never arrives, or the server did not announce `replyKorean` in
+  `session.ready`, the page translates that line itself through the same `translationOnly` enrichment (a server that does not
+  announce it gets no waiting). The right-click **Korean retry** never waits. Questions heard in the transcript still use the HTTP enrichment.
 - Automatic reconnect (300 ms–3 s backoff, up to 20 attempts; reset after 30 s of stable connection) that keeps
   transcript and suggestions on screen. Sign-in, permission, time-limit and `session_superseded` failures stop instead.
   A BroadcastChannel stops older tabs when another tab starts live.
@@ -239,7 +244,7 @@ Select **Local fake backend · developer test only** and Start synthetic test. T
 
 The v1 WebSocket protocol is unchanged: first `session.start` with `protocolVersion:1` and `{encoding:"pcm_s16le",sampleRate:16000,channels:1}`, then binary PCM only after `session.ready`. Controls send `response.request`, `response.cancel`, `session.stop`. Stop attempts the last command before closing the socket; delivery cannot be guaranteed after a network failure.
 
-Server events: `session.ready`; `transcript.partial/final` (`turnId`, nonnegative `revision`, `text`); `response.started/cancelled` (`responseId`,`turnId`); incremental `response.delta` (`text`); authoritative `response.completed` (`text`,`sources:[{title,url,updatedAt}]`); `error` (`code`,`message`,`retryable`).
+Server events: `session.ready` (with `replyKorean:true` when the page opted in and the server accepts it); `transcript.partial/final` (`turnId`, nonnegative `revision`, `text`); `response.started/cancelled` (`responseId`,`turnId`); incremental `response.delta` (`text`); authoritative `response.completed` (`text`,`sources:[{title,url,updatedAt}]`); `response.korean` (`responseId`,`turnId`,`index` 0/1 and either `korean` or `failed:true`; only after the page opted in with `replyKorean`, which only the Live page does); `error` (`code`,`message`,`retryable`).
 
 Agreed additive completed `grounding` values `disabled`, `grounded`, `unavailable`, `no_matches` are displayed explicitly, including on pinned snapshots. Omission is accepted for older v1 services and displayed as not supplied. Sources are plain text, not auto-opened links.
 

@@ -5,6 +5,11 @@ public sealed record Source(string Title, string Url, DateTimeOffset? UpdatedAt)
 public sealed record Evidence(string Content, Source Source);
 public sealed record Grounding(string Status, IReadOnlyList<Evidence> Documents);
 public sealed record ConversationTurn(string Text, bool CurrentResponseTarget = false);
+/// <summary>What a reply translation may rely on: the meeting topic and the names to keep as written.</summary>
+public sealed record TranslationContext(string Topic, IReadOnlyList<string> Terms)
+{
+    public static TranslationContext Empty { get; } = new("", []);
+}
 public sealed record SpeechCancellation(
     Microsoft.CognitiveServices.Speech.CancellationReason Reason,
     Microsoft.CognitiveServices.Speech.CancellationErrorCode ErrorCode);
@@ -40,6 +45,9 @@ public interface IMeetingProvider
     /// <summary>Does the latest speech invite the listening participant to respond now? Used for emphasis only.</summary>
     Task<bool> ShouldRespondAsync(IReadOnlyList<ConversationTurn> conversation, CancellationToken cancellation) =>
         Task.FromResult(conversation.Count > 0 && ReplyTrigger.ContainsQuestion([conversation[^1].Text]));
+    /// <summary>Korean meaning of one English reply line, or null when this provider cannot translate. Plain text, no markup.</summary>
+    Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation) =>
+        Task.FromResult<string?>(null);
 }
 
 public sealed class FakeMeetingProvider : IMeetingProvider
@@ -67,8 +75,12 @@ public sealed class FakeMeetingProvider : IMeetingProvider
     {
         await foreach (var text in AnswerAsync(conversation, grounding, cancellation))
             yield return new(text);
+        yield return new("", null, PrimaryDone: true);
         yield return new("", "Let's agree on the goal and next step, then choose an owner.");
     }
+
+    public Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation) =>
+        Task.FromResult<string?>("[fake-ko] " + english);
 
     private sealed class FakeSpeechStream(Action<Transcript> transcript) : ISpeechStream
     {

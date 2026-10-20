@@ -44,21 +44,25 @@ async function fixture(page, native, expanded = true) {
   }, { english, korean, token, expanded });
 }
 
-async function meetingFixture(page) {
+async function meetingFixture(page, { replyKorean = false } = {}) {
   const commands = [];
+  const translations = [];
   await page.route('**/api/client-config', route => route.fulfill({
     json: { mode: 'Fake', webSocketPath: '/api/meeting' },
   }));
-  await page.route('**/api/assist/enrich', route => route.fulfill({
-    json: { korean: `뜻: ${route.request().postDataJSON().text}`, pronunciation: null },
-  }));
+  await page.route('**/api/assist/enrich', route => {
+    const { kind, text } = route.request().postDataJSON();
+    translations.push({ kind, text });
+    return route.fulfill({ json: { korean: `뜻: ${text}`, pronunciation: null } });
+  });
   let socket;
   await page.routeWebSocket('**/api/meeting*', ws => {
     socket = ws;
     ws.onMessage(message => {
       if (typeof message !== 'string') return;
       const command = JSON.parse(message); commands.push(command);
-      if (command.type === 'session.start') ws.send(JSON.stringify({ type: 'session.ready' }));
+      if (command.type === 'session.start')
+        ws.send(JSON.stringify(replyKorean ? { type: 'session.ready', protocolVersion: 1, replyKorean: true } : { type: 'session.ready' }));
     });
   });
   await page.goto('/live.html');
@@ -66,7 +70,7 @@ async function meetingFixture(page) {
   await page.locator('#live-panel').dispatchEvent('contextmenu', { clientX: 10, clientY: 10 });
   await page.locator('[data-action="start"]').click();
   await expect(page.locator('#capture-status')).toContainText('듣는 중');
-  return { commands, send: event => socket.send(JSON.stringify(event)) };
+  return { commands, translations, send: event => socket.send(JSON.stringify(event)) };
 }
 
 function reply(ws, id, question, text, grounding = 'disabled') {
@@ -97,6 +101,64 @@ test('reading view prioritizes one English answer and keeps optional content clo
     document.querySelector('#answer-korean').textContent = '의존성을 검토한 뒤 다음 일정을 확인하겠습니다.';
   });
   await page.screenshot({ path: testInfo.outputPath('focused-reading.png') });
+});
+
+const replyRequests = ws => ws.translations.filter(item => item.kind === 'reply');
+const pushKorean = (ws, id, index, extra) => ws.send({ type: 'response.korean', turnId: `t${id}`, responseId: `r${id}`, index, ...extra });
+
+test('the server pushes the Korean meaning of each reply line, so no per-line translation request is made', async ({ page }) => {
+  const ws = await meetingFixture(page, { replyKorean: true });
+  expect(ws.commands.find(command => command.type === 'session.start').options.replyKorean).toBe(true);
+  reply(ws, 1, 'What comes first?', 'We should check the plan.');
+  await expect(page.locator('#answer-korean')).toHaveText('한국어 번역 중…');
+  pushKorean(ws, 1, 0, { korean: '먼저 계획을 확인해야 합니다.' });
+  await expect(page.locator('#answer-korean')).toHaveText('먼저 계획을 확인해야 합니다.');
+  await expect(page.locator('#alternative-korean')).toHaveText('한국어 번역 중…');
+  pushKorean(ws, 1, 1, { korean: '함께 확인해 볼 수 있을까요?' });
+  await expect(page.locator('#alternative-korean')).toHaveText('함께 확인해 볼 수 있을까요?');
+  expect(replyRequests(ws)).toEqual([]);
+});
+
+test('Korean pushed before the reply completes is shown as soon as the reply completes', async ({ page }) => {
+  const ws = await meetingFixture(page, { replyKorean: true });
+  ws.send({ type: 'transcript.final', turnId: 't1', revision: 1, text: 'What comes first?' });
+  ws.send({ type: 'response.started', turnId: 't1', responseId: 'r1' });
+  ws.send({ type: 'response.delta', turnId: 't1', responseId: 'r1', text: 'We should check' });
+  pushKorean(ws, 1, 0, { korean: '먼저 계획을 확인해야 합니다.' });
+  ws.send({ type: 'response.completed', turnId: 't1', responseId: 'r1', text: 'We should check the plan.',
+    suggestions: ['We should check the plan.', 'Could we check that together?'], sources: [], grounding: 'disabled' });
+  await expect(page.locator('#answer-korean')).toHaveText('먼저 계획을 확인해야 합니다.');
+  pushKorean(ws, 1, 1, { korean: '함께 확인해 볼 수 있을까요?' });
+  await expect(page.locator('#alternative-korean')).toHaveText('함께 확인해 볼 수 있을까요?');
+  expect(replyRequests(ws)).toEqual([]);
+});
+
+test('a reply line the server could not translate is translated by the client, and only that line', async ({ page }) => {
+  const ws = await meetingFixture(page, { replyKorean: true });
+  reply(ws, 1, 'What comes first?', 'We should check the plan.');
+  pushKorean(ws, 1, 0, { korean: '먼저 계획을 확인해야 합니다.' });
+  pushKorean(ws, 1, 1, { failed: true });
+  await expect(page.locator('#answer-korean')).toHaveText('먼저 계획을 확인해야 합니다.');
+  await expect(page.locator('#alternative-korean')).toHaveText('뜻: Could we check that together?');
+  expect(replyRequests(ws)).toEqual([{ kind: 'reply', text: 'Could we check that together?' }]);
+});
+
+test('Korean that the server never pushes is translated by the client after a short wait', async ({ page }) => {
+  const ws = await meetingFixture(page, { replyKorean: true });
+  reply(ws, 1, 'What comes first?', 'We should check the plan.');
+  await expect(page.locator('#answer-korean')).toHaveText('한국어 번역 중…');
+  expect(replyRequests(ws)).toEqual([]);
+  await expect(page.locator('#answer-korean')).toHaveText('뜻: We should check the plan.', { timeout: 10_000 });
+  await expect(page.locator('#alternative-korean')).toHaveText('뜻: Could we check that together?');
+  expect(replyRequests(ws).map(item => item.text).sort()).toEqual(['Could we check that together?', 'We should check the plan.']);
+});
+
+test('a server that does not announce the push gets no waiting: the client translates the reply at once', async ({ page }) => {
+  const ws = await meetingFixture(page);
+  expect(ws.commands.find(command => command.type === 'session.start').options.replyKorean).toBe(true);
+  reply(ws, 1, 'What comes first?', 'We should check the plan.');
+  await expect(page.locator('#answer-korean')).toHaveText('뜻: We should check the plan.', { timeout: 2000 });
+  await expect(page.locator('#alternative-korean')).toHaveText('뜻: Could we check that together?', { timeout: 2000 });
 });
 
 test('drafts do not replace complete answers and hold keeps its exact question without pausing capture', async ({ page }) => {

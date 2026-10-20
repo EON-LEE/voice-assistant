@@ -76,6 +76,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         config.AuthorizationToken = authorization;
         config.SpeechRecognitionLanguage = "en-US";
         var session = options ?? SessionOptions.Legacy;
+        // Semantic segmentation picks the boundaries itself, so the silence timeout is not sent and EndSilenceMs has no effect there.
         if (session.SemanticSegmentation && !session.TranscribeOnly)
             config.SetProperty(PropertyId.Speech_SegmentationStrategy, "Semantic");
         else
@@ -203,12 +204,31 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         SessionOptions options, string responseRoute, [EnumeratorCancellation] CancellationToken cancellation)
     {
         var parser = new ReplySuggestions();
+        var primaryDoneSent = false;
         await foreach (var delta in StreamAnswerAsync(conversation, grounding, options, responseRoute, true, cancellation))
         {
             var primary = parser.Append(delta);
-            if (primary.Length > 0) yield return new(primary);
+            var primaryDone = parser.PrimaryDone && !primaryDoneSent;
+            primaryDoneSent |= primaryDone;
+            if (primary.Length > 0 || primaryDone) yield return new(primary, PrimaryDone: primaryDone);
         }
         yield return new("", parser.Alternative);
+    }
+
+    public async Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation)
+    {
+        var request = KoreanTranslation.Request(english, context);
+        // One retry: a rejected answer (not Korean, echoed English) is usually fixed by asking again.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var result = await openAI.GetChatClient(settings.ChatDeployment).CompleteChatAsync(
+                [new SystemChatMessage(KoreanTranslation.LiveInstructions), new UserChatMessage(request)],
+                CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 1024 }), cancellation);
+            if (result.Value.FinishReason == ChatFinishReason.Stop &&
+                KoreanTranslation.Clean(string.Concat(result.Value.Content.Select(part => part.Text))) is { } korean)
+                return korean;
+        }
+        return null;
     }
 
     private async IAsyncEnumerable<string> StreamAnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,

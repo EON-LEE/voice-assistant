@@ -11,6 +11,10 @@ export interface ServerEvent {
   suggestions?: string[];
   /** The latest speech invites the listener to respond now (emphasis only). */
   respondNow?: boolean;
+  /** `session.ready`: the server pushes a Korean meaning (`response.korean`) for every reply line. */
+  replyKorean?: boolean;
+  /** `response.korean`: the reply line (0 = primary, 1 = alternative) and its Korean meaning, or `failed` when it has none. */
+  index?: number; korean?: string; failed?: boolean;
 }
 export const startMessage = {
   type: "session.start", protocolVersion: 1,
@@ -29,7 +33,10 @@ export function parseEvent(data: unknown): ServerEvent {
     return value;
   };
   const type = text("type");
-  if (type === "session.ready") return { type };
+  if (type === "session.ready") {
+    if (e.replyKorean !== undefined && typeof e.replyKorean !== "boolean") throw new Error("Invalid replyKorean flag.");
+    return e.replyKorean === true ? { type, replyKorean: true } : { type };
+  }
   if (type === "error") {
     if (typeof e.retryable !== "boolean") throw new Error("Invalid retryable error flag.");
     return { type, code: text("code"), message: text("message"), retryable: e.retryable };
@@ -42,6 +49,16 @@ export function parseEvent(data: unknown): ServerEvent {
   const responseId = text("responseId");
   if (type === "response.started" || type === "response.cancelled") return { type, turnId, responseId };
   if (type === "response.delta") return { type, turnId, responseId, text: text("text") };
+  if (type === "response.korean") {
+    if (e.index !== 0 && e.index !== 1) throw new Error("Invalid reply line index.");
+    if (e.failed !== undefined) {
+      if (e.failed !== true || e.korean !== undefined) throw new Error("Invalid translation failure.");
+      return { type, turnId, responseId, index: e.index, failed: true };
+    }
+    const korean = text("korean");
+    if (!korean.trim() || korean.length > 400) throw new Error("Invalid korean in server event.");
+    return { type, turnId, responseId, index: e.index, korean };
+  }
   if (type === "response.completed") {
     if (!Array.isArray(e.sources) || e.sources.length > 20) throw new Error("Invalid response sources.");
     const sources: Source[] = e.sources.map((s: unknown) => {

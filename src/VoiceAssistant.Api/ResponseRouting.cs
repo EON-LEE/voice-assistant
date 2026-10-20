@@ -14,6 +14,9 @@ public static class ResponseRouting
     private static readonly Regex GeneralTechnical = new(
         @"^(?:(?:please )?(?:explain|define)|what is|what are|how does|how do) (?:a |an |the )?(?:api|apis|rest|rest api|jmap|json|http|https|websocket|websockets|oauth|oauth authentication|pkce|unit testing|dependency injection|caching|a cache|vector search|semantic search|encryption|asymmetric encryption|symmetric encryption|a database index|database indexing|a hash table|hash tables|binary search|recursion|streaming|speech recognition|rate limiting)(?: work| works| mean| in general| briefly| at a high level)?[?.!]*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex WordEdgePunctuation = new(
+        @"(?<=^|\s)[""“”‘(\[]+|[.,!?;:…""“”)\]]+(?=\s|$)",
+        RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
 
     public static string Select(string text, SessionOptions options, IReadOnlyList<ConversationTurn>? history = null)
     {
@@ -33,6 +36,14 @@ public static class ResponseRouting
     public static string Normalize(string text) =>
         string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
 
-    internal static bool Substantive(string text) =>
-        text.Length >= 20 && text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 4;
+    // Speech partials and finals differ in capitalization and edge punctuation, which never changes what retrieval finds.
+    // Digits, decimals, hyphens, signs and apostrophes inside words are kept so "10"/"100", "can"/"cannot" and "can't" stay distinct.
+    internal static string Identity(string text) =>
+        Normalize(WordEdgePunctuation.Replace(text.Replace('’', '\''), ""));
+
+    internal static bool Substantive(string text, bool final = false)
+    {
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        return final ? text.Length >= 8 && words >= 2 : text.Length >= 20 && words >= 4;
+    }
 }

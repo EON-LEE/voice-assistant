@@ -52,6 +52,13 @@ internal static class PracticeOutputNormalization
                 }
             }
         }
+        // One note that quotes only English cannot be read as Korean coaching. Losing it is better than failing the whole
+        // feedback after two attempts; a missing, non-string or oversized `ko` is still a validation failure.
+        if (operation == "feedback" && root["points"] is JsonArray points)
+            for (var i = points.Count - 1; i >= 0; i--)
+                if (points[i] is JsonObject point && point["ko"] is JsonValue ko &&
+                    ko.TryGetValue<string>(out var koText) && !koText.Any(PracticeOutputs.Hangul))
+                    points.RemoveAt(i);
         return root.ToJsonString();
     }
 
