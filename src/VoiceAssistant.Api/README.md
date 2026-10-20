@@ -272,17 +272,36 @@ For mixed introduction/history questions, confirmed name/role/project fields sup
 
 The answer prompt treats chronological STT segments as possible continuations of a preceding complete question. A short audience qualifier must not by itself trigger a clarification when a general benefits/mechanism question is already clear. This does not authorize invented private outcomes, customer commitments or personal history, nor revival of a superseded question. Four SDK prompt-contract cases cover: incremental-synchronization benefits + `For us.`, database-index mechanism + `For others.`, an unknown customer delivery commitment + `For us.`, and unknown personal history + `In your previous project.` These deterministic tests verify context ordering and policy transmission, not actual model answer quality. Routing and exact prefetch matching are unchanged; the three observed real comparison clips had zero prefetch hits, so no real prefetch latency benefit is claimed from them.
 
-The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:
+The `VoiceAssistant.Api` .NET `Meter` exposes these instruments. Durations are milliseconds and, per reply, are measured from that reply's own final STT callback unless stated otherwise:
 
-| Instrument | Meaning |
-| --- | --- |
-| `voiceassistant.stt_final_to_first_delta` | Final STT **callback** to first successfully sent response delta |
-| `voiceassistant.stt_final_to_completed` | Final STT callback to successfully sent model response completion |
-| `voiceassistant.retrieval_duration` | Retrieval call elapsed time, including disabled/no-match/error/cancellation paths |
+| Instrument | Type | Extra tags | Meaning |
+| --- | --- | --- | --- |
+| `voiceassistant.stt_final_to_first_delta` | histogram | reply tags | Final STT **callback** to first successfully sent model response delta |
+| `voiceassistant.stt_final_to_completed` | histogram | reply tags | Final STT callback to successfully sent model response completion |
+| `voiceassistant.reply.settle_wait` | histogram | reply tags without `grounding` | Final to the reply starting: the settle window plus any wait behind an active reply (manual: until the request) |
+| `voiceassistant.reply.retrieval_wait` | histogram | reply tags, `prefetched=true\|false` | Knowledge route only: how long the started reply still waited for its documents |
+| `voiceassistant.reply.first_token` | histogram | reply tags | Answer request sent to the first model text (not from the final) |
+| `voiceassistant.reply.final_to_primary_done` | histogram | reply tags | Final to the sent delta that carries `primaryDone` |
+| `voiceassistant.reply.classifier_wait` | histogram | reply tags, `outcome=respond\|listen\|timeout\|failed` | How long the finished answer waited for the turn classifier before `response.completed` |
+| `voiceassistant.reply.korean_ready` | histogram | reply tags, `line=primary\|alternative`, `outcome=translated\|failed` | Final to each sent `response.korean` |
+| `voiceassistant.retrieval_duration` | histogram | `provider`, `outcome` | Retrieval call elapsed time, including disabled/no-match/error/cancellation paths |
+| `voiceassistant.reply.prefetch` | counter | `result=hit\|miss` | Knowledge replies that reused a prefetched retrieval or started their own |
+| `voiceassistant.reply.grounding` | counter | reply tags | Completed replies (deterministic ones included) by final grounding status |
+| `voiceassistant.retrieval.failures` | counter | `class=transient\|permanent`, `kind`, `status_class=4xx\|5xx\|none\|...`, `retried=true\|false` | Retrievals that finally failed |
+| `voiceassistant.chat.throttled` | counter | `operation=answer\|classifier\|translation` | HTTP 429 answers to live chat calls |
+| `voiceassistant.chat.retries` | counter | `operation` | Live chat calls that were retried |
+| `voiceassistant.session.errors` | counter | `code` | `error` events sent to clients, by error code |
+| `voiceassistant.session.ended` | counter | `reason` | Ended sessions: `stopped`, `client_closed`, `superseded`, `overloaded`, `time_limit`, `aborted`, `ended`, `startup_timeout`, `transport_error`, `provider_unavailable` or the ending error code |
+| `voiceassistant.speech.restarts` | counter | `code` | In-process speech recognizer restarts after a retryable cancellation |
+| `voiceassistant.sessions.active` | observable gauge | none | Open meeting sessions |
 
-These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. A reply queued behind an active one is timed from its own final, so its wait in the queue is included and a later final that did not start a reply does not shorten it. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record `disabled`/`grounded`/`no_matches`/`unavailable` model paths; `no_matches` invokes the model using transcript-only context rather than returning a fixed clarification, and so does a failed search. The deterministic unavailable completion (used only when that model call also fails) remains excluded. Retrieval metrics still record all outcomes.
+Reply tags are `provider=Azure|Fake|TestDouble`, `trigger=automatic|manual`, `route=knowledge|transcript|profile`, `response_mode=balanced|grounded|conversation` and `grounding=grounded|no_matches|unavailable|disabled|pending`.
 
-Tags are bounded `provider=Azure|Fake|TestDouble`; response `trigger=automatic|manual`; retrieval `outcome=grounded|disabled|no_matches|unavailable|unknown|failed|cancelled`. No content, IDs, URLs or arbitrary error messages are metric tags. No exporter, persistence, or new WebSocket event is enabled; an approved operational `MeterListener`/OpenTelemetry configuration may subscribe. Never mix Fake/TestDouble observations with Azure measurements.
+These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. A reply queued behind an active one is timed from its own final, so its wait in the queue is included and a later final that did not start a reply does not shorten it. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record `disabled`/`grounded`/`no_matches`/`unavailable` model paths; `no_matches` invokes the model using transcript-only context rather than returning a fixed clarification, and so does a failed search. The deterministic unavailable completion (used only when that model call also fails) and deterministic profile introductions remain excluded from the model timings; `reply.grounding` still counts them. Retrieval metrics still record all outcomes.
+
+Every tag value comes from a fixed vocabulary; an unexpected value is reported as `other`. No content, user IDs, URLs or arbitrary error messages are metric tags. Never mix Fake/TestDouble observations with Azure measurements.
+
+**Export.** Metrics are exported to Application Insights only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is non-empty. The exporter (`Azure.Monitor.OpenTelemetry.Exporter`) uses a `MeterProvider` limited to this meter: no ASP.NET Core/HTTP request tracing, request telemetry or log export is enabled, because WebSocket URLs carry one-use tickets and console logs already reach Log Analytics. Ingestion is authorized with Entra because Application Insights local authentication is disabled: the user-assigned managed identity from `AZURE_CLIENT_ID` in Azure (when the managed identity endpoint is present), `DefaultAzureCredential` elsewhere. The service name (Application Insights cloud role) is `OTEL_SERVICE_NAME`, or `voice-web` when unset. Offline retry storage is disabled, so a failed export is dropped and nothing is written to disk. With the connection string empty or unset nothing is exported.
 
 Live recommendations and Korean enrichment share the chat deployment's quota.
 Ten requests/minute is insufficient for continuous speech plus1-2 reply translations;

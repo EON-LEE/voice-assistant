@@ -24,6 +24,7 @@ namespace VoiceAssistant.Api
             builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.None);
             var settings = ServiceSettings.Read(builder.Configuration, builder.Environment);
             builder.Services.AddSingleton(settings);
+            ApiTelemetry.Configure(builder.Services, builder.Configuration);
             builder.Services.TryAddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<TicketStore>();
             builder.Services.AddSingleton<SessionSlots>();

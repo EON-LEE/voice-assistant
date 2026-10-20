@@ -143,6 +143,12 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         }
     }
 
+    private static ProviderException Unavailable(RetrievalFailure failure)
+    {
+        MeetingMetrics.RetrievalFailed(failure);
+        return new("grounding_unavailable", "Grounding is unavailable. No document-based answer was generated.") { Retrieval = failure };
+    }
+
     private async Task<Grounding> SearchOnceAsync(SearchClient client, string query, string objectId, ReadOnlyMemory<float> embedding,
         CancellationToken cancellation)
     {
@@ -179,9 +185,6 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             throw ResultFailure("unscored", transient: false, "Semantic relevance scoring is unavailable.");
         return new(documents.Count == 0 ? "no_matches" : "grounded", documents);
     }
-
-    private static ProviderException Unavailable(RetrievalFailure failure) =>
-        new("grounding_unavailable", "Grounding is unavailable. No document-based answer was generated.") { Retrieval = failure };
 
     private static ProviderException ResultFailure(string kind, bool transient, string message) =>
         new("grounding_unavailable", message) { Retrieval = RetrievalFailure.Result(kind, transient) };

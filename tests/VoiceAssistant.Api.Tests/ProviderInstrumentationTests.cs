@@ -143,9 +143,12 @@ public sealed class ProviderInstrumentationTests
         Assert.Equal("voiceassistant.stt_final_to_completed", values[1].Name);
         foreach (var value in values)
         {
-            Assert.Equal(2, value.Tags.Length);
+            Assert.Equal(5, value.Tags.Length);
             Assert.Contains(new("provider", "TestDouble"), value.Tags);
             Assert.Contains(new("trigger", "manual"), value.Tags);
+            Assert.Contains(new("route", "knowledge"), value.Tags);
+            Assert.Contains(new("response_mode", "grounded"), value.Tags);
+            Assert.Contains(new("grounding", "pending"), value.Tags);
             Assert.DoesNotContain(value.Tags, tag => Equals(tag.Value, "secret-identity"));
         }
     }

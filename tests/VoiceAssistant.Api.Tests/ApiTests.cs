@@ -487,7 +487,9 @@ public sealed partial class ApiTests
                     ["Azure:SpeechResourceId"] = "/subscriptions/test",
                     ["Azure:OpenAIEndpoint"] = "https://example.openai.azure.com",
                     ["Azure:ChatDeployment"] = "chat",
-                    ["Security:AllowedOrigins:0"] = "https://meeting.example"
+                    ["Security:AllowedOrigins:0"] = "https://meeting.example",
+                    // Tests never export telemetry, even on a machine that has a connection string in its environment.
+                    [ApiTelemetry.ConnectionStringKey] = ""
                 });
                 if (configuration is not null) builder.Configuration.AddInMemoryCollection(configuration);
                 if (knowledge is not null) builder.Services.AddSingleton(knowledge);
