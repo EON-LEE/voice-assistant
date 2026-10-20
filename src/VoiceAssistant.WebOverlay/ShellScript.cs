@@ -6,7 +6,9 @@ namespace VoiceAssistant.WebOverlay;
 /// <summary>Script injected into the hosted page: see-through background, drag handle and host-only menu items.</summary>
 internal static class ShellScript
 {
-    public static string Build(string origin, double opacity) => """
+    /// <param name="hostAudioSources">Native audio sources the page may request ("teams", "system"); exposed to the page
+    /// as <c>window.__liveShell.hostAudio</c> so it can detect this host before sending host-audio messages.</param>
+    public static string Build(string origin, double opacity, IReadOnlyList<string> hostAudioSources) => """
         (() => {
           if (location.origin !== __ORIGIN__ || !window.chrome?.webview) return;
           const post = message => window.chrome.webview.postMessage(message);
@@ -19,7 +21,7 @@ internal static class ShellScript
             .live-status { cursor: move; user-select: none; }
             .live-answers, .live-history { scrollbar-width: thin; scrollbar-color: rgba(160, 176, 200, .45) transparent; }
             [data-action="float"] { display: none !important; }`;
-          window.__liveShell = { setOpacity: alpha => { style.textContent = css(alpha); } };
+          window.__liveShell = { setOpacity: alpha => { style.textContent = css(alpha); }, hostAudio: __HOST_AUDIO__ };
           window.__liveShell.setOpacity(__OPACITY__);
           const install = () => {
             document.head.append(style);
@@ -46,5 +48,6 @@ internal static class ShellScript
         })();
         """
         .Replace("__ORIGIN__", JsonSerializer.Serialize(origin))
-        .Replace("__OPACITY__", opacity.ToString(CultureInfo.InvariantCulture));
+        .Replace("__OPACITY__", opacity.ToString(CultureInfo.InvariantCulture))
+        .Replace("__HOST_AUDIO__", JsonSerializer.Serialize(new { version = 1, sources = hostAudioSources }));
 }

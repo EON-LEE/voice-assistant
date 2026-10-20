@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
+using VoiceAssistant.WebOverlay.HostAudio;
 
 namespace VoiceAssistant.WebOverlay;
 
@@ -20,6 +21,8 @@ public partial class MainWindow : Window
     private readonly string? fakeAudioFile;
     private readonly string dataFolder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VoiceAssistant", "WebOverlay");
+    private readonly HostAudioService hostAudio = new(new WindowsHostAudioPlatform());
+    private HostAudioBridge? hostAudioBridge;
     private ShellSettings settings;
 
     public MainWindow()
@@ -46,6 +49,7 @@ public partial class MainWindow : Window
         else { Left = SystemParameters.WorkArea.Right - Width - 24; Top = SystemParameters.WorkArea.Top + 24; }
         Loaded += async (_, _) => await InitializeWebAsync();
         Closing += (_, _) => SaveSettings();
+        Closed += (_, _) => hostAudio.Dispose();
     }
 
     /// <summary>Only HTTPS pages, or plain HTTP on loopback for local development, may be hosted.</summary>
@@ -78,10 +82,19 @@ public partial class MainWindow : Window
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.PermissionRequested += OnPermissionRequested;
             core.WebMessageReceived += OnWebMessage;
+            // Native Teams/system audio for the page; frames go back only while the trusted page is loaded.
+            var bridge = hostAudioBridge = new HostAudioBridge(hostAudio, core.PostWebMessageAsString,
+                () => PageOrigin.Matches(core.Source, pageUrl), action => Dispatcher.BeginInvoke(action));
             core.NavigationStarting += (_, e) =>
             {
                 // The overlay window stays on the meeting page; other sites (sign-in) open in their own popup.
                 if (!SameOrigin(new Uri(e.Uri))) { e.Cancel = true; OpenExternal(e.Uri); }
+                else bridge.PageLeaving();
+            };
+            core.ProcessFailed += (_, e) =>
+            {
+                if (e.ProcessFailedKind is CoreWebView2ProcessFailedKind.RenderProcessExited or CoreWebView2ProcessFailedKind.BrowserProcessExited)
+                    bridge.PageLeaving();
             };
             core.NavigationCompleted += (_, e) =>
             {
@@ -89,7 +102,8 @@ public partial class MainWindow : Window
                 if (!e.IsSuccess) ShowLoadError(e.WebErrorStatus.ToString());
             };
             await core.AddScriptToExecuteOnDocumentCreatedAsync(ShellScript.Build(pageUrl.GetLeftPart(UriPartial.Authority),
-                Opacities[Math.Clamp(settings.OpacityIndex, 0, Opacities.Length - 1)]));
+                Opacities[Math.Clamp(settings.OpacityIndex, 0, Opacities.Length - 1)],
+                ProcessLoopbackCapture.IsSupported(Environment.OSVersion.Version) ? ["teams", "system"] : ["system"]));
             core.Navigate(pageUrl.AbsoluteUri);
         }
         catch (WebView2RuntimeNotFoundException)
@@ -99,8 +113,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { ShowLoadError(ex.Message); }
     }
 
-    private bool SameOrigin(Uri uri) =>
-        Uri.Compare(uri, pageUrl, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0;
+    private bool SameOrigin(Uri uri) => PageOrigin.Matches(uri, pageUrl);
 
     private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
     {
@@ -113,7 +126,13 @@ public partial class MainWindow : Window
     {
         if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var source) || !SameOrigin(source)) return;
         string message;
-        try { message = e.TryGetWebMessageAsString(); } catch (ArgumentException) { return; }
+        // Plain verbs arrive as strings; host-audio commands as JSON text, or as an object if the page posts one.
+        try { message = e.TryGetWebMessageAsString(); } catch (ArgumentException) { message = e.WebMessageAsJson; }
+        if (HostAudioProtocol.IsJsonObject(message))
+        {
+            hostAudioBridge?.HandlePageMessage(message);
+            return;
+        }
         switch (message)
         {
             case "drag":
