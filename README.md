@@ -67,8 +67,8 @@ prepared keeps its settings. With an older server the page says that document
 search changes apply from the next connection, and Stop then Start applies them.
 Korean meaning and captions work with any server.
 
-The deployed application's URL is environment-specific and is not recorded in this
-repository. Operators find it with `az containerapp show --name <app> --resource-group <group>
+The deployed application's URL is environment-specific. Operators find it with
+`az containerapp show --name <app> --resource-group <group>
 --query properties.configuration.ingress.fqdn`, using the names in their git-ignored
 `infra/release.local.json`.
 

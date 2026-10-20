@@ -15,9 +15,9 @@ The message names the problem; the fix depends on where the page runs.
 After any fix press **다시 공유** (re-share) or **라이브 시작**. The input meter (입력 음량) in the status row must move
 when someone speaks; turn on **자막** (captions) to see what is recognized.
 
-On `/live.html` (browser and LiveCoach.exe) the source is chosen with right-click → settings → **오디오 소스**:
-**탭/시스템 오디오 (Teams 등)** for meetings, **마이크 (대면 회의실 등)** for in-person. Then right-click →
-**라이브 시작**. On `/index.html` use **Live → Audio source**.
+On `/live.html` the source is chosen with right-click → **오디오 소스 설정** → **오디오 소스**: in LiveCoach.exe
+**Teams 앱 소리** (the default there) or **PC 전체 소리**, in any host **탭/시스템 오디오 (Teams 등)** (share picker) or
+**마이크 (대면 회의실 등)** for in-person. Then right-click → **라이브 시작**. On `/index.html` use **Live → Audio source**.
 
 ## Browser (Edge or Chrome)
 
@@ -36,15 +36,25 @@ The page must be opened over HTTPS (or localhost) in a current Edge or Chrome. "
 
 ## Inside LiveCoach.exe
 
-The WebView2 share picker offers screens and windows, **no browser tabs**. Choose **Entire screen** with
-**Share system audio**; a window share has no audio. If the app says it cannot start screen-audio sharing, update the
-Microsoft Edge WebView2 Runtime or open `/live.html` in Edge or Chrome instead.
+**Teams 앱 소리 (recommended for the Teams desktop app).** LiveCoach captures only the Teams desktop app's audio itself,
+on whichever device Teams plays to (headset included), with no share picker. It needs **Windows 11 or Windows 10 build
+20348+**; otherwise the page says 'Teams 앱 소리' is unavailable and ends the session. The status line names the source.
 
-## Coming: native Teams capture
+- "Teams가 실행 중이 아닙니다": start Teams; capture attaches by itself (checked every 2 s).
+- "Teams에서 소리가 감지되지만 캡처가 비어 있습니다" (`teams-silent`): Teams plays sound but the capture is silent, a
+  known limitation of the new Teams app. Press **PC 전체 소리로 전환**; the meeting session continues.
+- "Teams 앱 소리가 들어오지 않습니다 (15초)" while you hear the meeting: switch to **PC 전체 소리**.
+- Check before a meeting with Teams **Settings → Devices → Make a test call**: the input meter must move.
 
-A native Teams audio capture path for LiveCoach.exe is planned but **not released**. Until it ships, use Entire screen
-with system audio in LiveCoach.exe, or a Teams web tab in a browser. This section will describe its checks when it
-ships.
+**PC 전체 소리.** Loopback of the Windows **default output device**: every app on it, nothing on other devices (see
+the silent-share section below).
+
+**탭/시스템 오디오 (share picker).** The WebView2 picker offers screens and windows, **no browser tabs**. Choose
+**Entire screen** with **Share system audio**; a window share has no audio. If the app says it cannot start
+screen-audio sharing, update the Microsoft Edge WebView2 Runtime or open `/live.html` in Edge or Chrome instead.
+
+In a browser, Teams 앱 소리 and PC 전체 소리 are not offered ("LiveCoach 앱에서만 쓸 수 있습니다"); use a Teams web tab or the
+share picker.
 
 ## Microphone mode (in-person)
 
@@ -59,7 +69,8 @@ Choose **마이크 (대면 회의실 등)** as the audio source and the device u
 ## Silent share: muted or wrong default output device
 
 "소리가 들어오지 않습니다 (15초)" with system audio almost always means Teams plays to a device that is not the Windows
-default output, so the loopback is silent.
+default output, so the loopback is silent. In LiveCoach.exe, **Teams 앱 소리** avoids this because it follows Teams'
+own device. Otherwise:
 
 1. Teams **Settings → Devices → Speaker**: choose the device you listen on.
 2. Windows **Settings → System → Sound → Output**: make the same device the default (or set the Teams speaker to the
