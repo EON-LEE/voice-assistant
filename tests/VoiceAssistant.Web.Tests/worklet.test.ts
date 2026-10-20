@@ -28,19 +28,27 @@ function render(instance: Processor, blocks: number, channels = 1, value = .5): 
   const input = Array.from({ length: channels }, () => new Float32Array(128).fill(value));
   for (let i = 0; i < blocks; i++) instance.process([input]);
 }
-test("Worklet exhausts bounded credits once then fails explicitly without further messages", () => {
+test("A stall longer than the pool drops audio, reports the lost frames once a buffer returns, then continues", () => {
   const instance = processor();
   render(instance, 2000);
-  assert.equal(instance.port.sent.filter(m => m.type === "audio").length, audioBufferCount);
-  assert.equal(instance.port.sent.filter(m => m.type === "error").length, 1);
-  assert.match(instance.port.sent.at(-1)!.message!, /cannot keep up/);
+  const sent = instance.port.sent.filter(m => m.type === "audio");
+  assert.equal(sent.length, audioBufferCount);
+  assert.equal(instance.port.sent.filter(m => m.type === "error" || m.type === "stall").length, 0, "nothing is reported while every buffer is out");
+  instance.port.onmessage!({ data: { type: "buffer", buffer: sent[0]!.buffer } });
+  const stall = instance.port.sent.filter(m => m.type === "stall");
+  assert.equal(stall.length, 1);
+  // 2000 blocks of 128 samples at 48 kHz are 5.33 s = 266.7 PCM frames; the pool held 150 of them.
+  const frames = (stall[0] as { frames?: number }).frames!;
+  assert.ok(frames >= 115 && frames <= 118, String(frames));
+  render(instance, 8);
+  assert.equal(instance.port.sent.filter(m => m.type === "audio").length, audioBufferCount + 1, "capture resumes with the returned buffer");
 });
 test("A 300 ms main-thread stall retains every PCM frame and resumes without loss", () => {
   const instance = processor();
   render(instance, 113); // 301.3 ms at 48 kHz: longer than the old eight-frame/160 ms pool.
   const initial = instance.port.sent.filter(m => m.type === "audio");
   assert.ok(initial.length >= 14 && initial.length <= 16);
-  assert.equal(instance.port.sent.filter(m => m.type === "error").length, 0);
+  assert.equal(instance.port.sent.filter(m => m.type === "stall").length, 0);
   for (const message of initial) {
     assert.equal(message.buffer!.byteLength, audioFrameBytes);
     instance.port.onmessage!({ data: { type: "buffer", buffer: message.buffer } });
@@ -48,13 +56,21 @@ test("A 300 ms main-thread stall retains every PCM frame and resumes without los
   const before = initial.length;
   render(instance, 113);
   assert.ok(instance.port.sent.filter(m => m.type === "audio").length >= before + 14);
-  assert.equal(instance.port.sent.filter(m => m.type === "error").length, 0);
+  assert.equal(instance.port.sent.filter(m => m.type === "stall").length, 0);
 });
-test("Excess credits never grow the native pool beyond one second", () => {
+test("A 2.9 s main-thread stall still loses nothing with the three-second pool", () => {
+  const instance = processor();
+  render(instance, 1087); // 2.899 s at 48 kHz = 144.9 frames
+  assert.equal(instance.port.sent.filter(m => m.type === "audio").length, 144);
+  for (const message of instance.port.sent.filter(m => m.type === "audio"))
+    instance.port.onmessage!({ data: { type: "buffer", buffer: message.buffer } });
+  assert.equal(instance.port.sent.filter(m => m.type === "stall").length, 0);
+});
+test("Excess credits never grow the native pool beyond three seconds", () => {
+  assert.equal(audioBufferCount * audioFrameBytes, 3 * 32000);
   const instance = processor(audioBufferCount + 10);
   render(instance, 2000);
   assert.equal(instance.port.sent.filter(m => m.type === "audio").length, audioBufferCount);
-  assert.equal(instance.port.sent.filter(m => m.type === "error").length, 1);
 });
 for (const channels of [1, 2, 6, 32]) {
   test(`Native worklet algorithm emits PCM16LE with ${channels} input channels`, () => {

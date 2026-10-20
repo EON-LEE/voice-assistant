@@ -1,5 +1,6 @@
 import { PublicClientApplication, InteractionRequiredAuthError, type AccountInfo, type Configuration } from "@azure/msal-browser";
 import { isLoopback } from "./transport.js";
+import { CodedError } from "./errors.js";
 
 export interface ClientConfig { clientId: string; authority: string; scope: string; mode: "Fake" | "Azure"; webSocketPath: "/api/meeting"; login?: "entra" | "demo" }
 type AuthClient = Pick<PublicClientApplication, "initialize" | "loginPopup" | "acquireTokenSilent">;
@@ -26,6 +27,8 @@ export class BrowserAuth {
   }, private readonly options: { persistent?: boolean } = {}) {}
   get signedIn(): boolean { return !!this.account || !!this.demoSession() || this.config?.mode === "Fake"; }
   get isFake(): boolean { return this.config?.mode === "Fake"; }
+  /** The public service configuration has loaded, so the sign-in state is known. */
+  get configured(): boolean { return !!this.config; }
   get isDemo(): boolean { return this.config?.login === "demo" && this.config.mode === "Azure"; }
   private get storage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined {
     return this.deps.storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
@@ -42,13 +45,13 @@ export class BrowserAuth {
   }
   private async loadConfig(): Promise<ClientConfig> {
     const response = await this.deps.fetch("/api/client-config", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000) });
-    if (!response.ok) throw new Error("Server authentication configuration unavailable. Live mode is disabled.");
+    if (!response.ok) throw new CodedError("config_unavailable", "Server authentication configuration unavailable. Live mode is disabled.");
     const config = await response.json() as ClientConfig;
-    if (!["Fake", "Azure"].includes(config.mode) || config.webSocketPath !== "/api/meeting") throw new Error("Invalid server authentication configuration.");
+    if (!["Fake", "Azure"].includes(config.mode) || config.webSocketPath !== "/api/meeting") throw new CodedError("config_invalid", "Invalid server authentication configuration.");
     if (config.mode === "Fake") {
-      if (!isLoopback(this.deps.location.hostname)) throw new Error("Fake backend mode is only allowed on localhost.");
+      if (!isLoopback(this.deps.location.hostname)) throw new CodedError("config_invalid", "Fake backend mode is only allowed on localhost.");
     } else {
-      if (this.deps.location.protocol !== "https:") throw new Error("Production requires HTTPS and WSS.");
+      if (this.deps.location.protocol !== "https:") throw new CodedError("config_invalid", "Production requires HTTPS and WSS.");
       if (config.login === "demo") {
         // Shared demo account: the signed token is kept in this browser so one sign-in lasts until it expires.
         try {
@@ -61,7 +64,7 @@ export class BrowserAuth {
         return config;
       }
       const authority = new URL(config.authority);
-      if (authority.protocol !== "https:" || !/^[\da-f-]{36}$/i.test(config.clientId) || !config.scope) throw new Error("Invalid Entra configuration.");
+      if (authority.protocol !== "https:" || !/^[\da-f-]{36}$/i.test(config.clientId) || !config.scope) throw new CodedError("config_invalid", "Invalid Entra configuration.");
       // Persistent pages keep the MSAL cache in this browser profile so one sign-in survives reloads.
       const storage = this.options.persistent ? "localStorage" : "memoryStorage";
       this.app = this.deps.createClient({
@@ -121,14 +124,14 @@ export class BrowserAuth {
   private async token(): Promise<string> {
     if (this.isDemo) {
       const session = this.demoSession();
-      if (!session) throw new Error("Sign in before accessing meeting materials or sharing audio.");
+      if (!session) throw new CodedError("signin_required", "Sign in before accessing meeting materials or sharing audio.");
       return session.token;
     }
-    if (!this.account || !this.app || !this.config) throw new Error("Sign in before accessing meeting materials or sharing audio.");
+    if (!this.account || !this.app || !this.config) throw new CodedError("signin_required", "Sign in before accessing meeting materials or sharing audio.");
     try {
       return (await this.app.acquireTokenSilent({ scopes: [this.config.scope], account: this.account })).accessToken;
     } catch (error) {
-      if (error instanceof InteractionRequiredAuthError) { this.account = undefined; throw new Error("Sign-in expired. Sign in again to continue."); }
+      if (error instanceof InteractionRequiredAuthError) { this.account = undefined; throw new CodedError("signin_required", "Sign-in expired. Sign in again to continue."); }
       throw error;
     }
   }
@@ -158,18 +161,18 @@ export class BrowserAuth {
     const url = new URL("/api/meeting", this.deps.location.origin);
     url.protocol = this.deps.location.protocol === "https:" ? "wss:" : "ws:";
     if (config.mode === "Fake") {
-      if (!isLoopback(this.deps.location.hostname)) throw new Error("Fake service must be loopback-only.");
+      if (!isLoopback(this.deps.location.hostname)) throw new CodedError("config_invalid", "Fake service must be loopback-only.");
       return url;
     }
-    if (synthetic) throw new Error("Synthetic mode requires an explicit local Fake backend, never Azure.");
+    if (synthetic) throw new CodedError("config_invalid", "Synthetic mode requires an explicit local Fake backend, never Azure.");
     let accessToken: string;
     if (this.isDemo) accessToken = await this.token();
     else {
-      if (!this.account || !this.app) throw new Error("Sign in before sharing audio.");
+      if (!this.account || !this.app) throw new CodedError("signin_required", "Sign in before sharing audio.");
       try {
         accessToken = (await this.app.acquireTokenSilent({ scopes: [config.scope], account: this.account })).accessToken;
       } catch (error) {
-        if (error instanceof InteractionRequiredAuthError) { this.account = undefined; throw new Error("Sign-in expired. Stop and sign in again before sharing."); }
+        if (error instanceof InteractionRequiredAuthError) { this.account = undefined; throw new CodedError("signin_required", "Sign-in expired. Stop and sign in again before sharing."); }
         throw error;
       }
     }
@@ -180,13 +183,14 @@ export class BrowserAuth {
     accessToken = "";
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) this.rejected();
-      throw new Error(`Meeting authorization failed (${response.status}). Sign in again.`);
+      throw new CodedError(response.status === 401 || response.status === 403 ? "signin_required" : "ticket_unavailable",
+        `Meeting authorization failed (${response.status}). Sign in again.`);
     }
     const body = await response.json() as { ticket: unknown; expiresAt: unknown };
     const expiry = typeof body.expiresAt === "string" ? Date.parse(body.expiresAt) : NaN;
     if (typeof body.ticket !== "string" || !body.ticket || body.ticket.length > 4096 ||
         !Number.isFinite(expiry) || expiry <= Date.now() || expiry > Date.now() + 60000)
-      throw new Error("Server returned an invalid or expired meeting ticket.");
+      throw new CodedError("ticket_invalid", "Server returned an invalid or expired meeting ticket.");
     url.searchParams.set("ticket", body.ticket);
     return url;
   }
