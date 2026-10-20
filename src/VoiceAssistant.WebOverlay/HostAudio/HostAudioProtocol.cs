@@ -19,9 +19,10 @@ internal sealed record HostAudioAck(long Seq, string? Id) : HostAudioCommand(Id)
 /// JSON web messages between the hosted live page and LiveCoach.exe.
 /// Page to host: <c>host-audio.start {source: "teams"|"system", id}</c>, <c>host-audio.stop {id}</c> and
 /// <c>host-audio.ack {seq, id}</c> (the page acknowledges frames it handled; see <see cref="HostAudioOutbox"/>).
-/// Host to page: <c>host-audio.status {id, source, state, detail}</c> and <c>host-audio.frame {seq, pcm}</c>, where
+/// Host to page: <c>host-audio.status {id, source, state, detail, code?}</c> and <c>host-audio.frame {seq, pcm}</c>, where
 /// <c>pcm</c> is base64 of 1 to 5 consecutive 20 ms frames (640 bytes each, 16 kHz mono PCM16LE) and <c>seq</c> numbers
-/// the first of them. A capture starts at seq 0; a gap in seq means the host dropped frames.
+/// the first of them. A capture starts at seq 0; a gap in seq means the host dropped frames. <c>detail</c> is English
+/// for people; <c>code</c>, when present, is what the page acts on.
 /// </summary>
 internal static class HostAudioProtocol
 {
@@ -83,7 +84,9 @@ internal static class HostAudioProtocol
 
     public static string Wire(HostAudioKind kind) => kind == HostAudioKind.Teams ? "teams" : "system";
 
-    public static string Status(HostAudioState state, string detail, HostAudioKind kind, string? id)
+    /// <param name="code">Why an error happened, for the page to act on without reading <paramref name="detail"/>
+    /// (for example <see cref="HostAudioService.SilentTeamsCode"/>); omitted when null.</param>
+    public static string Status(HostAudioState state, string detail, HostAudioKind kind, string? id, string? code = null)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -94,6 +97,7 @@ internal static class HostAudioProtocol
             writer.WriteString("source", Wire(kind));
             writer.WriteString("state", Wire(state));
             writer.WriteString("detail", detail);
+            if (code is not null) writer.WriteString("code", code);
             writer.WriteEndObject();
         }
         return Encoding.UTF8.GetString(stream.ToArray());

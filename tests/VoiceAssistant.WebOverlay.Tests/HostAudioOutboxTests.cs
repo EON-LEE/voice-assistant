@@ -4,7 +4,8 @@ using VoiceAssistant.WebOverlay.HostAudio;
 namespace VoiceAssistant.WebOverlay.Tests;
 
 /// <summary>A host-to-page message as the page would read it.</summary>
-internal sealed record PageMessage(string Type, long Seq, byte[] Pcm, string? State, string? Id, string? Detail, string? Source = null)
+internal sealed record PageMessage(string Type, long Seq, byte[] Pcm, string? State, string? Id, string? Detail, string? Source = null,
+    string? Code = null)
 {
     public int Frames => Pcm.Length / 640;
 
@@ -16,7 +17,8 @@ internal sealed record PageMessage(string Type, long Seq, byte[] Pcm, string? St
         return type == "host-audio.frame"
             ? new(type, root.GetProperty("seq").GetInt64(), Convert.FromBase64String(root.GetProperty("pcm").GetString()!), null, null, null)
             : new(type, -1, [], root.GetProperty("state").GetString(), root.TryGetProperty("id", out var id) ? id.GetString() : null,
-                root.GetProperty("detail").GetString(), root.GetProperty("source").GetString());
+                root.GetProperty("detail").GetString(), root.GetProperty("source").GetString(),
+                root.TryGetProperty("code", out var code) ? code.GetString() : null);
     }
 
     public static List<PageMessage> TakeAll(HostAudioOutbox outbox)

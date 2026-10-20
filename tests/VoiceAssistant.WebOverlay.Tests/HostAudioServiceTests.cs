@@ -155,10 +155,11 @@ public sealed class HostAudioServiceTests
         service.Start(HostAudioKind.Teams, "a");
         Assert.Equal("capturing", (await page.NextStatusAsync()).State);
         var warning = await page.NextStatusAsync();
-        Assert.Equal(("error", HostAudioService.SilentTeamsCapture), (warning.State, warning.Detail));
+        Assert.Equal(("error", HostAudioService.SilentTeamsCapture, "teams-silent"), (warning.State, warning.Detail, warning.Code));
         Assert.Single(platform.Started);
         platform.Captures[0].Emit(Enumerable.Repeat((byte)1, 640 * 3).ToArray(), Pcm16k);
-        Assert.Equal("capturing", (await page.NextStatusAsync()).State);
+        var recovered = await page.NextStatusAsync();
+        Assert.Equal(("capturing", null), (recovered.State, recovered.Code));
     }
 
     [Fact]

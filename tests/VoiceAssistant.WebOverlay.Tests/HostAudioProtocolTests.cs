@@ -81,7 +81,10 @@ public sealed class HostAudioProtocolTests
         Assert.Equal(detail, root.GetProperty("detail").GetString());
         using var anonymous = JsonDocument.Parse(HostAudioProtocol.Status(HostAudioState.Stopped, "", HostAudioKind.System, null));
         Assert.False(anonymous.RootElement.TryGetProperty("id", out _));
+        Assert.False(anonymous.RootElement.TryGetProperty("code", out _));
         Assert.Equal("system", anonymous.RootElement.GetProperty("source").GetString());
+        using var coded = JsonDocument.Parse(HostAudioProtocol.Status(HostAudioState.Error, "x", HostAudioKind.Teams, "id-1", HostAudioService.SilentTeamsCode));
+        Assert.Equal(("error", "teams-silent"), (coded.RootElement.GetProperty("state").GetString(), coded.RootElement.GetProperty("code").GetString()));
         Assert.Equal(new[] { "capturing", "teams-not-running", "unsupported-os", "error", "stopped" },
             Enum.GetValues<HostAudioState>().Select(state => HostAudioProtocol.Wire(state)));
     }

@@ -177,7 +177,7 @@ internal sealed class HostAudioService : IDisposable
             else if (TeamsPeak(processId) >= AudibleTeamsPeak && ++audibleButSilent >= SilentPollsBeforeWarning && !warned)
             {
                 warned = true;
-                run.Report(HostAudioState.Error, SilentTeamsCapture);
+                run.Report(HostAudioState.Error, SilentTeamsCapture, SilentTeamsCode);
             }
         }
     }
@@ -186,6 +186,8 @@ internal sealed class HostAudioService : IDisposable
     internal const int SilentPollsBeforeWarning = 3;
     internal const string SilentTeamsCapture =
         "Teams is playing sound, but Windows gives Live Coach only silence for the Teams app. Choose system audio instead.";
+    /// <summary>The status <c>code</c> of <see cref="SilentTeamsCapture"/>: the page offers system audio for it.</summary>
+    internal const string SilentTeamsCode = "teams-silent";
 
     private double TeamsPeak(int processId)
     {
@@ -260,14 +262,14 @@ internal sealed class HostAudioService : IDisposable
         }
 
         /// <summary>Queues a status once per change. Frames flow only while the capture is live or being retried.</summary>
-        public void Report(HostAudioState state, string detail)
+        public void Report(HostAudioState state, string detail, string? code = null)
         {
             lock (sync)
             {
                 if (cancellation.IsCancellationRequested || reported == (state, detail)) return;
                 reported = (state, detail);
             }
-            if (!owner.Outbox.EnqueueStatus(Generation, HostAudioProtocol.Status(state, detail, Kind, Id))) return;
+            if (!owner.Outbox.EnqueueStatus(Generation, HostAudioProtocol.Status(state, detail, Kind, Id, code))) return;
             if (state is HostAudioState.Capturing or HostAudioState.TeamsNotRunning or HostAudioState.Error) pipeline.Enable();
             else pipeline.Disable();
             owner.Signal();
