@@ -43,7 +43,9 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
-  retries: 0,
+  // One retry on CI only, for runner-level faults (a page.goto once failed with net::ERR_NO_BUFFER_SPACE). A test that
+  // passes on its retry is still reported as "flaky" by the list and html reporters below; local runs never retry.
+  retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL,
