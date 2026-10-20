@@ -12,6 +12,13 @@ public sealed record MeetingFeatures
     public bool EarlyStartAtFinal { get; init; }
 
     /// <summary>
+    /// On top of <see cref="EarlyStartAtFinal"/>: when a partial pauses on a complete question or request, generate its reply
+    /// already, held back server-side. The final adopts it when it is exactly the reply early start would begin then; otherwise
+    /// it is discarded unseen.
+    /// </summary>
+    public bool SpeculativeStart { get; init; }
+
+    /// <summary>
     /// Speech phrase hints from the caller's own materials, merged after the client's phrases into the recognizer's phrase list
     /// (not into prompts or translation). Null when switched off.
     /// </summary>

@@ -20,6 +20,8 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     private readonly CancellationTokenSource lifetime;
     private readonly Task worker;
     private Candidate? candidate;
+    /// <summary>The candidate whose search the worker is running now, if any.</summary>
+    private Candidate? running;
     private string? turn;
     private int starts;
     private bool closed;
@@ -131,6 +133,20 @@ internal sealed class PartialRetrieval : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// A speculative reply that took this retrieval was discarded unseen (experiment <c>Session:SpeculativeStart</c>), so no
+    /// reply waits for it any more. It follows the normal rules again: an identical final reuses it and newer speech cancels
+    /// it. One that newer speech already replaced is cancelled now, so an orphaned search never keeps the worker busy.
+    /// </summary>
+    internal void GiveBack(Task<RetrievalOutcome> taken)
+    {
+        lock (gate)
+        {
+            if (candidate is { } current && current.Result.Task == taken) current.Selected = false;
+            else if (running is { } orphan && orphan.Result.Task == taken) orphan.Cancel();
+        }
+    }
+
     internal void Cancel()
     {
         lock (gate) candidate?.Cancel();
@@ -157,6 +173,7 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                         if (current != candidate || current.Cancelled || (!current.Immediate && starts >= 3)) continue;
                         if (!current.Immediate) starts++;
                         current.Started = true;
+                        running = current;
                         current.Cancellation.CancelAfter(TimeSpan.FromSeconds(10));
                     }
                     // Keep a noncooperative cancelled provider occupying this single worker; don't spawn replacements.
@@ -175,6 +192,7 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                 {
                     lock (gate)
                     {
+                        if (running == current) running = null;
                         current.Finished = true;
                         current.Cancellation.Dispose();
                     }

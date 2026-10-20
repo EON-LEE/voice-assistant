@@ -13,4 +13,12 @@ internal sealed class EarlierTranscriptContext
 
     internal ConversationTurn[] With(IReadOnlyList<ConversationTurn> recent) =>
         excerpts.Concat(recent).ToArray();
+
+    /// <summary>An independent copy, to work out the history a final would produce without changing this one.</summary>
+    internal EarlierTranscriptContext Copy()
+    {
+        var copy = new EarlierTranscriptContext();
+        copy.excerpts.AddRange(excerpts);
+        return copy;
+    }
 }

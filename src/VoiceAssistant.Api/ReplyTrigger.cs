@@ -57,6 +57,16 @@ public static partial class ReplyTrigger
         return !DanglingUnlessWh.Contains(ending) || words.Any(WhWords.Contains);
     }
 
+    /// <summary>
+    /// A speech partial as if the recognizer had closed the sentence where the speaker paused. Partials carry no punctuation,
+    /// so after a pause the dangling-word rules of <see cref="LooksComplete"/> alone decide whether it looks finished.
+    /// </summary>
+    public static string Closed(string partial)
+    {
+        var text = partial.TrimEnd();
+        return text.Length == 0 || SentenceEnd().IsMatch(text) ? text : text + ".";
+    }
+
     private static string[] Split(string text) =>
         Sentences().Split(text).Select(Normalize).Where(sentence => sentence.Length > 0).ToArray();
 

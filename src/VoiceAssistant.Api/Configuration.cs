@@ -28,6 +28,11 @@ public sealed class ServiceSettings
     public string[] AllowedOrigins { get; init; } = [];
     /// <summary>Experiment: start the reply at a final that is a complete question or request, instead of after the settle.</summary>
     public bool EarlyStartAtFinal { get; init; }
+    /// <summary>
+    /// Experiment, on top of <see cref="EarlyStartAtFinal"/>: generate that reply already on a paused partial, held back until
+    /// the final adopts it.
+    /// </summary>
+    public bool SpeculativeStart { get; init; }
     /// <summary>Experiment: add phrase hints from the caller's own materials to the speech recognizer.</summary>
     public bool MaterialPhraseHints { get; init; }
     /// <summary>Experiment: tell the answer model to decline guarantees and promises and state the documented policy instead.</summary>
@@ -62,9 +67,13 @@ public sealed class ServiceSettings
             SearchMinimumRerankerScore = ReadMinimumRerankerScore(config),
             AllowedOrigins = config.GetSection("Security:AllowedOrigins").Get<string[]>() ?? [],
             EarlyStartAtFinal = ReadSwitch(config, "Session:EarlyStartAtFinal"),
+            SpeculativeStart = ReadSwitch(config, "Session:SpeculativeStart"),
             MaterialPhraseHints = ReadSwitch(config, "Speech:MaterialPhraseHints"),
             CommitmentPolicy = ReadSwitch(config, "Reply:CommitmentPolicy")
         };
+        // A speculative reply is adopted as its final's early reply, so it means nothing without early start.
+        if (settings.SpeculativeStart && !settings.EarlyStartAtFinal)
+            throw new InvalidOperationException("Session:SpeculativeStart requires Session:EarlyStartAtFinal to be true.");
         if (settings.Mode is not ("Azure" or "Fake") || (settings.Fake && !environment.IsDevelopment()))
             throw new InvalidOperationException("Fake requires Development; Provider:Mode must be Azure or Fake.");
         if (!settings.Fake)

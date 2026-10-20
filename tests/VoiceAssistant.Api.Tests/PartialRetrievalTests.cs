@@ -432,6 +432,62 @@ public sealed class PartialRetrievalTests
         Assert.Null(cache.Take("turn", Query, "knowledge"));
     }
 
+    [Fact]
+    public async Task ASearchGivenBackIsCancelledByNewerSpeechSoTheWorkerMovesOn()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        var taken = cache.Take("turn", Query, "knowledge");
+        Assert.NotNull(taken);
+
+        // The speculative reply that took the search was discarded, so nobody waits for it any more.
+        cache.GiveBack(taken!);
+        const string later = "What is our customer return policy for damaged goods?";
+        cache.Update(new("turn", 2, later, false));
+        Assert.True(call.Cancellation.IsCancellationRequested);
+        var following = await provider.Next();
+        Assert.Equal(ResponseRouting.Normalize(later), following.Query);
+        following.Result.SetResult(new("no_matches", []));
+    }
+
+    [Fact]
+    public async Task ASearchGivenBackIsStillReusedByAnIdenticalFinal()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        var taken = cache.Take("turn", Query, "knowledge");
+        cache.GiveBack(taken!);
+
+        cache.Update(new("turn", 2, Query, true));
+        Assert.Same(taken, cache.Take("turn", Query, "knowledge"));
+        call.Result.SetResult(new("grounded", []));
+        Assert.Equal("grounded", (await taken!).RequireGrounding().Status);
+        Assert.Single(provider.Calls);
+    }
+
+    [Fact]
+    public async Task AnOrphanedSearchGivenBackIsCancelledAtOnce()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        var taken = cache.Take("turn", Query, "knowledge");
+        // Newer speech replaced the search while a reply still waited for it, so it kept running.
+        cache.Update(new("next", 1, "What is our customer return policy for damaged goods?", false));
+        Assert.False(call.Cancellation.IsCancellationRequested);
+
+        // That reply was a speculation and was discarded: the orphaned search stops and frees the worker for the newer one.
+        cache.GiveBack(taken!);
+        Assert.True(call.Cancellation.IsCancellationRequested);
+        var following = await provider.Next();
+        following.Result.SetResult(new("no_matches", []));
+    }
+
     private sealed record Call(string Query, string Oid, CancellationToken Cancellation)
     {
         internal TaskCompletionSource<Grounding> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

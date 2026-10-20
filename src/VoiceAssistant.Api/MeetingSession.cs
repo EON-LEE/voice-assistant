@@ -86,6 +86,22 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private long pendingSince;
     /// <summary>A reply started early at a final (experiment): its generation and how many gathered segments it covered.</summary>
     private (int Generation, int Segments)? earlyReply;
+    /// <summary>Experiment: a reply generated on a paused partial before its final, held back until that final adopts or discards it.</summary>
+    private Speculation? speculation;
+    /// <summary>The latest speculative generation; the next starts only after it finished, so at most one runs at a time.</summary>
+    private Task speculationTask = Task.CompletedTask;
+    /// <summary>The latest partial of the utterance being spoken, and the text identity its pause is timed for.</summary>
+    private (Transcript Partial, string Identity)? pausedPartial;
+    private int pauseNumber;
+    /// <summary>
+    /// How long the latest partial must stay unchanged before a speculative reply starts (experiment). The Speech service sends
+    /// a new partial as each word is processed, and partials carry no punctuation, so until the final (about 1 s after speech
+    /// ends on staging) a pause in partials is the only sign that a question is finished; a repeated partial is not, because
+    /// silence produces no new partials. 250 ms is the pause PartialRetrieval already waits before it retrieves for a partial:
+    /// the speculative reply starts from the same text that retrieval is for, and a gap between words shorter than that never
+    /// starts one. A speculation that the final does not confirm costs one cancelled model call and is never seen.
+    /// </summary>
+    internal static readonly TimeSpan SpeculationPause = TimeSpan.FromMilliseconds(250);
     private int settleNumber;
     private int overflow;
     private SessionOptions options = SessionOptions.Legacy;
@@ -146,12 +162,121 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private sealed record Completion(string Text, string[] Suggestions, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched, bool RespondNow = false);
     private sealed record KoreanLine(KoreanScope Scope, int Index, string? Korean);
 
+    /// <summary>A reply generated ahead of its final (experiment). Nothing of it is sent, logged or measured until the final adopts it.</summary>
+    private sealed record Speculation(string TurnId, string Identity, ConversationTurn[] History, string Route, SessionOptions Settings,
+        string ResponseId, CancellationTokenSource Cancellation, ReplyOutput Output, MeetingMetrics.ResponseMeasurement Measurement,
+        KoreanScope? Scope, Task<RetrievalOutcome>? Prefetched, long StartedAt)
+    {
+        public Task Task { get; set; } = Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// What one reply's generation produces for the outside: events for the client (through the event loop) and failure log
+    /// lines. A reply started at its final writes them straight through. A speculative reply holds them until its final adopts
+    /// it, then hands them over in order as if they were produced just then; a discarded one drops them, so nothing of it is
+    /// ever sent or logged.
+    /// </summary>
+    private sealed class ReplyOutput
+    {
+        private readonly ChannelWriter<SessionEvent> writer;
+        private readonly object gate = new();
+        private List<SessionEvent>? heldEvents;
+        private List<Action>? heldLogs;
+        private bool discarded;
+        private int generation;
+
+        /// <summary>Straight through, as the events of reply <paramref name="number"/>.</summary>
+        public ReplyOutput(ChannelWriter<SessionEvent> writer, int number)
+        {
+            this.writer = writer;
+            generation = number;
+        }
+
+        private ReplyOutput(ChannelWriter<SessionEvent> writer)
+        {
+            this.writer = writer;
+            heldEvents = [];
+            heldLogs = [];
+        }
+
+        /// <summary>For a speculative reply: everything is held until <see cref="Adopt"/>, or dropped by <see cref="Discard"/>.</summary>
+        public static ReplyOutput Held(ChannelWriter<SessionEvent> writer) => new(writer);
+
+        /// <summary>The reply's generation number; a held log line reads it when written, so after adoption it is the adopted one.</summary>
+        public int Generation
+        {
+            get { lock (gate) return generation; }
+        }
+
+        public ValueTask WriteAsync(SessionEvent message, CancellationToken cancellation)
+        {
+            lock (gate)
+            {
+                if (discarded) return ValueTask.CompletedTask;
+                if (heldEvents is not null)
+                {
+                    heldEvents.Add(message);
+                    return ValueTask.CompletedTask;
+                }
+                message = message with { Generation = generation };
+            }
+            return writer.WriteAsync(message, cancellation);
+        }
+
+        /// <summary>A failure log line of this reply: written now, or only once a speculative reply is adopted.</summary>
+        public void Log(Action write)
+        {
+            lock (gate)
+            {
+                if (discarded) return;
+                if (heldLogs is not null)
+                {
+                    heldLogs.Add(write);
+                    return;
+                }
+            }
+            write();
+        }
+
+        /// <summary>
+        /// The speculative reply became reply <paramref name="number"/>: its held log lines are written, and its held events
+        /// are returned in order for the event loop to send now. Later events go straight through.
+        /// </summary>
+        public SessionEvent[] Adopt(int number)
+        {
+            List<SessionEvent> events;
+            List<Action> logs;
+            lock (gate)
+            {
+                generation = number;
+                events = heldEvents ?? [];
+                logs = heldLogs ?? [];
+                heldEvents = null;
+                heldLogs = null;
+            }
+            foreach (var write in logs) write();
+            return events.Select(message => message with { Generation = number }).ToArray();
+        }
+
+        public void Discard()
+        {
+            lock (gate)
+            {
+                discarded = true;
+                heldEvents = null;
+                heldLogs = null;
+            }
+        }
+    }
+
     /// <summary>Tracks the Korean lines of one response; a response cancelled before it completed never publishes any.</summary>
-    private sealed class KoreanScope(string responseId, string? turnId, MeetingMetrics.ResponseMeasurement? measurement = null)
+    private sealed class KoreanScope(string responseId, string? turnId, ReplyOutput output, MeetingMetrics.ResponseMeasurement? measurement = null)
     {
         private readonly string?[] lines = new string?[2];
         public string ResponseId { get; } = responseId;
         public string? TurnId { get; } = turnId;
+        /// <summary>Where the translated lines go: with the reply's other events, so a speculative reply holds them too.</summary>
+        public ReplyOutput Output { get; } = output;
         public MeetingMetrics.ResponseMeasurement? Measurement { get; } = measurement;
         public volatile bool Abandoned;
         /// <summary>False when this exact text is already being translated for the line.</summary>
@@ -211,13 +336,12 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         if (transcript.Final)
                         {
                             conversation.Add(new(transcript.Text));
-                            while (conversation.Count > 12 || conversation.Sum(turn => turn.Text.Length) > 24000)
-                            {
-                                earlierTranscripts.Remember(conversation[0]);
-                                conversation.RemoveAt(0);
-                            }
+                            Bound(conversation, earlierTranscripts);
                             lastTurn = transcript.TurnId;
                             lastFinalTimestamp = message.Timestamp;
+                            // The utterance ended, so a pause timer of its partials is void.
+                            pausedPartial = null;
+                            pauseNumber++;
                             if (options.ReplySettleMs > 0)
                             {
                                 if (pendingSpeech.Count == 0) pendingSince = message.Timestamp;
@@ -229,11 +353,16 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                                     pendingSpeech.RemoveRange(0, dropped);
                                     if (earlyReply is { } covered) earlyReply = (covered.Generation, Math.Max(0, covered.Segments - dropped));
                                 }
+                                // Experiment: this final decides a speculative reply, adopting it only when it is exactly the reply
+                                // early start would begin now; that reply already has its retrieval.
+                                var adopted = AdoptableSpeculation(transcript);
                                 // The reply waits out the settle window anyway, so retrieve for this final in the meantime.
-                                prefetch!.Update(transcript, earlierTranscripts.With(conversation.GetRange(0, conversation.Count - 1)));
+                                if (adopted is null)
+                                    prefetch!.Update(transcript, earlierTranscripts.With(conversation.GetRange(0, conversation.Count - 1)));
                                 ScheduleSettle(lifetime, afterFinal: true);
+                                if (adopted is not null) await AdoptSpeculationAsync(adopted, lifetime.Token);
                                 // Experiment: a complete question or request is answered now; the settle above only checks it later.
-                                if (features.EarlyStartAtFinal && CanStartEarly()) await StartEarlyReplyAsync(lifetime.Token);
+                                else if (features.EarlyStartAtFinal && CanStartEarly()) await StartEarlyReplyAsync(lifetime.Token);
                             }
                             else if (responseActive)
                             {
@@ -243,11 +372,22 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }
                         else
                         {
-                            prefetch!.Update(transcript, earlierTranscripts.With(conversation));
+                            // A speculative reply waiting for its final keeps the retrieval it took (experiment).
+                            if (!FollowPartial(transcript, lifetime)) prefetch!.Update(transcript, earlierTranscripts.With(conversation));
                             // Ongoing speech postpones the reply, except a question or request already waiting too long.
                             if (options.ReplySettleMs > 0 && pendingSpeech.Count > 0 &&
                                 !(clock.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.InvitesReply(pendingSpeech)))
                                 ScheduleSettle(lifetime);
+                        }
+                        break;
+                    case "speculate" when message.Generation == pauseNumber && pausedPartial is { } paused:
+                        if (speculationTask.IsCompleted) StartSpeculation(paused.Partial, paused.Identity, lifetime.Token);
+                        else
+                        {
+                            // One speculative generation at a time: this pause counts again once the previous one has unwound.
+                            var pause = message.Generation;
+                            _ = speculationTask.ContinueWith(_ => EnqueueCallback(new("speculate", Generation: pause), lifetime),
+                                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                         }
                         break;
                     case "settle" when message.Generation == settleNumber && pendingSpeech.Count > 0:
@@ -281,10 +421,12 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         else
                         {
                             pendingSpeech.Clear(); settleNumber++; earlyReply = null;
+                            DiscardSpeculation("cancelled");
                             await StartResponseAsync(lifetime.Token, manual: true, currentSegments: 1);
                         }
                         break;
                     case "response.cancel":
+                        DiscardSpeculation("cancelled");
                         prefetch?.Cancel();
                         pendingSpeech.Clear(); settleNumber++; earlyReply = null;
                         await CancelResponseAsync(lifetime.Token);
@@ -295,6 +437,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             await ErrorAsync("transcribe_only", "This session only transcribes speech.", false, lifetime.Token);
                             break;
                         }
+                        // A speculative reply was prepared with the earlier settings, so it is dropped (experiment).
+                        DiscardSpeculation("cancelled");
                         // A reply already generating keeps the settings it started with; the change applies from the next one.
                         options = options.Apply((SessionUpdate)message.Value!);
                         prefetch?.UpdateOptions(options);
@@ -302,6 +446,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         break;
                     case "session.stop":
                         endReason = "stopped";
+                        DiscardSpeculation("cancelled");
                         await CancelResponseAsync(lifetime.Token);
                         return;
                     case "closed":
@@ -312,6 +457,10 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         // An error of a recognizer that was already replaced says nothing about the current one.
                         if (message.Generation != 0 && message.Generation != Volatile.Read(ref speechNumber)) break;
                         if (speech is null || RestartableSpeechFailure(fatal) is not { } failedWith) throw fatal;
+                        // The utterance being recognized is lost with the recognizer, and so is a reply speculated on it.
+                        DiscardSpeculation("cancelled");
+                        pausedPartial = null;
+                        pauseNumber++;
                         speechRestart = RestartSpeechAsync(speech, failedWith, speechOptions, lifetime);
                         speech = null;
                         break;
@@ -324,69 +473,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         speechRestart = RestartSpeechAsync(speech, earlyCode, speechOptions, lifetime);
                         speech = null;
                         break;
-                    case "korean":
-                        var line = (KoreanLine)message.Value!;
-                        // A cancel can be handled while this event waits in the queue; a cancelled reply publishes no Korean.
-                        if (line.Scope.Abandoned) break;
-                        object koreanMessage = line.Korean is { } meaning
-                            ? new { type = "response.korean", responseId = line.Scope.ResponseId, turnId = line.Scope.TurnId, index = line.Index, korean = meaning }
-                            : new { type = "response.korean", responseId = line.Scope.ResponseId, turnId = line.Scope.TurnId, index = line.Index, failed = true };
-                        await SendAsync(koreanMessage, lifetime.Token);
-                        line.Scope.Measurement?.KoreanSent(line.Index, line.Korean is not null);
-                        break;
-                    case "delta" when message.Generation == generationNumber && responseActive:
-                        var deltaText = (string)message.Value!;
-                        // primaryDone marks, once per response, that the first line is complete; only that delta may be empty.
-                        await SendAsync(message.PrimaryDone
-                            ? new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText, primaryDone = true }
-                            : (object)new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText }, lifetime.Token);
-                        if (message.ModelResponse && deltaText.Length > 0) responseMeasurement?.FirstDeltaSent();
-                        if (message.ModelResponse && message.PrimaryDone) responseMeasurement?.PrimaryDoneSent();
-                        break;
-                    case "complete" when message.Generation == generationNumber && responseActive:
-                        var completion = (Completion)message.Value!;
-                        await SendAsync(new
-                        {
-                            type = "response.completed",
-                            responseId,
-                            turnId = responseTurn,
-                            text = completion.Text,
-                            suggestions = completion.Suggestions,
-                            sources = completion.Sources,
-                            grounding = completion.Grounding,
-                            responseRoute = completion.ResponseRoute,
-                            retrievalPrefetched = completion.RetrievalPrefetched,
-                            respondNow = completion.RespondNow
-                        }, lifetime.Token);
-                        if (message.ModelResponse) responseMeasurement?.CompletedSent();
-                        responseMeasurement?.ReplyCompleted(completion.Grounding);
-                        responseActive = false;
-                        await StartPendingResponseAsync(lifetime.Token);
-                        break;
-                    case "grounding.unavailable" when message.Generation == generationNumber && responseActive:
-                        // Non-fatal and sent before the general reply, so older clients still learn why it is not document-based.
-                        await ErrorAsync("grounding_unavailable", GroundingUnavailableMessage, true, lifetime.Token);
-                        break;
-                    case "grounding.fallback" when message.Generation == generationNumber && responseActive:
-                        await CompleteWithoutGroundingAsync(lifetime.Token);
-                        await StartPendingResponseAsync(lifetime.Token);
-                        break;
-                    case "generation.error" when message.Generation == generationNumber && responseActive:
-                        var failure = (ProviderException)message.Value!;
-                        await ErrorAsync(failure.Code, failure.Message, true, lifetime.Token);
-                        if (failure.Code == "grounding_unavailable")
-                            await CompleteWithoutGroundingAsync(lifetime.Token);
-                        else
-                        {
-                            var pending = responsePending;
-                            var pendingHistory = pendingResponseHistory;
-                            var pendingTurn = pendingResponseTurn;
-                            await CancelResponseAsync(lifetime.Token);
-                            responsePending = pending;
-                            pendingResponseHistory = pendingHistory;
-                            pendingResponseTurn = pendingTurn;
-                        }
-                        await StartPendingResponseAsync(lifetime.Token);
+                    case "korean" or "delta" or "complete" or "grounding.unavailable" or "grounding.fallback" or "generation.error":
+                        await HandleReplyEventAsync(message, lifetime.Token);
                         break;
                 }
             }
@@ -438,6 +526,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         finally
         {
             lifetime.Cancel();
+            // A speculative reply still waiting for its final ends with the session, unseen (experiment).
+            DiscardSpeculation("cancelled");
             // Send the close frame, then give the client's close (a browser answers at once) the rest of the budget to end the
             // receive loop before cancelling it. Cancelling a pending receive aborts the socket, and since ASP.NET Core 9 that
             // aborts the whole connection, which can discard the close frame and show the client a reset instead.
@@ -622,18 +712,25 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     }
 
     /// <summary>The gathered speech ends with a question or request that looks finished: the rule that picks the short settle.</summary>
-    private bool CompleteQuestionOrRequest() => ReplyTrigger.InvitesReply(pendingSpeech) && ReplyTrigger.LooksComplete(pendingSpeech);
+    private bool CompleteQuestionOrRequest() => CompleteQuestionOrRequest(pendingSpeech);
+
+    private static bool CompleteQuestionOrRequest(IReadOnlyList<string> gathered) =>
+        ReplyTrigger.InvitesReply(gathered) && ReplyTrigger.LooksComplete(gathered);
 
     /// <summary>Speech gathered after an early reply started, unless it is only backchannels, changes what it should answer.</summary>
-    private bool TargetChangedSince((int Generation, int Segments) early) =>
-        pendingSpeech.Count > early.Segments &&
-        ReplyTrigger.Evaluate(pendingSpeech.Skip(early.Segments).ToArray()) != ReplyDecision.Discard;
+    private bool TargetChangedSince((int Generation, int Segments) early) => TargetChangedSince(early, pendingSpeech);
 
-    private bool CanStartEarly()
+    private static bool TargetChangedSince((int Generation, int Segments) early, IReadOnlyList<string> gathered) =>
+        gathered.Count > early.Segments &&
+        ReplyTrigger.Evaluate(gathered.Skip(early.Segments).ToArray()) != ReplyDecision.Discard;
+
+    private bool CanStartEarly() => CanStartEarly(pendingSpeech);
+
+    private bool CanStartEarly(IReadOnlyList<string> gathered)
     {
-        if (!CompleteQuestionOrRequest() || ReplyTrigger.Evaluate(pendingSpeech) != ReplyDecision.Reply) return false;
+        if (!CompleteQuestionOrRequest(gathered) || ReplyTrigger.Evaluate(gathered) != ReplyDecision.Reply) return false;
         // Within one window a new early start needs a changed target (a backchannel never is) and replaces only its own reply.
-        if (earlyReply is { } early) return TargetChangedSince(early) && (!responseActive || early.Generation == generationNumber);
+        if (earlyReply is { } early) return TargetChangedSince(early, gathered) && (!responseActive || early.Generation == generationNumber);
         // Otherwise only when nothing else is answering: an active reply keeps today's hold-and-queue through the settle.
         return !responseActive;
     }
@@ -644,6 +741,167 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         // Like a superseding request, this cancels the window's earlier early reply if it is still running.
         await StartResponseAsync(lifetime, manual: false, segments);
         earlyReply = (generationNumber, segments);
+    }
+
+    /// <summary>Experiment (Session:SpeculativeStart, on top of early start): replies may start on a paused partial.</summary>
+    private bool Speculative => features.SpeculativeStart && options.ReplySettleMs > 0 && !options.TranscribeOnly && prefetch is not null;
+
+    /// <summary>
+    /// Follows the partials of the utterance being spoken (experiment). A partial that changes what the speculative reply
+    /// answers discards it; new words restart the pause timer. True while a speculative reply is still waiting for its final.
+    /// </summary>
+    private bool FollowPartial(Transcript partial, CancellationTokenSource lifetime)
+    {
+        if (!Speculative) return false;
+        var identity = ResponseRouting.Identity(partial.Text);
+        if (speculation is { } running && ChangesTarget(running, partial.TurnId, identity)) DiscardSpeculation("target_changed");
+        var unchanged = pausedPartial is { } last && last.Partial.TurnId == partial.TurnId && last.Identity == identity;
+        pausedPartial = (partial, identity);
+        // The same words again keep the pause counting from their first partial.
+        if (!unchanged) ArmPause(lifetime);
+        return speculation is not null;
+    }
+
+    private void ArmPause(CancellationTokenSource lifetime)
+    {
+        var number = ++pauseNumber;
+        _ = Task.Delay(SpeculationPause, clock, lifetime.Token).ContinueWith(task =>
+        {
+            if (task.IsCompletedSuccessfully) EnqueueCallback(new("speculate", Generation: number), lifetime);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Whether newer speech changes what a speculative reply answers. As for an early reply (TargetChangedSince), words that
+    /// only add backchannels do not. Another utterance always does: only this utterance's final can adopt the reply.
+    /// </summary>
+    private static bool ChangesTarget(Speculation running, string turnId, string identity)
+    {
+        if (turnId != running.TurnId) return true;
+        if (identity == running.Identity) return false;
+        return !identity.StartsWith(running.Identity + " ", StringComparison.Ordinal) ||
+            ReplyTrigger.Evaluate([identity[(running.Identity.Length + 1)..]]) != ReplyDecision.Discard;
+    }
+
+    /// <summary>
+    /// The latest partial stayed unchanged for <see cref="SpeculationPause"/> (experiment). When the gathered speech ending with
+    /// it passes the early-start rule and nothing else is answering, its reply is generated now, exactly as early start would
+    /// begin it at this text's final, and held back until that final adopts or discards it.
+    /// </summary>
+    private void StartSpeculation(Transcript partial, string identity, CancellationToken lifetime)
+    {
+        // One speculative generation at a time (the caller waits for the previous one to unwind), and none beside a reply.
+        if (!Speculative || speculation is not null || !speculationTask.IsCompleted || responseActive) return;
+        // Partials carry no punctuation, so the pause stands in for the end of the sentence.
+        var gathered = pendingSpeech.Append(ReplyTrigger.Closed(partial.Text)).ToArray();
+        if (!CanStartEarly(gathered)) return;
+        var history = HistoryWith(partial.Text, gathered.Length);
+        var prior = history[..^1];
+        var settings = options;
+        var route = ResponseRouting.Select(partial.Text, settings, prior);
+        // A confirmed introduction is composed at once at its final, so starting it early gains nothing.
+        if (route == "profile") return;
+        Task<RetrievalOutcome>? prefetched = null;
+        // Exactly as for a reply started at the final: it reuses this text's search only when that search has already started,
+        // and otherwise searches on its own at once, so it never waits behind the single prefetch worker.
+        if (route == "knowledge") prefetched = prefetch!.Take(partial.TurnId, partial.Text, route, prior);
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
+        cancellation.CancelAfter(ResponseDeadline);
+        var deadline = clock.GetTimestamp() + (long)(ResponseDeadline.TotalSeconds * clock.TimestampFrequency);
+        var responseId = Guid.NewGuid().ToString("N");
+        var output = ReplyOutput.Held(events.Writer);
+        var measurement = new MeetingMetrics.ResponseMeasurement(0, MeetingMetrics.ProviderMode(provider), manual: false, clock)
+        {
+            Route = route, ResponseMode = settings.ResponseMode, Speculative = true
+        };
+        var scope = settings.ReplyKorean ? new KoreanScope(responseId, partial.TurnId, output, measurement) : null;
+        var started = new Speculation(partial.TurnId, identity, history, route, settings, responseId, cancellation, output, measurement,
+            scope, prefetched, clock.GetTimestamp());
+        var token = cancellation.Token;
+        started.Task = Task.Run(() => GenerateAsync(output, history, route, prefetched, scope, settings, measurement, deadline, token, lifetime));
+        speculation = started;
+        speculationTask = started.Task;
+        MeetingMetrics.Speculation("started", MeetingMetrics.ProviderMode(provider), route, settings.ResponseMode);
+    }
+
+    /// <summary>
+    /// This final ends the utterance a speculative reply was generated for (experiment). The reply is adopted only when it is
+    /// exactly the one early start would begin now: same utterance and words (case, punctuation and spacing aside), same
+    /// history, route and settings. Otherwise it is discarded, unseen.
+    /// </summary>
+    private Speculation? AdoptableSpeculation(Transcript final)
+    {
+        if (speculation is not { } candidate) return null;
+        if (candidate.TurnId == final.TurnId && candidate.Identity == ResponseRouting.Identity(final.Text) && candidate.Settings == options &&
+            CanStartEarly())
+        {
+            var history = CreateFocusedHistory(pendingSpeech.Count);
+            if (SameHistory(history, candidate.History) && ResponseRouting.Select(final.Text, options, history[..^1]) == candidate.Route)
+                return candidate;
+        }
+        DiscardSpeculation("mismatch");
+        return null;
+    }
+
+    /// <summary>Two reply histories that differ at most in the case, punctuation and spacing of the latest utterance.</summary>
+    private static bool SameHistory(ConversationTurn[] final, ConversationTurn[] speculated) =>
+        final.Length == speculated.Length && final.Length > 0 &&
+        final.Take(final.Length - 1).SequenceEqual(speculated.Take(speculated.Length - 1)) &&
+        final[^1].CurrentResponseTarget == speculated[^1].CurrentResponseTarget &&
+        ResponseRouting.Identity(final[^1].Text) == ResponseRouting.Identity(speculated[^1].Text);
+
+    /// <summary>
+    /// Makes the speculative reply the early reply of this final, exactly as <see cref="StartResponseAsync"/> begins one but
+    /// with the generation that is already running: the same cancellation of a superseded reply, numbering and events. What
+    /// it produced so far is sent at once, in order; the rest streams as usual.
+    /// </summary>
+    private async Task AdoptSpeculationAsync(Speculation adopted, CancellationToken lifetime)
+    {
+        var segments = pendingSpeech.Count;
+        await CancelResponseAsync(lifetime);
+        generation?.Dispose();
+        generation = adopted.Cancellation;
+        speculation = null;
+        if (!generationTask.IsCompleted) retired.Add(generationTask);
+        generationTask = adopted.Task;
+        responseId = adopted.ResponseId;
+        responseTurn = lastTurn;
+        responseRoute = adopted.Route;
+        retrievalPrefetched = adopted.Prefetched is not null;
+        responseActive = true;
+        var measurement = adopted.Measurement;
+        measurement.Adopt(lastFinalTimestamp);
+        responseMeasurement = measurement;
+        measurement.Started();
+        if (responseRoute == "knowledge") MeetingMetrics.Prefetched(adopted.Prefetched is not null);
+        koreanScope = adopted.Scope;
+        var number = ++generationNumber;
+        MeetingMetrics.Speculation("adopted", MeetingMetrics.ProviderMode(provider), adopted.Route, adopted.Settings.ResponseMode,
+            headStart: clock.GetElapsedTime(adopted.StartedAt, lastFinalTimestamp));
+        await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
+        retired.RemoveAll(task => task.IsCompletedSuccessfully);
+        if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
+        earlyReply = (number, segments);
+        foreach (var held in adopted.Output.Adopt(number)) await HandleReplyEventAsync(held, lifetime);
+    }
+
+    /// <summary>Drops the speculative reply, if any: its generation is cancelled, and nothing it produced is sent, logged or measured.</summary>
+    private void DiscardSpeculation(string reason)
+    {
+        if (speculation is not { } dropped) return;
+        speculation = null;
+        dropped.Cancellation.Cancel();
+        dropped.Output.Discard();
+        dropped.Measurement.Discard();
+        if (dropped.Scope is not null) dropped.Scope.Abandoned = true;
+        // No reply waits for the search it took any more: newer speech cancels it, an identical final may still reuse it.
+        if (dropped.Prefetched is { } taken) prefetch?.GiveBack(taken);
+        // Awaited at session cleanup like a superseded reply; its cancellation source is released once it has finished.
+        retired.RemoveAll(task => task.IsCompletedSuccessfully);
+        retired.Add(dropped.Task);
+        _ = dropped.Task.ContinueWith(_ => dropped.Cancellation.Dispose(), CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        MeetingMetrics.Speculation("discarded", MeetingMetrics.ProviderMode(provider), dropped.Route, dropped.Settings.ResponseMode, reason);
     }
 
     private async Task ReceiveLoopAsync(CancellationToken cancellation)
@@ -779,18 +1037,44 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         responseActive = false;
     }
 
-    private ConversationTurn[] CreateFocusedHistory(int currentSegments)
+    private ConversationTurn[] CreateFocusedHistory(int currentSegments) => Focus(conversation, earlierTranscripts, currentSegments);
+
+    /// <summary>
+    /// The history a reply would get if this text were the next final: <see cref="CreateFocusedHistory"/> after that final joined
+    /// the bounded conversation, worked out on copies so the session's own history is untouched.
+    /// </summary>
+    private ConversationTurn[] HistoryWith(string text, int currentSegments)
+    {
+        var turns = new List<ConversationTurn>(conversation) { new(text) };
+        var earlier = earlierTranscripts.Copy();
+        Bound(turns, earlier);
+        return Focus(turns, earlier, currentSegments);
+    }
+
+    /// <summary>Keeps the recent conversation within 12 turns and 24,000 characters; older turns become earlier excerpts.</summary>
+    private static void Bound(List<ConversationTurn> turns, EarlierTranscriptContext earlier)
+    {
+        while (turns.Count > 12 || turns.Sum(turn => turn.Text.Length) > 24000)
+        {
+            earlier.Remember(turns[0]);
+            turns.RemoveAt(0);
+        }
+    }
+
+    private static ConversationTurn[] Focus(List<ConversationTurn> turns, EarlierTranscriptContext earlier, int currentSegments)
     {
         // Only segments still in the bounded history can be targeted; older gathered speech is dropped, never an error.
-        var focusStart = conversation.Count - Math.Clamp(currentSegments, 1, Math.Max(1, conversation.Count));
-        var focusedConversation = conversation.Select((turn, index) =>
+        var focusStart = turns.Count - Math.Clamp(currentSegments, 1, Math.Max(1, turns.Count));
+        var focusedConversation = turns.Select((turn, index) =>
             turn with { CurrentResponseTarget = index >= focusStart }).ToArray();
-        return earlierTranscripts.With(focusedConversation);
+        return earlier.With(focusedConversation);
     }
 
     private async Task StartResponseAsync(CancellationToken lifetime, bool manual, int currentSegments,
         ConversationTurn[]? preparedHistory = null, string? preparedTurn = null, long? preparedTimestamp = null)
     {
+        // A reply that starts any other way answers what a speculative reply was speculating on, so that one is dropped.
+        DiscardSpeculation("target_changed");
         var history = preparedHistory ?? CreateFocusedHistory(currentSegments);
         if (history.Length == 0) throw new InvalidOperationException("Response history cannot be empty.");
         await CancelResponseAsync(lifetime);
@@ -814,16 +1098,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         responseMeasurement = measurement;
         measurement.Started();
         if (responseRoute == "knowledge") MeetingMetrics.Prefetched(prefetched is not null);
-        var scope = settings.ReplyKorean ? new KoreanScope(responseId, responseTurn, measurement) : null;
-        koreanScope = scope;
         var number = ++generationNumber;
+        var output = new ReplyOutput(events.Writer, number);
+        var scope = settings.ReplyKorean ? new KoreanScope(responseId, responseTurn, output, measurement) : null;
+        koreanScope = scope;
         await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
         if (!generationTask.IsCompleted) retired.Add(generationTask);
         retired.RemoveAll(task => task.IsCompletedSuccessfully);
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
         var token = generation.Token;
         var route = responseRoute;
-        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, scope, settings, measurement, deadline, token, lifetime));
+        generationTask = Task.Run(() => GenerateAsync(output, history, route, prefetched, scope, settings, measurement, deadline, token, lifetime));
     }
 
     private async Task CancelResponseAsync(CancellationToken cancellation)
@@ -841,7 +1126,82 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         await SendAsync(new { type = "response.cancelled", responseId, turnId = responseTurn }, cancellation);
     }
 
-    private async Task GenerateAsync(int number, ConversationTurn[] history, string route, Task<RetrievalOutcome>? prefetched,
+    /// <summary>
+    /// Sends what a reply's generation produced, through the event loop: straight from the channel, or replayed in order when
+    /// a speculative reply is adopted. Events of a replaced or finished reply are dropped.
+    /// </summary>
+    private async Task HandleReplyEventAsync(SessionEvent message, CancellationToken lifetime)
+    {
+        switch (message.Kind)
+        {
+            case "korean":
+                var line = (KoreanLine)message.Value!;
+                // A cancel can be handled while this event waits in the queue; a cancelled reply publishes no Korean.
+                if (line.Scope.Abandoned) break;
+                object koreanMessage = line.Korean is { } meaning
+                    ? new { type = "response.korean", responseId = line.Scope.ResponseId, turnId = line.Scope.TurnId, index = line.Index, korean = meaning }
+                    : new { type = "response.korean", responseId = line.Scope.ResponseId, turnId = line.Scope.TurnId, index = line.Index, failed = true };
+                await SendAsync(koreanMessage, lifetime);
+                line.Scope.Measurement?.KoreanSent(line.Index, line.Korean is not null);
+                break;
+            case "delta" when message.Generation == generationNumber && responseActive:
+                var deltaText = (string)message.Value!;
+                // primaryDone marks, once per response, that the first line is complete; only that delta may be empty.
+                await SendAsync(message.PrimaryDone
+                    ? new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText, primaryDone = true }
+                    : (object)new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText }, lifetime);
+                if (message.ModelResponse && deltaText.Length > 0) responseMeasurement?.FirstDeltaSent();
+                if (message.ModelResponse && message.PrimaryDone) responseMeasurement?.PrimaryDoneSent();
+                break;
+            case "complete" when message.Generation == generationNumber && responseActive:
+                var completion = (Completion)message.Value!;
+                await SendAsync(new
+                {
+                    type = "response.completed",
+                    responseId,
+                    turnId = responseTurn,
+                    text = completion.Text,
+                    suggestions = completion.Suggestions,
+                    sources = completion.Sources,
+                    grounding = completion.Grounding,
+                    responseRoute = completion.ResponseRoute,
+                    retrievalPrefetched = completion.RetrievalPrefetched,
+                    respondNow = completion.RespondNow
+                }, lifetime);
+                if (message.ModelResponse) responseMeasurement?.CompletedSent();
+                responseMeasurement?.ReplyCompleted(completion.Grounding);
+                responseActive = false;
+                await StartPendingResponseAsync(lifetime);
+                break;
+            case "grounding.unavailable" when message.Generation == generationNumber && responseActive:
+                // Non-fatal and sent before the general reply, so older clients still learn why it is not document-based.
+                await ErrorAsync("grounding_unavailable", GroundingUnavailableMessage, true, lifetime);
+                break;
+            case "grounding.fallback" when message.Generation == generationNumber && responseActive:
+                await CompleteWithoutGroundingAsync(lifetime);
+                await StartPendingResponseAsync(lifetime);
+                break;
+            case "generation.error" when message.Generation == generationNumber && responseActive:
+                var failure = (ProviderException)message.Value!;
+                await ErrorAsync(failure.Code, failure.Message, true, lifetime);
+                if (failure.Code == "grounding_unavailable")
+                    await CompleteWithoutGroundingAsync(lifetime);
+                else
+                {
+                    var pending = responsePending;
+                    var pendingHistory = pendingResponseHistory;
+                    var pendingTurn = pendingResponseTurn;
+                    await CancelResponseAsync(lifetime);
+                    responsePending = pending;
+                    pendingResponseHistory = pendingHistory;
+                    pendingResponseTurn = pendingTurn;
+                }
+                await StartPendingResponseAsync(lifetime);
+                break;
+        }
+    }
+
+    private async Task GenerateAsync(ReplyOutput output, ConversationTurn[] history, string route, Task<RetrievalOutcome>? prefetched,
         KoreanScope? scope, SessionOptions settings, MeetingMetrics.ResponseMeasurement measurement, long deadline,
         CancellationToken cancellation, CancellationToken lifetime)
     {
@@ -856,9 +1216,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 measurement.GroundingReady("disabled");
                 var introduction = ProfileIntroduction.Compose(settings);
                 StartKorean(scope, 0, introduction, new TranslationContext(settings.Topic, settings.Phrases), lifetime);
-                await events.Writer.WriteAsync(new("delta", introduction, number, PrimaryDone: true), cancellation);
-                await events.Writer.WriteAsync(new("complete",
-                    new Completion(introduction, [introduction], [], "disabled", "profile", false), number), cancellation);
+                await output.WriteAsync(new("delta", introduction, PrimaryDone: true), cancellation);
+                await output.WriteAsync(new("complete",
+                    new Completion(introduction, [introduction], [], "disabled", "profile", false)), cancellation);
                 return;
             }
             // Started before retrieval so the classifier has finished by the time the answer does; it only adds emphasis
@@ -877,9 +1237,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 }
                 catch (ProviderException failure) when (failure.Code == "grounding_unavailable")
                 {
-                    LogRetrievalFailure(logger, failure);
+                    output.Log(() => LogRetrievalFailure(logger, failure));
                     // Announced before the reply, as before, so the client knows this reply is not based on its materials.
-                    await events.Writer.WriteAsync(new("grounding.unavailable", Generation: number), cancellation);
+                    await output.WriteAsync(new("grounding.unavailable"), cancellation);
                     groundingUnavailable = true;
                     grounding = new("unavailable", []);
                 }
@@ -905,13 +1265,13 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 var primaryDone = update.PrimaryDone && !primaryDoneSent && text.Length > 0;
                 primaryDoneSent |= primaryDone;
                 if (delta.Length > 0 || primaryDone)
-                    await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse, PrimaryDone: primaryDone), cancellation);
+                    await output.WriteAsync(new("delta", delta, ModelResponse: modelResponse, PrimaryDone: primaryDone), cancellation);
             }
             cancellation.ThrowIfCancellationRequested();
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
             // A single-line reply is known to be complete only when the stream ends.
             if (!primaryDoneSent)
-                await events.Writer.WriteAsync(new("delta", "", number, ModelResponse: modelResponse, PrimaryDone: true), cancellation);
+                await output.WriteAsync(new("delta", "", ModelResponse: modelResponse, PrimaryDone: true), cancellation);
             var suggestions = ReplySuggestions.Complete(text.ToString(), alternative);
             // Translation starts only once the stream has ended normally: with asynchronous content filtering a line is not
             // checked before then, and a reply the filter stops (response_filtered) must never reach the translation call.
@@ -922,11 +1282,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             measurement.ClassifierWaited(clock.GetElapsedTime(classifierStarted), signal);
             // A classifier cancelled together with its reply (cancelled, superseded or timed out) did not fail.
             if (classifierFailure is not null && !(classifierFailure is OperationCanceledException && cancellation.IsCancellationRequested))
-                logger.LogWarning("Turn classifier failed: {ExceptionType}, HTTP status {Status}; the reply is sent without emphasis.",
-                    classifierFailure.GetType().Name, HttpStatusText(classifierFailure));
-            await events.Writer.WriteAsync(new("complete",
+                output.Log(() => logger.LogWarning("Turn classifier failed: {ExceptionType}, HTTP status {Status}; the reply is sent without emphasis.",
+                    classifierFailure.GetType().Name, HttpStatusText(classifierFailure)));
+            await output.WriteAsync(new("complete",
                 new Completion(text.ToString(), suggestions,
-                    DistinctSources(grounding.Documents), grounding.Status, route, prefetched is not null, respondNow), number,
+                    DistinctSources(grounding.Documents), grounding.Status, route, prefetched is not null, respondNow),
                 ModelResponse: modelResponse), cancellation);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -934,9 +1294,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             // A deadline after an announced search failure still ends with the fixed completion, never a second error.
             // A user cancel bumps the generation number, so the event loop drops this stale event.
             if (!lifetime.IsCancellationRequested)
-                await events.Writer.WriteAsync(groundingUnavailable
-                    ? new("grounding.fallback", Generation: number)
-                    : new("generation.error", new ProviderException("response_timeout", "Response timed out or was cancelled."), number), lifetime);
+                await output.WriteAsync(groundingUnavailable
+                    ? new("grounding.fallback")
+                    : new("generation.error", new ProviderException("response_timeout", "Response timed out or was cancelled.")), lifetime);
         }
         catch (Exception exception)
         {
@@ -951,17 +1311,20 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 };
                 // Content-free, like every failure line: a withdrawn reply logs its code and generation, never its text.
                 var filtered = error.Code == "response_filtered";
+                var afterSearchFailure = groundingUnavailable;
                 if (filtered)
-                    logger.LogWarning("Meeting response withdrawn: code {Code}, generation {Generation}, after search failure {AfterSearchFailure}.",
-                        error.Code, number, groundingUnavailable);
+                    output.Log(() => logger.LogWarning(
+                        "Meeting response withdrawn: code {Code}, generation {Generation}, after search failure {AfterSearchFailure}.",
+                        error.Code, output.Generation, afterSearchFailure));
                 else
-                    logger.LogWarning("Meeting response failed with code {Code}: {ExceptionType}, HTTP status {Status}, after search failure {AfterSearchFailure}.",
-                        error.Code, exception.GetType().Name, HttpStatusText(exception), groundingUnavailable);
+                    output.Log(() => logger.LogWarning(
+                        "Meeting response failed with code {Code}: {ExceptionType}, HTTP status {Status}, after search failure {AfterSearchFailure}.",
+                        error.Code, exception.GetType().Name, HttpStatusText(exception), afterSearchFailure));
                 // The search failure was already announced; when the general reply fails too, only the fixed notice follows.
                 // A reply the content filter stopped is withdrawn instead, because that notice would complete it.
-                await events.Writer.WriteAsync(groundingUnavailable && !filtered
-                    ? new("grounding.fallback", Generation: number)
-                    : new("generation.error", error, number), lifetime);
+                await output.WriteAsync(groundingUnavailable && !filtered
+                    ? new("grounding.fallback")
+                    : new("generation.error", error), lifetime);
             }
         }
     }
@@ -1024,15 +1387,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         }
         catch (Exception exception) when (!lifetime.IsCancellationRequested)
         {
-            logger.LogWarning("Reply translation failed: {Failure}.",
-                exception is System.ClientModel.ClientResultException client ? $"HTTP {client.Status}" : exception.GetType().Name);
+            scope.Output.Log(() => logger.LogWarning("Reply translation failed: {Failure}.",
+                exception is System.ClientModel.ClientResultException client ? $"HTTP {client.Status}" : exception.GetType().Name));
         }
         catch (Exception)
         {
             return;
         }
         if (scope.Abandoned || !scope.IsCurrent(index, english) || lifetime.IsCancellationRequested) return;
-        try { await events.Writer.WriteAsync(new("korean", new KoreanLine(scope, index, korean)), lifetime); }
+        try { await scope.Output.WriteAsync(new("korean", new KoreanLine(scope, index, korean)), lifetime); }
         catch (Exception exception) when (exception is OperationCanceledException or ChannelClosedException) { }
     }
 
