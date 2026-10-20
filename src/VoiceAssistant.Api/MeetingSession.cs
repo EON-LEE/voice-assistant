@@ -640,7 +640,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 StartKorean(scope, index, suggestions[index].Trim(), translation, lifetime);
             await events.Writer.WriteAsync(new("complete",
                 new Completion(text.ToString(), suggestions,
-                    grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status, route, prefetched is not null,
+                    DistinctSources(grounding.Documents), grounding.Status, route, prefetched is not null,
                     await TurnSignalAsync(turnSignal)), number,
                 ModelResponse: modelResponse), cancellation);
         }
@@ -678,6 +678,19 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             cause?.Kind ?? "unknown", cause?.Transient ?? false, cause?.ExceptionType ?? nameof(ProviderException),
             cause?.HttpStatus?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none", cause?.ErrorCode ?? "none",
             cause?.Retried ?? false);
+    }
+
+    /// <summary>
+    /// One source per document, in evidence order: chunks of the same document share its URL (or, without one, its title),
+    /// so they appear once. The model still receives every accepted chunk as evidence.
+    /// </summary>
+    internal static Source[] DistinctSources(IEnumerable<Evidence> documents)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return documents.Select(document => document.Source)
+            .Where(source => seen.Add(string.IsNullOrWhiteSpace(source.Url)
+                ? "title:" + source.Title.Trim().ToUpperInvariant() : "url:" + source.Url))
+            .ToArray();
     }
 
     /// <summary>The HTTP status an Azure SDK exception carries, or "none" when no HTTP answer was received.</summary>
