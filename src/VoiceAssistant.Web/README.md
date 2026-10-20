@@ -33,8 +33,10 @@ microphone, ticketed WebSocket and MSAL modules and matches the desktop behaviou
 - **Reconnect without re-sharing.** One audio source (share or microphone) lives for the whole live session and is
   prepared only from a click (**라이브 시작**, or the inline **다시 공유 / 다시 시작** button). A dropped connection reconnects
   only the server session (300 ms–3 s backoff, 20 attempts, counted again after 30 s of stable connection; time offline is
-  not counted, the page waits for the network). The newest 4 s of audio wait meanwhile and are sent after `session.ready`
-  within the server limits (128 KB burst, 64 KB/s, at most 32 KiB per binary message). `session_time_limit` rolls over to a
+  not counted, the page waits for the network). The newest 4 s of audio wait meanwhile and are sent after `session.ready`:
+  at most 64 KB at once, then at most 48 KB/s with live audio queued behind in order, well inside the server's arrival-time
+  limits (128 KB burst, 64 KB/s, at most 32 KiB per binary message); an `invalid_audio` on a connection that began with such
+  a flush reconnects instead of stopping. `session_time_limit` rolls over to a
   new session at once with the same source and no stop message. A sign-in that needs a click keeps the source running and
   continues after **로그인**. Transcript and suggestions stay on screen throughout. A BroadcastChannel stops older tabs
   when another tab starts live.
