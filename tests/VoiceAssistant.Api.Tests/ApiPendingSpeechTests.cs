@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Net.WebSockets;
 using System.Text.Json;
 using VoiceAssistant.Api;
@@ -62,6 +63,49 @@ public sealed partial class ApiTests
         Assert.Equal("What do you think?", targets[^1]);
         Assert.DoesNotContain("Sorry, go ahead.", targets);
         Assert.Equal("Sorry, go ahead.", history[0].Text);
+        await Send(socket, """{"type":"session.stop"}""");
+    }
+
+    [Fact]
+    public async Task QueuedReplyIsTimedFromItsOwnFinalNotFromALaterOne()
+    {
+        var measurements = new System.Collections.Concurrent.ConcurrentQueue<(string Name, double Value)>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, owner) =>
+            {
+                if (instrument.Meter.Name == MeetingMetrics.MeterName &&
+                    instrument.Name.StartsWith("voiceassistant.stt_final_to_", StringComparison.Ordinal))
+                    owner.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((instrument, value, _, _) => measurements.Enqueue((instrument.Name, value)));
+        listener.Start();
+        var clock = new ManualClock();
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new ControlledProvider { AutomaticRetrieval = true, Alternative = "Let's check the next step.", HoldAlternative = hold };
+        await using var host = await Host.StartAsync(provider: provider, clock: clock);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 300 }));
+        Assert.Equal("session.ready", TypeOf(await Receive(socket)));
+
+        // The first reply stays active until the hold is released, so the next question is queued behind it.
+        await EmitFinalAndSettleAsync(socket, provider, clock, "a", "What is the rollout plan?");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await EmitFinalAndSettleAsync(socket, provider, clock, "b", "When is the review meeting?");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await EmitFinalAndSettleAsync(socket, provider, clock, "c", "Sure.");
+        clock.Advance(TimeSpan.FromSeconds(2));
+        hold.SetResult();
+        for (var answered = false; !answered;)
+        {
+            var message = await Receive(socket);
+            answered = TypeOf(message) == "response.completed" && message.GetProperty("turnId").GetString() == "b";
+        }
+
+        // b's final came at 1.3 s and its reply at 4.9 s: 3.6 s, not the 2.3 s since the later backchannel c.
+        Assert.Equal(3600d, measurements.Last(measurement => measurement.Name == "voiceassistant.stt_final_to_first_delta").Value);
+        Assert.Equal(3600d, measurements.Last(measurement => measurement.Name == "voiceassistant.stt_final_to_completed").Value);
         await Send(socket, """{"type":"session.stop"}""");
     }
 

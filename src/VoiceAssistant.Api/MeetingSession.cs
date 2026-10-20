@@ -80,6 +80,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private bool responsePending;
     private ConversationTurn[]? pendingResponseHistory;
     private string? pendingResponseTurn;
+    private long pendingResponseTimestamp;
     private readonly List<string> pendingSpeech = [];
     private long pendingSince;
     private int settleNumber;
@@ -491,6 +492,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     {
         pendingResponseHistory = CreateFocusedHistory(currentSegments);
         pendingResponseTurn = lastTurn;
+        // Timed from its own final, not from whatever later final arrives while it waits.
+        pendingResponseTimestamp = lastFinalTimestamp;
         responsePending = true;
     }
 
@@ -501,7 +504,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     /// <summary>Starts the queued reply, if any, after the active one completed or failed.</summary>
     private Task StartPendingResponseAsync(CancellationToken lifetime) => responsePending
         ? StartResponseAsync(lifetime, manual: false, currentSegments: 0,
-            preparedHistory: pendingResponseHistory, preparedTurn: pendingResponseTurn)
+            preparedHistory: pendingResponseHistory, preparedTurn: pendingResponseTurn, preparedTimestamp: pendingResponseTimestamp)
         : Task.CompletedTask;
 
     /// <summary>The fixed completion used when neither the materials nor a general model reply are available.</summary>
@@ -537,7 +540,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     }
 
     private async Task StartResponseAsync(CancellationToken lifetime, bool manual, int currentSegments,
-        ConversationTurn[]? preparedHistory = null, string? preparedTurn = null)
+        ConversationTurn[]? preparedHistory = null, string? preparedTurn = null, long? preparedTimestamp = null)
     {
         var history = preparedHistory ?? CreateFocusedHistory(currentSegments);
         if (history.Length == 0) throw new InvalidOperationException("Response history cannot be empty.");
@@ -557,7 +560,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         var prefetched = prefetch?.Take(responseTurn!, targetText, responseRoute, prior);
         retrievalPrefetched = prefetched is not null;
         responseActive = true;
-        responseMeasurement = new(lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual, clock);
+        responseMeasurement = new(preparedTimestamp ?? lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual, clock);
         var number = ++generationNumber;
         await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
         if (!generationTask.IsCompleted) retired.Add(generationTask);
