@@ -546,12 +546,20 @@ public sealed partial class ApiTests
     [Fact]
     public async Task GroupIntroductionIsFactOnlyWithoutSearchModelOrModelTimingMeasurements()
     {
+        // Timings that would claim model or search work happened; session and reply counters may still be recorded.
+        string[] modelTimings =
+        [
+            "voiceassistant.stt_final_to_first_delta", "voiceassistant.stt_final_to_completed", "voiceassistant.reply.first_token",
+            "voiceassistant.reply.final_to_primary_done", "voiceassistant.reply.classifier_wait", "voiceassistant.reply.retrieval_wait",
+            "voiceassistant.retrieval_duration"
+        ];
         var measurements = new System.Collections.Concurrent.ConcurrentBag<string>();
         using var listener = new MeterListener
         {
             InstrumentPublished = (instrument, owner) =>
             {
-                if (instrument.Meter.Name == MeetingMetrics.MeterName) owner.EnableMeasurementEvents(instrument);
+                if (instrument.Meter.Name == MeetingMetrics.MeterName && modelTimings.Contains(instrument.Name))
+                    owner.EnableMeasurementEvents(instrument);
             }
         };
         listener.SetMeasurementEventCallback<double>((instrument, _, _, _) => measurements.Add(instrument.Name));

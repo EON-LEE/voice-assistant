@@ -470,7 +470,7 @@ public sealed partial class ApiTests
             VoiceAssistant.Api.Knowledge.IKnowledgeStore? knowledge = null, TimeProvider? clock = null,
             Dictionary<string, string?>? configuration = null,
             VoiceAssistant.Api.Practice.IPracticeModel? practiceModel = null,
-            VoiceAssistant.Api.Practice.IPracticeSpeech? practiceSpeech = null)
+            VoiceAssistant.Api.Practice.IPracticeSpeech? practiceSpeech = null, IDependencyWarmup? warmup = null)
         {
             var app = ApiApplication.Build([], builder =>
             {
@@ -487,13 +487,17 @@ public sealed partial class ApiTests
                     ["Azure:SpeechResourceId"] = "/subscriptions/test",
                     ["Azure:OpenAIEndpoint"] = "https://example.openai.azure.com",
                     ["Azure:ChatDeployment"] = "chat",
-                    ["Security:AllowedOrigins:0"] = "https://meeting.example"
+                    ["Security:AllowedOrigins:0"] = "https://meeting.example",
+                    // Tests never export telemetry, even on a machine that has a connection string in its environment.
+                    [ApiTelemetry.ConnectionStringKey] = ""
                 });
                 if (configuration is not null) builder.Configuration.AddInMemoryCollection(configuration);
                 if (knowledge is not null) builder.Services.AddSingleton(knowledge);
                 if (clock is not null) builder.Services.AddSingleton(clock);
                 if (practiceModel is not null) builder.Services.AddSingleton(practiceModel);
                 if (practiceSpeech is not null) builder.Services.AddSingleton(practiceSpeech);
+                // Azure-mode tests never reach real Azure: the startup warm-up succeeds at once unless a test supplies one.
+                builder.Services.AddSingleton<IDependencyWarmup>(warmup ?? new InstantWarmup());
                 builder.Services.AddSingleton<IMeetingProvider>(provider ?? new FakeMeetingProvider());
                 builder.Services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {
