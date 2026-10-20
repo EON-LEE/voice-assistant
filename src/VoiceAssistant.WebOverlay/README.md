@@ -7,8 +7,14 @@ window background see-through. Screen, features and network connection are the w
 - Injected CSS for the hosted page only: transparent page background, panel alpha (92/80/65/50 %, default 80 %),
   drag by the header, themed scrollbars, PiP item hidden.
 - Extra right-click items: **투명도 바꾸기**, **창 최소화**, **프로그램 종료**.
-- Microphone permission is granted only to the hosted page origin; other permissions are denied.
-  Navigation of the overlay to another origin is blocked (sign-in uses its own popup window).
+- Microphone permission is granted only to the hosted page origin; other permission requests are denied. Screen sharing
+  (`getDisplayMedia`) is not a WebView2 permission kind: the page's **탭/시스템 오디오** source opens the WebView2 share
+  picker, which offers screens and windows but no browser tabs. Only **전체 화면** with **시스템 오디오 공유** carries
+  audio, and system audio is the loopback of the Windows default output device; a window share has no audio. The page
+  recognises the host (`window.chrome.webview`) and gives exactly these steps when a share has no audio.
+- A main-window navigation to another origin is cancelled and an HTTPS target opens in the default browser instead.
+  Pop-up windows the page opens (Microsoft sign-in, the materials link) are WebView2's own windows and are not covered by
+  these navigation and permission rules.
 - A fixed WebView2 profile in `%LOCALAPPDATA%\VoiceAssistant\WebOverlay\Profile` keeps the Microsoft sign-in
   between runs. Window position, size and opacity are saved in `overlay-settings.json` next to it.
 
