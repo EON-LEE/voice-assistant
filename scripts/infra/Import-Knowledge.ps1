@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$ManifestPath,
     [Parameter(Mandatory)][string]$ContentRoot,
     [string]$IndexName = 'meeting-knowledge',
-    [string]$SubscriptionId = 'b0af194e-77a5-4471-bb43-67e78295b5c8',
+    [string]$SubscriptionId,
     [string]$TenantId,
     [string]$ResourceGroup,
     [string]$SearchName,
@@ -28,8 +28,12 @@ if (-not $Apply) {
     return
 }
 if (-not $ConfirmExclusiveMaintenance) { throw '-Apply requires -ConfirmExclusiveMaintenance: stop/drain the app, clear active sessions, and reserve this index for this ingestion tool before modifying knowledge.' }
-foreach ($value in @($TenantId, $ResourceGroup, $SearchName, $OpenAIName, $StorageAccountName, $EmbeddingDeployment)) {
-    if ([string]::IsNullOrWhiteSpace($value)) { throw 'Apply requires explicit tenant, resource group, Search/OpenAI/storage names and embedding deployment.' }
+Import-Module (Join-Path $PSScriptRoot 'ReleaseTarget.psm1') -Force
+$target = Resolve-ApprovedTarget -SubscriptionId $SubscriptionId -TenantId $TenantId
+$SubscriptionId = $target.SubscriptionId
+$TenantId = $target.TenantId
+foreach ($value in @($ResourceGroup, $SearchName, $OpenAIName, $StorageAccountName, $EmbeddingDeployment)) {
+    if ([string]::IsNullOrWhiteSpace($value)) { throw 'Apply requires explicit resource group, Search/OpenAI/storage names and embedding deployment.' }
 }
 if ($SearchName -cnotmatch '^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$' -or
     $OpenAIName -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9-]{1,62}[a-zA-Z0-9]$' -or

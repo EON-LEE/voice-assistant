@@ -35,8 +35,8 @@ It supports legacy OLE PowerPoint files even when their extension is `.pptx`.
      --scenarios C:\temp\synthetic-market-signals.scenarios.json
    ```
 
-4. Run the production reply prompt with those facts as grounding. This calls Azure OpenAI and needs `OPENAI_TOKEN`;
-   `EVAL_OPENAI_ENDPOINT` and `EVAL_CHAT_DEPLOYMENT` are optional:
+4. Run the production reply prompt with those facts as grounding. This calls Azure OpenAI and needs `OPENAI_TOKEN` and
+   `EVAL_OPENAI_ENDPOINT` (your Azure OpenAI endpoint); `EVAL_CHAT_DEPLOYMENT` is optional and defaults to `meeting-chat`:
 
    ```powershell
    dotnet run --project .\tools\ReplyQualityEval -- `

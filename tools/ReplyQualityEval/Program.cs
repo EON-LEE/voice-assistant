@@ -15,8 +15,19 @@ if (args.Length < 2)
     Console.Error.WriteLine("Set EVAL_TIMING_ONLY=1 before running representative corpus timing checks without model calls.");
     return 2;
 }
-var models = new Models(new EnvToken(), Environment.GetEnvironmentVariable("EVAL_OPENAI_ENDPOINT") ?? "https://voice-ai-2cmx22yjxadpg.openai.azure.com/",
-    Environment.GetEnvironmentVariable("EVAL_CHAT_DEPLOYMENT") ?? "meeting-chat");
+var timingOnly = Environment.GetEnvironmentVariable("EVAL_TIMING_ONLY") == "1";
+var endpoint = Environment.GetEnvironmentVariable("EVAL_OPENAI_ENDPOINT");
+if (string.IsNullOrWhiteSpace(endpoint))
+{
+    if (args[0] == "--scenarios" || !timingOnly)
+    {
+        Console.Error.WriteLine("Set EVAL_OPENAI_ENDPOINT to your Azure OpenAI endpoint, for example https://<resource>.openai.azure.com/.");
+        return 2;
+    }
+    // Timing-only runs never call the model.
+    endpoint = "https://openai-endpoint.invalid/";
+}
+var models = new Models(new EnvToken(), endpoint, Environment.GetEnvironmentVariable("EVAL_CHAT_DEPLOYMENT") ?? "meeting-chat");
 if (args[0] == "--scenarios")
 {
     if (args.Length != 3)
@@ -30,7 +41,6 @@ if (args[0] == "--scenarios")
 var output = args[0];
 const double Window = 300;
 var Settle = double.Parse(Environment.GetEnvironmentVariable("EVAL_SETTLE") ?? "2.5", System.Globalization.CultureInfo.InvariantCulture);
-var timingOnly = Environment.GetEnvironmentVariable("EVAL_TIMING_ONLY") == "1";
 var gate = new SemaphoreSlim(3);
 var results = new List<object>();
 var rows = new List<string[]>();

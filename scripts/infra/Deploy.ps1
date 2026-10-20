@@ -6,7 +6,7 @@ param(
     [string[]]$AzPrefix = @(),
     [ValidateSet('AzureCli', 'AzPowerShell')][string]$AuthProvider = 'AzureCli',
     [ValidateRange(1, 1800)][int]$CommandTimeoutSeconds = 900,
-    [string]$SubscriptionId = 'b0af194e-77a5-4471-bb43-67e78295b5c8',
+    [string]$SubscriptionId,
     [string]$ResourceGroup,
     [string]$DeploymentName = 'voice-assistant',
     [switch]$Validate,
@@ -16,6 +16,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'ReleaseTarget.psm1') -Force
 Set-AzureCli -AzPath $AzPath -AzPrefix $AzPrefix -TimeoutSeconds $CommandTimeoutSeconds -AuthProvider $AuthProvider
 if (@($Validate, $WhatIf, $Apply).Where({ $_ }).Count -gt 1) { throw 'Choose only one of -Validate, -WhatIf or -Apply.' }
 $templatePath = Join-Path $PSScriptRoot '..\..\infra\main.bicep'
@@ -31,7 +32,12 @@ try {
         return
     }
     if ([string]::IsNullOrWhiteSpace($ResourceGroup)) { throw 'Online operations require an explicit existing ResourceGroup.' }
-    $null = Assert-Subscription $SubscriptionId $parameters.parameters.tenantId.value
+    $target = Resolve-ApprovedTarget -SubscriptionId $SubscriptionId
+    $SubscriptionId = $target.SubscriptionId
+    if (-not (Test-SameGuid $parameters.parameters.tenantId.value $target.TenantId)) {
+        throw 'The parameters tenantId does not match the approved target tenant.'
+    }
+    $null = Assert-Subscription $SubscriptionId $target.TenantId
     $null = Invoke-AzJson @('group', 'show', '--name', $ResourceGroup, '--subscription', $SubscriptionId)
     $arguments = @('--subscription', $SubscriptionId, '--resource-group', $ResourceGroup, '--name', $DeploymentName,
         '--template-file', $compiledPath, '--parameters', ('@' + (Resolve-Path -LiteralPath $ParametersFile).Path), '--mode', 'Incremental')

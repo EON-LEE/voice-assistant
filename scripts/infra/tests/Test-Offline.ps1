@@ -163,12 +163,14 @@ try {
 
     $parameters = Get-Content -LiteralPath (Join-Path $repoRoot 'infra\parameters.example.json') -Raw | ConvertFrom-Json
     Assert-Throws { Assert-DeploymentParameters $parameters $template } 'Unresolved example' 'Example placeholders fail closed'
+    $releaseFixture = Join-Path $PSScriptRoot 'fixtures\release.fixture.json'
+    $approved = Get-Content -LiteralPath $releaseFixture -Raw | ConvertFrom-Json
     $p = $parameters.parameters
     foreach ($name in @('location', 'speechLocation', 'openAILocation', 'searchLocation')) { $p.$name.value = 'eastus' }
     $p.registryName.value = 'fixtureacr'
     $p.registryResourceGroup.value = 'fixture-registry'
     $p.image.value = 'fixtureacr.azurecr.io/voice-assistant@sha256:' + ('a' * 64)
-    $p.tenantId.value = '11111111-1111-4111-8111-111111111111'
+    $p.tenantId.value = $approved.tenantId
     $p.apiAudience.value = '22222222-2222-4222-8222-222222222222'
     $p.spaClientId.value = '33333333-3333-4333-8333-333333333333'
     $p.apiScope.value = 'api://22222222-2222-4222-8222-222222222222/Meeting.Access'
@@ -190,6 +192,8 @@ try {
     Assert-True ($result -match 'No Azure request') 'Default deployment invocation is offline only'
     Assert-Throws { & (Join-Path $scriptsRoot 'Deploy.ps1') -BicepPath $BicepPath -ParametersFile $temporary[1] -Apply -WhatIf } 'only one' 'Conflicting deployment switches rejected before Azure access'
     $global:MockAzCalls = New-Object 'Collections.Generic.List[string]'
+    $global:MockApprovedTarget = $approved
+    $previousReleaseConfig = $env:VOICE_ASSISTANT_RELEASE_CONFIG
     $processModule = Get-Module -All AzureProcess | Select-Object -First 1
     $originalProcess = & $processModule { (Get-Command Invoke-BoundedJsonCommand).ScriptBlock }
     & $processModule {
@@ -205,7 +209,7 @@ try {
         $line = $arguments -join ' '
         $global:MockAzCalls.Add($line) > $null
         if ($line.StartsWith('account show')) {
-            return '{"id":"b0af194e-77a5-4471-bb43-67e78295b5c8","tenantId":"11111111-1111-4111-8111-111111111111","state":"Enabled"}'
+            return (@{ id = $global:MockApprovedTarget.subscriptionId; tenantId = $global:MockApprovedTarget.tenantId; state = 'Enabled' } | ConvertTo-Json -Compress)
         }
         if ($line.StartsWith('deployment group what-if')) {
             return '{"changes":[{"changeType":"Create","resourceId":"/mock/resource","after":{"mustNotPrint":"PRIVATE_DIFF_SENTINEL"}}]}'
@@ -216,18 +220,34 @@ try {
         return '{}'
     }
     try {
+        $online = @{ BicepPath = $BicepPath; ParametersFile = $temporary[1]; ResourceGroup = 'fixture-rg'; Validate = $true }
+        $env:VOICE_ASSISTANT_RELEASE_CONFIG = Join-Path $PSScriptRoot 'fixtures\absent-release.local.json'
+        Assert-Throws { & (Join-Path $scriptsRoot 'Deploy.ps1') @online } 'not configured' 'Online deployment fails closed without the local approved-target file'
+        $env:VOICE_ASSISTANT_RELEASE_CONFIG = Join-Path $repoRoot 'infra\release.example.json'
+        Assert-Throws { & (Join-Path $scriptsRoot 'Deploy.ps1') @online } 'subscriptionId, tenantId, projectId' 'Placeholder approved target fails closed without printing values'
+        Assert-True ($global:MockAzCalls.Count -eq 0) 'No Azure command runs before the approved target is known'
+        $env:VOICE_ASSISTANT_RELEASE_CONFIG = $releaseFixture
+        Assert-Throws { & (Join-Path $scriptsRoot 'Deploy.ps1') @online -SubscriptionId '99999999-9999-4999-8999-999999999999' } 'does not match the approved target' 'Explicit subscription cannot widen the approved target'
+        $otherTenant = Copy-Json $parameters
+        $otherTenant.parameters.tenantId.value = '99999999-9999-4999-8999-999999999999'
+        $otherTenant | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $temporary[2] -Encoding UTF8
+        $otherOnline = $online.Clone()
+        $otherOnline.ParametersFile = $temporary[2]
+        Assert-Throws { & (Join-Path $scriptsRoot 'Deploy.ps1') @otherOnline } 'tenantId does not match' 'Parameters for another tenant are rejected'
+        Assert-True ($global:MockAzCalls.Count -eq 0) 'Target mismatches are rejected before any Azure command'
         $result = & (Join-Path $scriptsRoot 'Deploy.ps1') -BicepPath $BicepPath -ParametersFile $temporary[1] -ResourceGroup 'fixture-rg' -Validate
         Assert-True ($result -match 'validation passed' -and @($global:MockAzCalls | Where-Object { $_ -match 'deployment group create' }).Count -eq 0) 'Mocked Validate does not deploy'
         $preview = & (Join-Path $scriptsRoot 'Deploy.ps1') -BicepPath $BicepPath -ParametersFile $temporary[1] -ResourceGroup 'fixture-rg' -WhatIf
         Assert-True ($preview.ChangeType -eq 'Create' -and ($preview | ConvertTo-Json -Depth 10) -notmatch 'PRIVATE_DIFF_SENTINEL') 'Mocked WhatIf suppresses parameter/environment diff values'
         $result = & (Join-Path $scriptsRoot 'Deploy.ps1') -BicepPath $BicepPath -ParametersFile $temporary[1] -ResourceGroup 'fixture-rg' -Apply
         Assert-True (@($global:MockAzCalls | Where-Object { $_ -match 'deployment group create' }).Count -eq 1) 'Only explicit Apply issues a mocked create'
-        Assert-True (@($global:MockAzCalls | Where-Object { $_ -notmatch '--subscription b0af194e-77a5-4471-bb43-67e78295b5c8' -or $_ -match 'account set' }).Count -eq 0) 'All online commands target explicit subscription without changing global defaults'
-        Assert-Throws { Assert-Subscription 'b0af194e-77a5-4471-bb43-67e78295b5c8' '99999999-9999-4999-8999-999999999999' } 'tenant does not match' 'Wrong subscription tenant rejected'
+        Assert-True (@($global:MockAzCalls | Where-Object { $_ -notmatch "--subscription $($approved.subscriptionId)" -or $_ -match 'account set' }).Count -eq 0) 'All online commands target the approved subscription without changing global defaults'
+        Assert-Throws { Assert-Subscription $approved.subscriptionId '99999999-9999-4999-8999-999999999999' } 'tenant does not match' 'Wrong subscription tenant rejected'
     } finally {
+        $env:VOICE_ASSISTANT_RELEASE_CONFIG = $previousReleaseConfig
         & $processModule { param($Original) Set-Item Function:script:Invoke-BoundedJsonCommand $Original } $originalProcess
         Remove-Item Function:\az
-        Remove-Variable MockAzCalls -Scope Global
+        Remove-Variable MockAzCalls, MockApprovedTarget -Scope Global
     }
 
     $fixtures = Join-Path $PSScriptRoot 'fixtures'
