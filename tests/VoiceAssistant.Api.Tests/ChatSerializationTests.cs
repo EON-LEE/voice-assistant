@@ -48,6 +48,7 @@ public sealed class ChatSerializationTests
         Assert.Contains("CEFR A2-B1", handler.RequestBody);
         Assert.Contains("at most 18 words", handler.RequestBody);
         Assert.Contains("preserve every compared number", handler.RequestBody);
+        Assert.Contains("Never convert one or estimate an equivalent", handler.RequestBody);
         Assert.Contains("Answer every material clause", handler.RequestBody);
         Assert.Contains("use up to 24 words across both", handler.RequestBody);
         Assert.Contains("complete the evidence or uncertainty", handler.RequestBody);

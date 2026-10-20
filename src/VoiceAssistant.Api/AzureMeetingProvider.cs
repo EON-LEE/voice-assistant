@@ -349,6 +349,9 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 Pick up one concrete detail from it (a number, price, item, name or decision) so the hint clearly fits.
                 When a direct question compares, challenges or repeats specific numbers, preserve every compared number
                 in the primary reply; do not replace them with vague phrases such as "the cut" or "a large amount".
+                In both replies, keep every price, amount and measurement in the currency and unit the evidence uses.
+                Never convert one or estimate an equivalent; if asked for a currency or unit the evidence does not
+                give, say that it is not listed.
                 Answer every material clause of a direct question. If one clause asks for a private or document-specific
                 detail the evidence does not contain, answer the supported clause first, then say briefly that the
                 missing detail is not in the material or needs verification. Do not silently skip that clause, turn it
