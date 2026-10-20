@@ -20,6 +20,8 @@ public sealed record KnowledgeDocument(string Id, string Title, int Chunks, Date
 public sealed record KnowledgeUpload(string Id, string Title, int Chunks, int Characters, DateTimeOffset UpdatedAt);
 public sealed record KnowledgeInput(string Title, string Text);
 public sealed record KnowledgeChunk(string Id, string Content);
+/// <summary>One stored chunk of an owner's material: its chunk key (see <see cref="KnowledgeIds.DocumentOf"/>), document title and text.</summary>
+public sealed record MaterialText(string Id, string Title, string Content);
 
 public sealed class KnowledgeException(int status, string code, string message) : Exception(message)
 {
@@ -54,4 +56,11 @@ public interface IKnowledgeStore
     Task<IReadOnlyList<KnowledgeDocument>> ListAsync(string owner, CancellationToken cancellation);
     Task UploadAsync(string owner, KnowledgeDocument document, IReadOnlyList<KnowledgeChunk> chunks, CancellationToken cancellation);
     Task DeleteAsync(string owner, string documentId, CancellationToken cancellation);
+
+    /// <summary>
+    /// Up to <paramref name="maxChunks"/> chunks of the material the owner may read (the same ACL filter as retrieval), for
+    /// speech phrase hints. A store without text access returns none.
+    /// </summary>
+    Task<IReadOnlyList<MaterialText>> ReadTextAsync(string owner, int maxChunks, CancellationToken cancellation) =>
+        Task.FromResult<IReadOnlyList<MaterialText>>([]);
 }

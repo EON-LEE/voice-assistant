@@ -4,6 +4,34 @@ using System.Globalization;
 namespace VoiceAssistant.Api;
 
 /// <summary>
+/// Sends a configured api-version on the live chat requests instead of the pinned SDK's default, for example when a
+/// deployment needs a newer version to accept <c>reasoning_effort</c>. A per-call policy, so the single retry reuses it.
+/// </summary>
+internal sealed class ApiVersionPolicy(string version) : PipelinePolicy
+{
+    public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+    {
+        Apply(message);
+        ProcessNext(message, pipeline, currentIndex);
+    }
+
+    public override async ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+    {
+        Apply(message);
+        await ProcessNextAsync(message, pipeline, currentIndex).ConfigureAwait(false);
+    }
+
+    private void Apply(PipelineMessage message)
+    {
+        if (message.Request.Uri is not { } uri) return;
+        var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Where(part => !part.StartsWith("api-version=", StringComparison.OrdinalIgnoreCase))
+            .Append("api-version=" + Uri.EscapeDataString(version));
+        message.Request.Uri = new UriBuilder(uri) { Query = string.Join('&', query) }.Uri;
+    }
+}
+
+/// <summary>
 /// The live reply chat call running on this async flow (answer, classifier or translation) and its deadline, read by
 /// <see cref="LiveChatRetryPolicy"/>. The provider opens one around each live call; disposing it restores the previous one.
 /// A call that serves the reply being generated (answer, classifier) is also bounded by that reply's absolute deadline,

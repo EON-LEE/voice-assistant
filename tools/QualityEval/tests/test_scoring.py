@@ -71,6 +71,23 @@ class ScoringTests(unittest.TestCase):
         self.assertFalse(accepted.abstain_ok)
         self.assertFalse(accepted.passed)
 
+    def test_a_negated_guarantee_declines_the_commitment(self):
+        item = make_item(category="commitment", required_facts=(Fact("sla", ("99.9 %",)),), materials_required=False,
+                         expected_sources=(), abstain_required=True, abstain_any_of=("can't guarantee",))
+        declined = score_answer(item, "No, there's no 100% uptime guarantee.", "The best plan lists a 99.9% SLA.",
+                                "grounded", [], [], answered=True)
+        self.assertTrue(declined.abstain_ok)
+        self.assertTrue(declined.passed)
+        wont = score_answer(item, "We won't commit to that date.", "The plan lists 99.9% uptime.", "grounded", [], [],
+                            answered=True)
+        self.assertTrue(wont.abstain_ok)
+        promised = score_answer(item, "Sure, we guarantee it and our SLA is 99.9%.", "", "grounded", [], [],
+                                answered=True)
+        self.assertFalse(promised.abstain_ok)
+        new_clause = score_answer(item, "There's no problem, we guarantee 100% uptime.", "Our SLA is 99.9%.",
+                                  "grounded", [], [], answered=True)
+        self.assertFalse(new_clause.abstain_ok)
+
     def test_unit_wording_does_not_decide_a_fact(self):
         item = make_item(required_facts=(Fact("response-time", ("30 minutes",)),), materials_required=False,
                          expected_sources=())
