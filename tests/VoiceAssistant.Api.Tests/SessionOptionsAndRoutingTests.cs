@@ -242,6 +242,57 @@ public sealed class SessionOptionsAndRoutingTests
         Assert.True(Parse("""{"replyKorean":true}""").ReplyKorean);
     }
 
+    [Theory]
+    [InlineData("""{"responseMode":"conversation"}""", "conversation", null)]
+    [InlineData("""{"responseMode":"balanced","replyKorean":true}""", "balanced", true)]
+    [InlineData("""{"replyKorean":false}""", null, false)]
+    public void SessionUpdateCarriesOnlyTheGivenSettings(string json, string? mode, bool? korean)
+    {
+        var update = ParseUpdate(json);
+        Assert.Equal(mode, update.ResponseMode);
+        Assert.Equal(korean, update.ReplyKorean);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("\"conversation\"")]
+    [InlineData("""{"responseMode":null}""")]
+    [InlineData("""{"responseMode":"fast"}""")]
+    [InlineData("""{"responseMode":3}""")]
+    [InlineData("""{"responseMode":"a\nb"}""")]
+    [InlineData("""{"replyKorean":"true"}""")]
+    [InlineData("""{"replyKorean":1}""")]
+    [InlineData("""{"replyKorean":null}""")]
+    [InlineData("""{"topic":"x"}""")]
+    [InlineData("""{"responseMode":"balanced","topic":"x"}""")]
+    [InlineData("""{"transcribeOnly":true}""")]
+    [InlineData("""{"responseMode":"balanced","responseMode":"grounded"}""")]
+    public void InvalidSessionUpdatesAreRejected(string json) =>
+        Assert.Throws<JsonException>(() => ParseUpdate(json));
+
+    [Fact]
+    public void AppliedUpdateChangesOnlyTheGivenSettings()
+    {
+        var start = Parse("""{"responseMode":"balanced","topic":"API","replyKorean":true,"replySettleMs":1000}""");
+        var mode = start.Apply(ParseUpdate("""{"responseMode":"conversation"}"""));
+        Assert.Equal("conversation", mode.ResponseMode);
+        Assert.True(mode.ReplyKorean);
+        Assert.Equal("API", mode.Topic);
+        Assert.Equal(1000, mode.ReplySettleMs);
+        var korean = mode.Apply(ParseUpdate("""{"replyKorean":false}"""));
+        Assert.Equal("conversation", korean.ResponseMode);
+        Assert.False(korean.ReplyKorean);
+        Assert.Equal("balanced", start.ResponseMode);
+    }
+
+    private static SessionUpdate ParseUpdate(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return SessionOptions.ParseUpdate(document.RootElement);
+    }
+
     private static SessionOptions Parse(string json)
     {
         using var document = JsonDocument.Parse(json);

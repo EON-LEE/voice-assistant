@@ -186,6 +186,65 @@ public sealed class PartialRetrievalTests
     }
 
     [Fact]
+    public async Task SwitchingToConversationDropsAPendingPrefetchAndStopsNewOnes()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        cache.UpdateOptions(new() { ResponseMode = "conversation" });
+        Assert.True(call.Cancellation.IsCancellationRequested);
+        Assert.Null(cache.Take("turn", Query, "knowledge"));
+        cache.Update(new("turn", 2, Query + " tomorrow", false));
+        await Task.Delay(350);
+        Assert.Single(provider.Calls);
+    }
+
+    [Fact]
+    public async Task SwitchingBackToGroundedPrefetchesAgain()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, new() { ResponseMode = "conversation" }, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        await Task.Delay(300);
+        Assert.Empty(provider.Calls);
+        cache.UpdateOptions(new() { ResponseMode = "grounded" });
+        cache.Update(new("turn", 2, Query, false));
+        var call = await provider.Next();
+        call.Result.SetResult(new("no_matches", []));
+        Assert.Equal("no_matches", (await cache.Take("turn", Query, "knowledge")!).RequireGrounding().Status);
+    }
+
+    [Fact]
+    public async Task ModeSwitchKeepsARetrievalAReplyAlreadyWaitsFor()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        var selected = cache.Take("turn", Query, "knowledge");
+        Assert.NotNull(selected);
+        cache.UpdateOptions(new() { ResponseMode = "conversation" });
+        Assert.False(call.Cancellation.IsCancellationRequested);
+        call.Result.SetResult(new("grounded", []));
+        Assert.Equal("grounded", (await selected!).RequireGrounding().Status);
+    }
+
+    [Fact]
+    public async Task UpdateThatKeepsTheModeKeepsThePendingPrefetch()
+    {
+        var provider = new Provider();
+        await using var cache = new PartialRetrieval(provider, Oid, SessionOptions.Legacy, CancellationToken.None);
+        cache.Update(new("turn", 1, Query, false));
+        var call = await provider.Next();
+        cache.UpdateOptions(SessionOptions.Legacy with { ReplyKorean = true });
+        Assert.False(call.Cancellation.IsCancellationRequested);
+        call.Result.SetResult(new("no_matches", []));
+        Assert.NotNull(cache.Take("turn", Query, "knowledge"));
+        Assert.Single(provider.Calls);
+    }
+
+    [Fact]
     public async Task FollowUpPrefetchUsesSameBoundedActualContextAsFinalAndPreservesOwner()
     {
         var provider = new Provider();

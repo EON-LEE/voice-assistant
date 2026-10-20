@@ -28,6 +28,23 @@ html, body.live-body { margin: 0; min-height: 100%; }
 .live-panel[data-capture="paused"] .live-capture, .live-panel[data-capture="reconnecting"] .live-capture { color: #ffd700; }
 .live-version { font-size: 10px; color: #a5b0c2; }
 .live-error { margin: 4px 0 0; font-size: 12px; color: #ffb5b5; }
+.live-note { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: #ffe2aa; }
+
+/* Quick settings: document search on/off, captions, Korean meaning. Buttons stay text-only so the host's drag handler ignores them. */
+.live-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
+.live-seg { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
+.live-seg-label { margin-right: 6px; font-size: 12px; color: #c1cfe2; white-space: nowrap; }
+.live-quick button {
+  font: inherit; font-size: 12px; min-height: 28px; padding: 3px 10px; border: 1px solid #5d7394;
+  background: #1f3047; color: #edf2fa; cursor: pointer; touch-action: manipulation; white-space: nowrap;
+}
+.live-seg button:nth-of-type(1) { border-radius: 6px 0 0 6px; }
+.live-seg button:nth-of-type(2) { border-radius: 0 6px 6px 0; margin-left: -1px; }
+.live-chip { border-radius: 999px; }
+.live-quick button:hover { background: #2a4260; }
+.live-quick button[aria-pressed="true"] { background: #344d6b; border-color: #a9c9ff; color: #fff; font-weight: 600; }
+.live-quick button[aria-pressed="true"]::before { content: "✓ "; content: "✓ " / ""; }
+.live-quick button:focus-visible { outline: 2px solid #a9c9ff; outline-offset: 2px; position: relative; }
 
 .live-conversation {
   min-width: 0; padding: 14px 0; border-bottom: 1px solid rgba(255, 255, 255, .11);

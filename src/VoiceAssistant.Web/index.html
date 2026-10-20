@@ -44,17 +44,20 @@
           <label class="check"><input id="consent" type="checkbox"><span id="consent-label">I have permission from the participants to capture and send this meeting audio.</span></label>
           <button id="signin" type="button" class="secondary">Sign in securely</button><span id="auth-status" role="status">Sign-in required before sharing.</span>
         </div>
+        <div id="answer-options" hidden>
+          <label for="response-mode">Document search · 문서 검색</label>
+          <select id="response-mode" aria-describedby="response-mode-note">
+            <option value="balanced">On · when needed · 필요할 때만 (recommended)</option>
+            <option value="grounded">On · every reply · 항상 사용</option>
+            <option value="conversation">Off · conversation only · 미사용 (fastest)</option>
+          </select>
+          <p id="response-mode-note" class="fine">Applies when you start the session. · 시작할 때 적용돼요.</p>
+        </div>
         <details id="meeting-options" hidden>
-          <summary>Meeting context and answer settings (optional)</summary>
+          <summary>Meeting context and speech settings (optional)</summary>
           <fieldset id="meeting-fields">
             <legend>For this session only</legend>
             <p class="fine">Only details you enter and confirm are used. Nothing is inferred from your account or WorkIQ. These fields stay in this page's memory and are sent to the meeting service when you start; they are never saved in browser storage.</p>
-            <label for="response-mode">Answer mode</label>
-            <select id="response-mode">
-              <option value="balanced">Balanced — context first, knowledge when needed</option>
-              <option value="grounded">Always knowledge — search approved references</option>
-              <option value="conversation">Conversation only — no retrieval wait</option>
-            </select>
             <div class="context-grid">
               <div><label for="profile-name">Your name (optional, 100 characters)</label><input id="profile-name" type="text" maxlength="100" autocomplete="off"></div>
               <div><label for="profile-role">Your role (optional, 160 characters)</label><input id="profile-role" type="text" maxlength="160" autocomplete="off"></div>
@@ -84,7 +87,7 @@
           <div class="question-line"><span class="eyebrow">THE OTHER PERSON · 상대방</span><p id="coach-question">The latest question will appear here.</p><p id="question-ko" class="korean" lang="ko" hidden></p></div>
           <div class="section-heading"><h2 id="reply-title"><span aria-hidden="true">✧</span> Suggestion · 답변 제안</h2><span id="reply-status" role="status">Ready when you are</span></div>
           <p id="reply" class="answer">Ask for a suggestion after a final transcript arrives.</p>
-          <div class="listen-row"><button id="reply-listen" class="listen-pill" type="button" disabled>◖ Click to listen · 듣기</button><label for="speech-rate">Speed</label><select id="speech-rate"><option value="normal">Normal · 보통</option><option value="slow">Slow · 천천히</option></select><button id="stop-listening" type="button" class="secondary">Stop audio</button></div>
+          <div class="listen-row"><button id="reply-listen" class="listen-pill" type="button" disabled>◖ Click to listen · 듣기</button><label for="speech-rate">Speed</label><select id="speech-rate"><option value="fast" selected>Fast · 빠르게</option><option value="normal">Normal · 보통</option><option value="slow">Slow · 천천히</option></select><button id="stop-listening" type="button" class="secondary">Stop audio</button><label class="check"><input id="meeting-korean" type="checkbox"> Korean meaning &amp; reading · 한국어 뜻·발음</label></div>
           <p id="reply-ko" class="korean" lang="ko" hidden></p><div id="reply-pronunciation" class="pronunciation" aria-label="English chunks and approximate Hangul reading" hidden></div>
           <p id="pronunciation-note" class="fine" hidden>Hangul reading is approximate · 한글 발음은 참고용입니다.</p>
           <ul id="sources" aria-label="Suggestion sources"></ul><div class="actions"><button id="suggest" type="button" disabled>Suggest a short reply</button><button id="cancel" type="button" class="secondary" disabled>Cancel</button><button id="pin" type="button" class="secondary" disabled>Pin this answer</button></div><p class="fine">Suggestions can be wrong. Check names, facts, and commitments before speaking.</p>
@@ -105,7 +108,7 @@
             <div class="context-grid"><div><label for="practice-difficulty">Difficulty</label><select id="practice-difficulty"><option value="1">1 · Simple</option><option value="2" selected>2 · Business</option><option value="3">3 · Challenging</option></select></div>
             <div><label for="practice-count">Number of questions</label><input id="practice-count" type="number" min="1" max="12" value="5"></div></div>
             <label for="practice-topic">Practice topic</label><input id="practice-topic" maxlength="300" type="text">
-            <label class="check"><input id="practice-materials" type="checkbox" checked> Use my materials</label>
+            <label class="check"><input id="practice-materials" type="checkbox" checked> Document search · use my materials · 문서 검색 사용</label>
             <label class="check"><input id="practice-smart" type="checkbox" checked> Smart suggestion on request</label>
             <label class="check"><input id="practice-consent" type="checkbox"> I agree to send my microphone answers for this practice. I have permission for any room audio captured.</label>
           </fieldset>
@@ -117,7 +120,7 @@
         <div id="practice-conversation" class="card" hidden>
           <span class="eyebrow">YOUR PRACTICE PARTNER</span>
           <h3 id="practice-question"></h3><p id="practice-question-ko" class="korean" lang="ko" hidden></p><ul id="practice-sources"></ul>
-          <div class="listen-row"><button id="partner-listen" class="listen-pill" type="button">Listen to question</button><label for="practice-rate">Speed</label><select id="practice-rate"><option value="normal">Normal</option><option value="slow">Slow</option></select></div>
+          <div class="listen-row"><button id="partner-listen" class="listen-pill" type="button">Listen to question</button><label for="practice-rate">Speed</label><select id="practice-rate"><option value="fast" selected>Fast</option><option value="normal">Normal</option><option value="slow">Slow</option></select><label class="check"><input id="practice-korean" type="checkbox"> Korean meaning &amp; reading · 한국어 뜻·발음</label></div>
           <div class="actions"><button id="practice-answer" type="button">Answer by voice</button><button id="practice-done" type="button" disabled>Done answering</button><button id="practice-skip" type="button">Skip question</button><button id="practice-hint" type="button">Smart suggestion</button></div>
           <p class="fine">Listen first, then click Answer by voice. Recognition stays paused during partner audio. Done uses final transcripts only; wait until your words are final.</p>
           <p id="practice-answer-text" aria-live="polite"></p><p id="practice-partial" class="fine"></p>

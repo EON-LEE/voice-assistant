@@ -93,7 +93,7 @@ public static class PracticeRequests
             EnglishInput(text);
             return new(operation, Text: text,
                 Voice: root.TryGetProperty("voice", out var voice) ? PracticeJson.Choice(voice, "coach", "partner") : "coach",
-                Rate: root.TryGetProperty("rate", out var rate) ? PracticeJson.Choice(rate, "normal", "slow") : "normal");
+                Rate: root.TryGetProperty("rate", out var rate) ? PracticeJson.Choice(rate, "normal", "slow", "fast") : "normal");
         }
         string[] required = operation switch
         {

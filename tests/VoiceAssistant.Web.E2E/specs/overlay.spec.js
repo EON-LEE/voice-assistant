@@ -147,6 +147,7 @@ test('new Start without live consent prompts settings and unconfirmed profile st
 });
 test('meeting card is viewport-contained at desktop, floating and mobile sizes with readable settings', async ({ page }) => {
   const ws = await mocks(page); await page.goto('/'); await setConnectionMode(page, 'synthetic'); await startMeeting(page);
+  await page.locator('#meeting-korean').check();
   ws.reply(); await expect(page.locator('#reply-ko')).toBeVisible();
   for (const [width, height, name] of [[1100, 800, 'desktop'], [460, 680, 'floating'], [390, 844, 'mobile']]) {
     await page.setViewportSize({ width, height });

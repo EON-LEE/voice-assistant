@@ -40,6 +40,7 @@ ul { padding-left: 18px; font-size: .8rem; overflow-wrap: anywhere; color: #5269
 footer { margin-top: 25px; max-width: 870px; }
 [hidden] { display: none !important; }
 details { margin-top: 18px; }
+#answer-options { margin-top: 18px; }
 summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
 fieldset { border: 1px solid #dbe5e3; border-radius: 8px; margin: 10px 0; padding: 16px; min-width: 0; }
 fieldset label:not(.check) { display: block; margin-top: 12px; }

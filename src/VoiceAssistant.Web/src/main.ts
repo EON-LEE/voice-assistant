@@ -31,9 +31,12 @@ const consent = element<HTMLInputElement>("consent");
 const signin = element<HTMLButtonElement>("signin");
 const audioSource = element<HTMLSelectElement>("audio-source");
 const micDevice = element<HTMLSelectElement>("microphone-device");
+const responseMode = element<HTMLSelectElement>("response-mode");
+const koreanToggle = element<HTMLInputElement>("meeting-korean");
 const state = new ReplyState();
 const auth = new BrowserAuth();
 let session: MeetingSession | null = null;
+let canUpdate = false;
 let configReady = false;
 let fake = false;
 let configGeneration = 0;
@@ -105,7 +108,7 @@ function canSuggest(): boolean {
 }
 function readOptions(): SessionOptions {
   return validateOptions({
-    responseMode: element<HTMLSelectElement>("response-mode").value as SessionOptions["responseMode"],
+    responseMode: responseMode.value as SessionOptions["responseMode"],
     profile: { name: element<HTMLInputElement>("profile-name").value, role: element<HTMLInputElement>("profile-role").value,
       project: element<HTMLTextAreaElement>("profile-project").value },
     profileConfirmed: element<HTMLInputElement>("profile-confirmed").checked,
@@ -187,6 +190,12 @@ function renderControls(): void {
   audioSource.disabled = micDevice.disabled = !!session;
   signin.disabled = !!session || !configReady || fake;
   element<HTMLFieldSetElement>("meeting-fields").disabled = !!session;
+  responseMode.disabled = !!session && !canUpdate;
+  koreanToggle.disabled = mode.value === "demo";
+  element("response-mode-note").textContent = !session ? "Applies when you start the session. · 시작할 때 적용돼요."
+    : !session.isReady ? "Connecting… · 연결 중이에요."
+    : canUpdate ? "You can switch this during the session. It applies from the next reply. · 다음 답변부터 적용돼요."
+    : "Fixed for this session. Stop and start again to change it. · 이번 세션에서는 바꿀 수 없어요.";
   if (configReady && !fake && !auth.signedIn)
     element("auth-status").textContent = "Sign in first, then click Share meeting audio.";
   element<HTMLButtonElement>("reply-listen").disabled = mode.value === "demo" || !state.current?.complete ||
@@ -210,6 +219,7 @@ async function configureMode(): Promise<void> {
   configReady = false;
   element("live-options").hidden = mode.value !== "live";
   element("demo-options").hidden = mode.value !== "demo";
+  element("answer-options").hidden = mode.value === "demo";
   element("meeting-options").hidden = mode.value === "demo";
   renderSource();
   element("mode-help").textContent = mode.value === "demo"
@@ -280,7 +290,7 @@ start.addEventListener("click", () => {
     try { options = readOptions(); createStartMessage(options); }
     catch (e) { error(asError(e).message); overlay.revealMeetingSettings(); return; }
   }
-  error(""); scheduler.cancel(); clip.stop(); enrichment.reset(); assistTurn = undefined; state.reset(); transcriptDirty = true; pause.checked = false;
+  error(""); scheduler.cancel(); clip.stop(); enrichment.reset(); assistTurn = undefined; state.reset(); transcriptDirty = true; pause.checked = false; canUpdate = false;
   const shared = {
     context: () => new AudioContext(),
     node: (context: AudioContext) => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
@@ -319,6 +329,7 @@ start.addEventListener("click", () => {
   const transport = selectedMode === "demo" ? new DemoTransport() : new SocketTransport(() => auth.endpoint(selectedMode === "synthetic"));
   session = new MeetingSession(source, transport,
     e => {
+      if (e.type === "session.ready") canUpdate = e.sessionUpdate === true;
       state.apply(e);
       if ((e.type === "transcript.partial" || e.type === "transcript.final") && state.turns.at(-1)?.id === e.turnId && assistTurn !== e.turnId) {
         assistTurn = e.turnId; enrichment.reset(); clip.stop();
@@ -329,10 +340,11 @@ start.addEventListener("click", () => {
       renderControls();
       if (e.type === "transcript.partial" || e.type === "response.delta") scheduler.schedule();
       else scheduler.flush();
-      // Never await optional assistance on the streaming path. English is already rendered.
-      if (selectedMode !== "demo" && e.type === "transcript.final" && state.turns.at(-1)?.id === e.turnId)
+      // Never await optional assistance on the streaming path. English is already rendered. Korean is off unless asked for.
+      const korean = selectedMode !== "demo" && koreanToggle.checked;
+      if (korean && e.type === "transcript.final" && state.turns.at(-1)?.id === e.turnId)
         void enrichment.load("question", e.text!);
-      if (selectedMode !== "demo" && e.type === "response.completed" && state.current?.id === e.responseId)
+      if (korean && e.type === "response.completed" && state.current?.id === e.responseId)
         void enrichment.load("reply", e.text!);
       if (selectedMode === "demo" && e.type === "transcript.final" && canSuggest()) {
         state.request(); session?.request(); render();
@@ -343,7 +355,7 @@ start.addEventListener("click", () => {
         ? "DEMO · sample playback and scripted responses (not live AI)"
         : (selectedMode === "demo" ? "DEMO · " : fake && selectedMode !== "demo" ? "LOCAL FAKE · " : "") + status
           + (microphone && status.startsWith("Connected") ? fake ? " · microphone room audio sent to localhost" : " · microphone room audio sent to Azure" : "");
-      if (status.startsWith("Stopped")) { session = null; pause.checked = false; consent.checked = false; state.pause(true); clip.stop(); enrichment.reset(); }
+      if (status.startsWith("Stopped")) { session = null; canUpdate = false; pause.checked = false; consent.checked = false; state.pause(true); clip.stop(); enrichment.reset(); }
       render();
     }, e => error(e.message), options);
   // No await before this call: getDisplayMedia and AudioContext.resume need this gesture.
@@ -353,6 +365,19 @@ start.addEventListener("click", () => {
 });
 stop.addEventListener("click", () => { clip.stop(); enrichment.reset(); scheduler.flush(); void session?.stop(); render(); });
 pause.addEventListener("change", () => { state.pause(pause.checked); session?.pause(pause.checked); render(); });
+responseMode.addEventListener("change", () => {
+  if (!session?.isReady || !canUpdate) return;
+  try { session.update({ responseMode: responseMode.value as SessionOptions["responseMode"] }); }
+  catch (e) { error(asError(e).message); }
+});
+koreanToggle.addEventListener("change", () => {
+  if (!koreanToggle.checked) { enrichment.reset(); return; }
+  if (mode.value === "demo") return;
+  // Fill in what is already on screen; later turns load as they finish.
+  const turn = state.turns.at(-1);
+  if (turn?.final) void enrichment.load("question", turn.text);
+  if (state.current?.complete) void enrichment.load("reply", state.current.text);
+});
 overlay.card.addEventListener("keydown", event => {
   if (coachMode !== "meeting" || event.key.toLowerCase() !== "p" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || pause.disabled) return;
   const target = event.target;

@@ -20,6 +20,9 @@ const snapshot = () => page.evaluate(() => ({
   label: document.querySelector("#primary-label").textContent,
   grounding: document.querySelector("#grounding-badge").textContent,
 }));
+// Captions and Korean meaning are off by default; switch them on so the report contains them.
+for (const id of ["toggle-captions", "toggle-korean"])
+  if ((await page.locator(`#${id}`).getAttribute("aria-pressed")) !== "true") await page.locator(`#${id}`).click();
 await page.locator("#live-panel").click({ button: "right", position: { x: 200, y: 300 } });
 await page.locator('[data-action="start"]').click();
 const loginDialog = page.locator("dialog[aria-labelledby=demo-login-title]");

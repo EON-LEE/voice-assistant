@@ -12,10 +12,21 @@ const english = 'I can confirm the next milestone after reviewing the dependenci
 const korean = '팀과 의존성을 검토한 뒤 다음 일정을 확인하겠습니다. '.repeat(18);
 const token = 'LongUnbrokenSyntheticIdentifier'.repeat(10);
 
-async function fixture(page, native, expanded = true) {
+// Captions and Korean meanings are off unless chosen. The layout and Korean tests look at the fullest screen, so they switch both on
+// before the page loads; a test that wants the real defaults passes `null`.
+const everything = { showCaptions: true, showKorean: true };
+async function seedSettings(page, settings) {
+  if (!settings) return;
+  await page.addInitScript(value => {
+    if (localStorage.getItem('live-coach-settings') === null) localStorage.setItem('live-coach-settings', JSON.stringify(value));
+  }, settings);
+}
+
+async function fixture(page, native, expanded = true, settings = everything) {
   await page.route('**/api/client-config', route => route.fulfill({
     json: { mode: 'Fake', webSocketPath: '/api/meeting' },
   }));
+  await seedSettings(page, settings);
   if (native) await page.addInitScript(script => {
     window.__shellMessages = [];
     window.chrome = { webview: { postMessage: value => window.__shellMessages.push(value) } };
@@ -44,7 +55,7 @@ async function fixture(page, native, expanded = true) {
   }, { english, korean, token, expanded });
 }
 
-async function meetingFixture(page, { replyKorean = false } = {}) {
+async function meetingFixture(page, { replyKorean = false, sessionUpdate = false, settings = everything } = {}) {
   const commands = [];
   const translations = [];
   await page.route('**/api/client-config', route => route.fulfill({
@@ -55,14 +66,22 @@ async function meetingFixture(page, { replyKorean = false } = {}) {
     translations.push({ kind, text });
     return route.fulfill({ json: { korean: `뜻: ${text}`, pronunciation: null } });
   });
-  let socket;
+  await seedSettings(page, settings);
+  let socket, effective = { responseMode: 'grounded', replyKorean: false };
   await page.routeWebSocket('**/api/meeting*', ws => {
     socket = ws;
     ws.onMessage(message => {
       if (typeof message !== 'string') return;
       const command = JSON.parse(message); commands.push(command);
-      if (command.type === 'session.start')
-        ws.send(JSON.stringify(replyKorean ? { type: 'session.ready', protocolVersion: 1, replyKorean: true } : { type: 'session.ready' }));
+      if (command.type === 'session.start') {
+        effective = { responseMode: command.options.responseMode, replyKorean: command.options.replyKorean === true };
+        ws.send(JSON.stringify({ type: 'session.ready', ...(replyKorean ? { protocolVersion: 1, replyKorean: true } : {}),
+          ...(sessionUpdate ? { sessionUpdate: true } : {}) }));
+      }
+      if (command.type === 'session.update' && sessionUpdate) {
+        effective = { ...effective, ...command.options };
+        ws.send(JSON.stringify({ type: 'session.updated', ...effective }));
+      }
     });
   });
   await page.goto('/live.html');
@@ -230,6 +249,162 @@ test('reading hold and response updates survive moving into and out of a floatin
   await expect(page.locator('#question-text')).toHaveText('And then?');
 });
 
+// ---------- Quick settings: document search, captions and Korean meaning ----------
+
+const updates = ws => ws.commands.filter(command => command.type === 'session.update');
+const startOptions = ws => ws.commands.find(command => command.type === 'session.start').options;
+const pressed = (page, id) => page.locator(`#${id}`).getAttribute('aria-pressed');
+async function menuAction(page, action) {
+  await page.locator('#live-panel').dispatchEvent('contextmenu', { clientX: 10, clientY: 10 });
+  await page.locator(`[data-action="${action}"]`).click();
+}
+
+test('by default only the English answer shows: no captions, no Korean meaning, and no Korean is requested', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: null });
+  expect(startOptions(ws).replyKorean).toBe(false);
+  expect(await pressed(page, 'doc-on')).toBe('true');
+  expect(await pressed(page, 'doc-off')).toBe('false');
+  expect(await pressed(page, 'toggle-captions')).toBe('false');
+  expect(await pressed(page, 'toggle-korean')).toBe('false');
+  reply(ws, 1, 'What comes first?', 'We should check the plan.');
+  await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
+  await expect(page.locator('#answer-meaning')).toBeHidden();
+  await expect(page.locator('#caption-block')).toBeHidden();
+  await expect(page.locator('#conversation-section')).toBeHidden();
+  await expect(page.locator('#details-summary')).toHaveText('대안 · 상세 근거');
+  expect(await page.locator('.live-card:visible').count()).toBe(1);
+  await page.waitForTimeout(250);
+  expect(ws.translations).toEqual([]);
+});
+
+test('each quick setting reaches a connected session that supports changes, and captions alone send nothing', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: null, sessionUpdate: true });
+  expect(startOptions(ws)).toMatchObject({ responseMode: 'grounded', replyKorean: false });
+  const sent = [];
+  for (const [id, options] of [['doc-off', { responseMode: 'conversation' }], ['doc-on', { responseMode: 'grounded' }],
+    ['toggle-korean', { replyKorean: true }], ['toggle-korean', { replyKorean: false }]]) {
+    await page.locator(`#${id}`).click();
+    sent.push({ type: 'session.update', options });
+    await expect.poll(() => updates(ws)).toEqual(sent);
+  }
+  await page.locator('#toggle-captions').click();
+  await page.waitForTimeout(250);
+  expect(updates(ws)).toEqual(sent);
+  await expect(page.locator('#quick-note')).toBeHidden();
+  await expect(page.locator('#session-error')).toBeHidden();
+});
+
+test('a server that cannot change settings during a session says so, and the next connection uses the choice', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: null });
+  await page.locator('#doc-off').click();
+  await expect(page.locator('#quick-note')).toContainText('이 서버는 연결 중 문서검색 변경을 지원하지 않아요');
+  expect(await pressed(page, 'doc-off')).toBe('true');
+  await page.locator('#doc-on').click();
+  await expect(page.locator('#quick-note')).toBeHidden();
+  await page.locator('#doc-off').click();
+  await expect(page.locator('#quick-note')).toBeVisible();
+  await menuAction(page, 'stop');
+  await expect(page.locator('#capture-status')).toContainText('꺼짐');
+  await expect(page.locator('#quick-note')).toBeHidden();
+  await menuAction(page, 'start');
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  expect(ws.commands.filter(command => command.type === 'session.start').map(command => command.options.responseMode))
+    .toEqual(['grounded', 'conversation']);
+  expect(updates(ws)).toEqual([]);
+  await expect(page.locator('#quick-note')).toBeHidden();
+});
+
+test('Korean meaning stays off without any request, turns on for what is on screen, and off again stops it', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { showCaptions: true } });
+  reply(ws, 1, 'What comes first?', 'We should check the plan.');
+  await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
+  await expect(page.locator('#answer-meaning')).toBeHidden();
+  await page.waitForTimeout(250);
+  expect(ws.translations).toEqual([]);
+  await page.locator('#toggle-korean').click();
+  await expect(page.locator('#answer-meaning')).toBeVisible();
+  await expect(page.locator('#answer-korean')).toHaveText('뜻: We should check the plan.');
+  await expect(page.locator('#alternative-korean')).toHaveText('뜻: Could we check that together?');
+  await expect.poll(() => ws.translations.filter(item => item.kind === 'question')).toEqual([{ kind: 'question', text: 'What comes first?' }]);
+  reply(ws, 2, 'And then?', 'Then we can confirm.');
+  await expect(page.locator('#answer-korean')).toHaveText('뜻: Then we can confirm.');
+  await page.locator('#toggle-korean').click();
+  await expect(page.locator('#answer-meaning')).toBeHidden();
+  const requested = ws.translations.length;
+  reply(ws, 3, 'Anything else?', 'No, that is all.');
+  await expect(page.locator('#answer-text')).toHaveText('No, that is all.');
+  await page.waitForTimeout(250);
+  expect(ws.translations).toHaveLength(requested);
+  await page.locator('#toggle-korean').click();
+  await expect(page.locator('#answer-korean')).toHaveText('뜻: No, that is all.');
+});
+
+test('captions show what was heard, and translate it only while Korean meaning is on too', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { showKorean: true } });
+  reply(ws, 1, 'What comes first?', 'We should check the plan.');
+  await expect(page.locator('#answer-korean')).toHaveText('뜻: We should check the plan.');
+  await expect(page.locator('#caption-block')).toBeHidden();
+  await expect(page.locator('#conversation-section')).toBeHidden();
+  expect(ws.translations.filter(item => item.kind === 'question')).toEqual([]);
+  await page.locator('#toggle-captions').click();
+  await expect(page.locator('#caption-block')).toBeVisible();
+  await expect(page.locator('#question-text')).toHaveText('What comes first?');
+  await expect(page.locator('#details-summary')).toHaveText('대화 · 대안 · 상세 근거');
+  await page.locator('#live-details summary').click();
+  await expect(page.locator('#conversation-section')).toBeVisible();
+  await expect(page.locator('#conversation .live-line .en')).toHaveText('What comes first?');
+  await expect(page.locator('#conversation .live-line .ko')).toHaveText('뜻: What comes first?');
+  await page.locator('#toggle-captions').click();
+  await expect(page.locator('#caption-block')).toBeHidden();
+  await expect(page.locator('#conversation-section')).toBeHidden();
+  await expect(page.locator('#details-summary')).toHaveText('대안 · 상세 근거');
+});
+
+test('the quick settings are remembered, and settings saved by an older version load with both switches off', async ({ page }) => {
+  await page.route('**/api/client-config', route => route.fulfill({ json: { mode: 'Fake', webSocketPath: '/api/meeting' } }));
+  await page.goto('/live.html');
+  await page.locator('#doc-off').click();
+  await page.locator('#toggle-captions').click();
+  await page.locator('#toggle-korean').click();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings'))))
+    .toMatchObject({ responseMode: 'conversation', documentMode: 'grounded', showCaptions: true, showKorean: true });
+  await page.reload();
+  expect(await pressed(page, 'doc-off')).toBe('true');
+  expect(await pressed(page, 'toggle-captions')).toBe('true');
+  expect(await pressed(page, 'toggle-korean')).toBe('true');
+  await expect(page.locator('#caption-block')).toBeVisible();
+  await expect(page.locator('#answer-meaning')).toBeVisible();
+  await page.evaluate(() => localStorage.setItem('live-coach-settings',
+    JSON.stringify({ deviceId: '', responseMode: 'balanced', topic: 'Azure sync', audioSource: 'display' })));
+  await page.reload();
+  expect(await pressed(page, 'doc-on')).toBe('true');
+  expect(await pressed(page, 'toggle-captions')).toBe('false');
+  expect(await pressed(page, 'toggle-korean')).toBe('false');
+  await expect(page.locator('#caption-block')).toBeHidden();
+  await expect(page.locator('#answer-meaning')).toBeHidden();
+  await expect(page.locator('#topic')).toHaveValue('Azure sync');
+  await expect(page.locator('#response-mode')).toHaveValue('balanced');
+  await expect(page.locator('#audio-source')).toHaveValue('display');
+});
+
+test('the document search choice in the settings dialog and the quick buttons are one setting', async ({ page }) => {
+  await page.route('**/api/client-config', route => route.fulfill({ json: { mode: 'Fake', webSocketPath: '/api/meeting' } }));
+  await page.goto('/live.html');
+  await menuAction(page, 'settings');
+  await expect(page.locator('#response-mode')).toHaveValue('grounded');
+  await page.locator('#response-mode').selectOption('conversation');
+  expect(await pressed(page, 'doc-off')).toBe('true');
+  await page.locator('#response-mode').selectOption('balanced');
+  expect(await pressed(page, 'doc-on')).toBe('true');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.locator('#doc-off').click();
+  await menuAction(page, 'settings');
+  await expect(page.locator('#response-mode')).toHaveValue('conversation');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.locator('#doc-on').click();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).responseMode)).toBe('balanced');
+});
+
 async function assertLayout(page) {
   const geometry = await page.evaluate(() => {
     const panel = document.querySelector('#live-panel').getBoundingClientRect();
@@ -250,6 +425,10 @@ async function assertLayout(page) {
   await expect(page.locator('#answer-korean')).toBeInViewport();
   await page.locator('#alternative-korean').scrollIntoViewIfNeeded();
   await expect(page.locator('#alternative-korean')).toBeInViewport();
+  for (const id of ['doc-on', 'doc-off', 'toggle-captions', 'toggle-korean']) {
+    await page.locator(`#${id}`).scrollIntoViewIfNeeded();
+    await expect(page.locator(`#${id}`)).toBeInViewport();
+  }
 }
 
 for (const native of [false, true]) {

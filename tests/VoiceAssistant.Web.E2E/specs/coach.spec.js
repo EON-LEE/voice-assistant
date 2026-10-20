@@ -51,6 +51,7 @@ async function shot(page, name) {
 test('meeting English streams before assist completes, aligned Hangul and click-only shadowing', async ({ page }) => {
   const calls = await coachApi(page), ws = await socket(page);
   await meeting(page);
+  await page.locator('#meeting-korean').check();
   ws.send({ type: 'transcript.final', turnId: 't', revision: 1, text: 'What is the next step?' });
   ws.send({ type: 'response.started', turnId: 't', responseId: 'r' });
   ws.send({ type: 'response.delta', turnId: 't', responseId: 'r', text: 'Let me ' });
@@ -78,6 +79,38 @@ test('meeting English streams before assist completes, aligned Hangul and click-
   await expect(page.locator('#question-ko')).toBeHidden();
 });
 
+test('Korean meaning is off by default; switching it on fills in what is on screen, off stops it; speech starts Fast', async ({ page }) => {
+  const calls = await coachApi(page), ws = await socket(page);
+  await meeting(page);
+  await expect(page.locator('#meeting-korean')).not.toBeChecked();
+  await expect(page.locator('#speech-rate')).toHaveValue('fast');
+  ws.send({ type: 'transcript.final', turnId: 't', revision: 1, text: 'What is the next step?' });
+  ws.send({ type: 'response.started', turnId: 't', responseId: 'r' });
+  ws.send({ type: 'response.completed', turnId: 't', responseId: 'r', text: 'Let me check the plan.', sources: [], grounding: 'disabled' });
+  await expect(page.getByTestId('reply')).toHaveText('Let me check the plan.');
+  await page.waitForTimeout(250);
+  expect(calls.filter(call => call.path === 'enrich')).toHaveLength(0);
+  await expect(page.locator('#question-ko')).toBeHidden();
+  await expect(page.locator('#reply-ko')).toBeHidden();
+  await page.locator('#meeting-korean').check();
+  await expect(page.locator('#question-ko')).toHaveText('다음 계획은 무엇인가요?');
+  await expect(page.locator('#reply-ko')).toHaveText('계획을 확인하고 알려 드리겠습니다.');
+  expect(calls.filter(call => call.path === 'enrich').map(call => call.kind).sort()).toEqual(['question', 'reply']);
+  await page.locator('#meeting-korean').uncheck();
+  await expect(page.locator('#question-ko')).toBeHidden();
+  await expect(page.locator('#reply-ko')).toBeHidden();
+  ws.send({ type: 'transcript.final', turnId: 't2', revision: 1, text: 'Who owns it?' });
+  ws.send({ type: 'response.started', turnId: 't2', responseId: 'r2' });
+  ws.send({ type: 'response.completed', turnId: 't2', responseId: 'r2', text: 'I will own it.', sources: [], grounding: 'disabled' });
+  await expect(page.getByTestId('reply')).toHaveText('I will own it.');
+  await page.waitForTimeout(250);
+  expect(calls.filter(call => call.path === 'enrich')).toHaveLength(2);
+  await page.locator('#reply-listen').click();
+  await expect.poll(() => calls.filter(call => call.path === 'speak').length).toBe(1);
+  expect(calls.find(call => call.path === 'speak')).toMatchObject({ text: 'I will own it.', voice: 'coach', rate: 'fast' });
+  await stopMeeting(page);
+});
+
 test('stale enrichment cannot replace a newer turn and failures leave English visible', async ({ page }) => {
   await coachApi(page); const ws = await socket(page);
   let release;
@@ -89,6 +122,7 @@ test('stale enrichment cannot replace a newer turn and failures leave English vi
     } else await route.fulfill({ status: 502, json: { error: 'provider_unavailable' } });
   });
   await meeting(page);
+  await page.locator('#meeting-korean').check();
   ws.send({ type: 'transcript.final', turnId: 'old', revision: 1, text: 'Old question?' });
   await page.waitForRequest('**/api/assist/enrich');
   ws.send({ type: 'transcript.final', turnId: 'new', revision: 1, text: 'New question?' }); release();
@@ -144,7 +178,13 @@ test('full practice round uses recognition-only mic, requested hint, feedback/li
   await startPractice(page);
   expect(ws.commands[0].options.transcribeOnly).toBe(true);
   await expect.poll(() => calls.filter(call => call.path === 'speak' && call.voice === 'partner').length).toBe(1);
+  expect(calls.find(call => call.path === 'speak' && call.voice === 'partner')).toMatchObject({ rate: 'fast' });
   expect(calls.filter(call => call.path === 'suggest')).toHaveLength(0);
+  await expect(page.locator('#practice-korean')).not.toBeChecked();
+  await expect(page.locator('#practice-question-ko')).toBeHidden();
+  expect(calls.filter(call => call.path === 'enrich')).toHaveLength(0);
+  await page.locator('#practice-korean').check();
+  await expect(page.locator('#practice-question-ko')).toHaveText('다음 계획은 무엇인가요?');
   await page.locator('#practice-hint').click();
   await expect(page.locator('#practice-hint-text')).toHaveText('Let me check the plan.');
   await expect(page.locator('#practice-pronunciation .pronunciation-chunk')).toHaveCount(2);
@@ -203,10 +243,14 @@ test('invalid pronunciation stays omitted while speech failure exposes retry wit
     calls.push({ path: 'speak' }); return route.fulfill({ status: 502, json: { error: 'provider_unavailable' } });
   });
   await meeting(page);
+  await page.locator('#meeting-korean').check();
+  const answered = page.waitForResponse(response => response.url().endsWith('/api/assist/enrich') && response.request().postDataJSON().kind === 'reply');
   ws.send({ type: 'transcript.final', turnId: 't', revision: 1, text: 'What now?' });
   ws.send({ type: 'response.started', turnId: 't', responseId: 'r' });
   ws.send({ type: 'response.completed', turnId: 't', responseId: 'r', text: 'Let me check.', sources: [] });
   await expect(page.getByTestId('reply')).toHaveText('Let me check.');
+  await answered; await page.waitForTimeout(100);
+  await expect(page.locator('#reply-ko')).toBeHidden();
   await expect(page.locator('#reply-pronunciation')).toBeHidden();
   expect(calls.filter(call => call.path === 'speak')).toHaveLength(0);
   await page.locator('#reply-listen').click();
@@ -229,6 +273,7 @@ test('real localhost Fake practice and enrich/speak complete a recognition-only 
   const voiceResponse = page.waitForResponse(response => response.url().endsWith('/api/assist/speak'));
   await page.locator('#practice-consent').check(); await page.locator('#practice-start').click();
   await expect(page.locator('#practice-question')).not.toBeEmpty();
+  await page.locator('#practice-korean').check();
   await expect(page.locator('#practice-question-ko')).toBeVisible();
   const voice = await voiceResponse;
   expect(voice.status()).toBe(200); expect(voice.headers()['content-type']).toContain('audio/wav');

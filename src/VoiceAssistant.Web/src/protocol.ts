@@ -11,8 +11,12 @@ export interface ServerEvent {
   suggestions?: string[];
   /** The latest speech invites the listener to respond now (emphasis only). */
   respondNow?: boolean;
-  /** `session.ready`: the server pushes a Korean meaning (`response.korean`) for every reply line. */
+  /** `session.ready`: the server pushes a Korean meaning (`response.korean`) for every reply line. `session.updated`: the effective value. */
   replyKorean?: boolean;
+  /** `session.ready`: this server accepts `session.update` (document search and Korean can change while running). */
+  sessionUpdate?: boolean;
+  /** `session.updated`: the effective document-search mode. */
+  responseMode?: "balanced" | "grounded" | "conversation";
   /** `response.korean`: the reply line (0 = primary, 1 = alternative) and its Korean meaning, or `failed` when it has none. */
   index?: number; korean?: string; failed?: boolean;
 }
@@ -35,7 +39,15 @@ export function parseEvent(data: unknown): ServerEvent {
   const type = text("type");
   if (type === "session.ready") {
     if (e.replyKorean !== undefined && typeof e.replyKorean !== "boolean") throw new Error("Invalid replyKorean flag.");
-    return e.replyKorean === true ? { type, replyKorean: true } : { type };
+    if (e.sessionUpdate !== undefined && typeof e.sessionUpdate !== "boolean") throw new Error("Invalid sessionUpdate flag.");
+    return { type, ...(e.replyKorean === true ? { replyKorean: true } : {}), ...(e.sessionUpdate === true ? { sessionUpdate: true } : {}) };
+  }
+  if (type === "session.updated") {
+    if (typeof e.replyKorean !== "boolean") throw new Error("Invalid replyKorean flag.");
+    const responseMode = text("responseMode");
+    if (responseMode !== "balanced" && responseMode !== "grounded" && responseMode !== "conversation")
+      throw new Error("Invalid responseMode in server event.");
+    return { type, responseMode, replyKorean: e.replyKorean };
   }
   if (type === "error") {
     if (typeof e.retryable !== "boolean") throw new Error("Invalid retryable error flag.");

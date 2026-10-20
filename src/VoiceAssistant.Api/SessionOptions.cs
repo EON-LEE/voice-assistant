@@ -7,6 +7,9 @@ public sealed record ConfirmedProfile(string Name = "", string Role = "", string
     public bool IsEmpty => Name.Length == 0 && Role.Length == 0 && Project.Length == 0;
 }
 
+/// <summary>The settings a running session may change; a null member keeps the current value.</summary>
+internal sealed record SessionUpdate(string? ResponseMode, bool? ReplyKorean);
+
 public sealed record SessionOptions
 {
     public string ResponseMode { get; init; } = "grounded";
@@ -65,6 +68,28 @@ public sealed record SessionOptions
             ReplyKorean = value.TryGetProperty("replyKorean", out var korean) && korean.GetBoolean()
         };
     }
+
+    /// <summary>Only the document-search mode and the Korean push may change after the handshake; at least one must be present.</summary>
+    internal static SessionUpdate ParseUpdate(JsonElement value)
+    {
+        CheckObject(value, "responseMode", "replyKorean");
+        var mode = value.TryGetProperty("responseMode", out _) ? Text(value, "responseMode", 20) : null;
+        if (mode is not null and not ("balanced" or "grounded" or "conversation")) throw Invalid();
+        bool? korean = null;
+        if (value.TryGetProperty("replyKorean", out var flag))
+        {
+            if (flag.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw Invalid();
+            korean = flag.GetBoolean();
+        }
+        if (mode is null && korean is null) throw Invalid();
+        return new(mode, korean);
+    }
+
+    internal SessionOptions Apply(SessionUpdate update) => this with
+    {
+        ResponseMode = update.ResponseMode ?? ResponseMode,
+        ReplyKorean = update.ReplyKorean ?? ReplyKorean
+    };
 
     private static string Text(JsonElement element, string name, int limit, string fallback = "")
     {

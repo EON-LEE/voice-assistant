@@ -49,6 +49,29 @@ test("Live: session.ready reports the Korean push capability only when the serve
     assert.throws(() => parseEvent(JSON.stringify({ type: "session.ready", replyKorean: bad })), /replyKorean/);
 });
 
+test("Live: session.ready reports the settings-update capability only when the server set it to true", () => {
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1, sessionUpdate: true })),
+    { type: "session.ready", sessionUpdate: true });
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1, replyKorean: true, sessionUpdate: true })),
+    { type: "session.ready", replyKorean: true, sessionUpdate: true });
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1, sessionUpdate: false })), { type: "session.ready" });
+  for (const bad of ["true", 1, null])
+    assert.throws(() => parseEvent(JSON.stringify({ type: "session.ready", sessionUpdate: bad })), /sessionUpdate/);
+});
+
+test("Live: session.updated carries the effective document-search mode and Korean flag, both required and strict", () => {
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "conversation", replyKorean: false })),
+    { type: "session.updated", responseMode: "conversation", replyKorean: false });
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: true })),
+    { type: "session.updated", responseMode: "grounded", replyKorean: true });
+  for (const bad of [{ responseMode: "fast", replyKorean: true }, { responseMode: 3, replyKorean: true }, { replyKorean: true },
+    { responseMode: "balanced" }, { responseMode: "balanced", replyKorean: "true" }, { responseMode: null, replyKorean: false }])
+    assert.throws(() => parseEvent(JSON.stringify({ type: "session.updated", ...bad })), /./, JSON.stringify(bad));
+  const state = new LiveState();
+  state.apply(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "conversation", replyKorean: false })));
+  assert.equal(state.display, null, "a settings acknowledgement changes no conversation state");
+});
+
 test("Live: continuous speech never discards a started reply and keeps last suggestions visible", () => {
   const state = new LiveState();
   state.apply(final("one", "Launch?"));

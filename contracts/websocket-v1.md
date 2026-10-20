@@ -36,7 +36,7 @@ Wait for `{"type":"session.ready","protocolVersion":1}` before sending binary fr
 
 At the maximum duration the server emits existing `error` with `code:"session_time_limit"`, `retryable:false`, and message `Session reached its time limit. Start a new session to continue.`, then closes. This is distinct from `session_ended` for other cancellation and `idle_timeout` for90-second input inactivity. The duration is not controlled by untrusted `session.start` fields.
 
-Optional top-level `session.start.options` is immutable for this socket:
+Optional top-level `session.start.options` is immutable for this socket, except `responseMode` and `replyKorean`, which `session.update` can change while the session runs (see below):
 
 ```json
 {"responseMode":"balanced","profile":{"name":"Mina","role":"Software engineer","project":"Evaluating email client interoperability"},"profileConfirmed":true,"topic":"Email protocols","phrases":["JMAP","IMAP","CONDSTORE","QRESYNC"],"endSilenceMs":500}
@@ -78,7 +78,23 @@ Korean and push it as `response.korean`, so the client needs no second HTTP requ
 then carries `"replyKorean":true`. A client that did not opt in receives neither that field nor `response.korean` events, and
 the server makes no translation calls for it. A server that does not know the option rejects the start as `invalid_start`.
 
-Text commands: `{"type":"response.request"}`, `{"type":"response.cancel"}`, `{"type":"session.stop"}`. Manual request uses the latest finalized utterance; before any final it returns a retryable `no_transcript` error. At most 10 commands/second. A finalized utterance automatically starts a response when idle. While a reply is active, new partials do not cancel it and the latest final is queued; intermediate queued finals remain in recognized history. Completion/failure starts the latest queued reply. Manual regeneration/cancellation and stop invalidate obsolete generation immediately and clear queued work. Clients match active response/turn IDs, retain completed suggestions and label previous-question replies. Socket writes are serialized.
+Optional `session.update` changes the document-search mode and the Korean push of a running session, so a client can switch
+either one without reconnecting:
+
+```json
+{"type":"session.update","options":{"responseMode":"conversation","replyKorean":false}}
+```
+
+`options` accepts only `responseMode` (`balanced`, `grounded`, `conversation`) and `replyKorean` (boolean); at least one must be present. Unknown or duplicate properties, wrong types, JSON null and an empty object fail as the
+fatal `invalid_command`. The server answers in order with `{"type":"session.updated","responseMode":…,"replyKorean":…}` carrying the full effective values.
+A reply that was already started (`response.started` sent) keeps the settings it started with: a switch to `conversation` does not stop a search that
+reply already depends on, and a reply started without `replyKorean` gets no pushed Korean. The change applies from the next reply, and a pending
+partial-speech retrieval is dropped when the mode changes. A client that switches `replyKorean` on translates an older or running reply itself through the
+enrichment API. A server that supports it sets `"sessionUpdate":true` in `session.ready` (not on a `transcribeOnly` socket, where
+`session.update` returns `error` `code:"transcribe_only"`, `retryable:false`); a client must not send `session.update` to a server that did not set it,
+because such a server rejects the command as the fatal `invalid_command`.
+
+Text commands: `{"type":"response.request"}`, `{"type":"response.cancel"}`, `{"type":"session.stop"}` and `session.update` (above). Manual request uses the latest finalized utterance; before any final it returns a retryable `no_transcript` error. At most 10 commands/second. A finalized utterance automatically starts a response when idle. While a reply is active, new partials do not cancel it and the latest final is queued; intermediate queued finals remain in recognized history. Completion/failure starts the latest queued reply. Manual regeneration/cancellation and stop invalidate obsolete generation immediately and clear queued work. Clients match active response/turn IDs, retain completed suggestions and label previous-question replies. Socket writes are serialized.
 
 Server events:
 
@@ -86,7 +102,8 @@ For a clear individual/group introduction request with any confirmed profile fie
 
 | type | Additional fields |
 | --- | --- |
-| `session.ready` | `protocolVersion: 1`; `replyKorean: true` only when the client opted in with `replyKorean` |
+| `session.ready` | `protocolVersion: 1`; `replyKorean: true` only when the client opted in with `replyKorean`; `sessionUpdate: true` when the socket accepts `session.update` (every socket except `transcribeOnly`) |
+| `session.updated` | `responseMode`, `replyKorean`: the effective values after a `session.update`. Sent in order with the other events, so it is known which reply started before or after it |
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
 | `response.started` | `responseId: string`, `turnId: string` |
 | `response.delta` | `responseId`, `turnId`, `text: string` (append) |

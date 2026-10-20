@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createStartMessage, defaultOptions, parsePhrases, validateOptions, type SessionOptions } from "../../src/VoiceAssistant.Web/src/options.js";
+import { createStartMessage, defaultOptions, parsePhrases, validateOptions, validateUpdate, type SessionOptions, type SessionUpdate } from "../../src/VoiceAssistant.Web/src/options.js";
 import { RenderScheduler, type RenderClock } from "../../src/VoiceAssistant.Web/src/render-scheduler.js";
 import { MeetingSession } from "../../src/VoiceAssistant.Web/src/session.js";
 import { parseEvent, type ServerEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
@@ -29,6 +29,54 @@ test("replyKorean is an optional boolean that is sent only when it was set", () 
     assert.throws(() => validateOptions({ ...defaultOptions(), replyKorean: bad as unknown as boolean }), /replyKorean/);
   const start = createStartMessage({ ...defaultOptions(), replyKorean: true });
   assert.equal("options" in start && start.options.replyKorean, true);
+});
+test("A settings update carries only the known settings, at least one, and is copied", () => {
+  assert.deepEqual(validateUpdate({ responseMode: "conversation" }), { responseMode: "conversation" });
+  assert.deepEqual(validateUpdate({ replyKorean: false }), { replyKorean: false });
+  assert.deepEqual(validateUpdate({ responseMode: "balanced", replyKorean: true }), { responseMode: "balanced", replyKorean: true });
+  const input = { responseMode: "grounded" as const };
+  assert.notEqual(validateUpdate(input), input);
+  for (const bad of [{}, { responseMode: undefined }, { responseMode: "fast" }, { responseMode: 3 }, { replyKorean: "true" },
+    { replyKorean: 1 }, { replyKorean: null }, { topic: "x" }, { responseMode: "balanced", topic: "x" }, null, [], "conversation"])
+    assert.throws(() => validateUpdate(bad as unknown as SessionUpdate), /./, JSON.stringify(bad));
+});
+test("A running session sends a validated settings update only while it is ready and not recognition-only", async () => {
+  const sent: { type?: string; options?: object }[] = [], errors: Error[] = [];
+  let receive: (e: ServerEvent) => void = () => {};
+  let broken = false;
+  const source: AudioSource = { prepare: async () => {}, start: () => {}, pause: () => {}, stop: async () => {} };
+  const transport: Transport = {
+    connect: async listener => { receive = listener; },
+    send: message => { if (broken) throw new Error("The meeting connection is not open."); sent.push(message); },
+    audio: () => {}, close: () => {},
+  };
+  const session = new MeetingSession(source, transport, () => {}, () => {}, e => errors.push(e), defaultOptions());
+  session.update({ replyKorean: true });
+  await session.start();
+  session.update({ replyKorean: true });
+  assert.deepEqual(sent.map(message => message.type), ["session.start"], "nothing is sent before session.ready");
+  receive({ type: "session.ready", sessionUpdate: true });
+  session.update({ responseMode: "conversation", replyKorean: false });
+  assert.deepEqual(sent.at(-1), { type: "session.update", options: { responseMode: "conversation", replyKorean: false } });
+  assert.throws(() => session.update({}), /at least one/);
+  assert.throws(() => session.update({ responseMode: "fast" } as unknown as SessionUpdate), /Choose/);
+  assert.equal(sent.length, 2, "an invalid update never reaches the server");
+  broken = true;
+  session.update({ replyKorean: true });
+  assert.match(errors[0]!.message, /not open/, "a dead connection fails the session like any other command");
+  await session.stop();
+  broken = false;
+  session.update({ replyKorean: true });
+  assert.equal(sent.length, 2, "a stopped session sends nothing");
+
+  const recognitionOnly = new MeetingSession(source, transport, () => {}, () => {}, e => errors.push(e),
+    { ...defaultOptions(), transcribeOnly: true });
+  await recognitionOnly.start();
+  receive({ type: "session.ready" });
+  const before = sent.length;
+  recognitionOnly.update({ replyKorean: true });
+  assert.equal(sent.length, before, "a recognition-only session has no replies to change");
+  await recognitionOnly.stop();
 });
 test("Profile requires explicit confirmation and validation copies normalized values", () => {
   const input = { ...defaultOptions(), profile: { name: " Mina ", role: "Tester", project: "Fictional Lumen" }, phrases: [" Lumen "] };
