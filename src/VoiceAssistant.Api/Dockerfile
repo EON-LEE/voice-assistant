@@ -14,7 +14,7 @@ COPY src/VoiceAssistant.Api/ src/VoiceAssistant.Api/
 RUN dotnet publish src/VoiceAssistant.Api/VoiceAssistant.Api.csproj -c Release --no-restore -o /out /p:UseAppHost=false
 COPY --from=web /work/dist /out/wwwroot
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-bookworm-slim AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends libasound2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
