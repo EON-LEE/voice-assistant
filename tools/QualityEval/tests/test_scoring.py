@@ -56,6 +56,30 @@ class ScoringTests(unittest.TestCase):
         self.assertFalse(invented.abstain_ok)
         self.assertFalse(invented.passed)
 
+    def test_declining_a_commitment_counts_as_abstaining(self):
+        item = make_item(category="commitment", required_facts=(Fact("sla", ("99.9 %",)),), materials_required=False,
+                         expected_sources=(), abstain_required=True, abstain_any_of=("can't guarantee",))
+        refusal = score_answer(item, "No, 100% uptime isn't guaranteed.", "The best plan is 99.9% monthly uptime.",
+                               "grounded", [], [], answered=True)
+        self.assertTrue(refusal.abstain_ok)
+        self.assertTrue(refusal.passed)
+        approval = score_answer(item, "That discount needs approval first.", "Our SLA stays at 99.9 percent.",
+                                "grounded", [], [], answered=True)
+        self.assertTrue(approval.abstain_ok)
+        accepted = score_answer(item, "Yes, we will give you 100% uptime.", "Our SLA is 99.9%.", "grounded", [], [],
+                                answered=True)
+        self.assertFalse(accepted.abstain_ok)
+        self.assertFalse(accepted.passed)
+
+    def test_unit_wording_does_not_decide_a_fact(self):
+        item = make_item(required_facts=(Fact("response-time", ("30 minutes",)),), materials_required=False,
+                         expected_sources=())
+        hyphenated = score_answer(item, "Enterprise gets a 30-minute first response.", "", "grounded", [], [],
+                                  answered=True)
+        self.assertEqual(hyphenated.missing_facts, [])
+        other = score_answer(item, "Enterprise gets a 3-minute first response.", "", "grounded", [], [], answered=True)
+        self.assertEqual(other.missing_facts, ["response-time"])
+
     def test_reading_limits_markup_and_generic_fillers(self):
         item = make_item(required_facts=(), materials_required=False, expected_sources=())
         long = score_answer(item, " ".join(["word"] * 30) + ".", "", "disabled", [], [], answered=True)

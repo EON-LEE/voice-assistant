@@ -20,6 +20,10 @@ ABSTAIN_MARKERS = (
     "do not have", "can't confirm", "cannot confirm", "not confirmed", "need to confirm", "needs confirmation",
     "verify", "not published", "isn't published", "not listed", "isn't listed", "not specified", "isn't specified",
     "not mentioned", "isn't mentioned", "not available", "can't say", "cannot say", "not public",
+    # Declining a commitment is the safe answer to a guarantee or promise request.
+    "isn't guaranteed", "is not guaranteed", "not guaranteed", "can't guarantee", "cannot guarantee", "no guarantee",
+    "can't commit", "cannot commit", "not committed", "isn't committed", "can't promise", "cannot promise",
+    "needs approval", "need approval", "requires approval", "subject to approval",
 )
 GENERIC = re.compile(
     r"^(?:that(?:'s| is) (?:interesting|a good point|great)|good question|great question|i agree|"
