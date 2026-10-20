@@ -671,6 +671,18 @@ function runAction(action: string): void {
 toggleButton.addEventListener("click", () => runAction(toggleButton.dataset.command === "stop" ? "stop" : "start"));
 pauseButton.addEventListener("click", () => runAction("pause"));
 
+/** Whether the element can hold keyboard focus now: still in the panel, shown and enabled. */
+function canFocus(element: Element | null): element is HTMLElement {
+  return element instanceof HTMLElement && panel.contains(element) && !element.matches(":disabled") && element.getClientRects().length > 0;
+}
+/**
+ * Focus goes back to the element that opened the menu or the settings dialog, or to the panel when that element is gone.
+ * Only closing them calls this: streaming updates never move focus, which may be in Teams or PowerPoint.
+ */
+function returnFocus(opener: Element | null): void {
+  (canFocus(opener) ? opener : panel).focus({ preventScroll: true });
+}
+
 function positionMenu(x: number, y: number): void {
   const bounds = panel.getBoundingClientRect();
   const left = Math.max(4, Math.min(x, bounds.width - menu.offsetWidth - 4));
@@ -680,40 +692,72 @@ function positionMenu(x: number, y: number): void {
 new ResizeObserver(() => {
   if (!menu.hidden) positionMenu(parseFloat(menu.style.left), parseFloat(menu.style.top));
 }).observe(panel);
+/** The items that can take focus: enabled and shown (the WebView2 host hides the floating-window item with CSS). */
+function menuItems(): HTMLButtonElement[] {
+  return [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(button => !button.disabled && button.getClientRects().length > 0);
+}
+/** While the menu is open: the element it was opened from, and how to stop listening for what closes it. */
+let openedMenu: { opener: Element | null; release(): void } | undefined;
 function openMenu(x: number, y: number): void {
   renderControls();
   menu.hidden = false;
   const bounds = panel.getBoundingClientRect();
   positionMenu(x - bounds.left, y - bounds.top);
-  menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-  const owner = panel.ownerDocument;
-  const close = (event: Event): void => {
-    if (event.type === "keydown" && "key" in event && event.key !== "Escape") return;
-    if (event.type === "pointerdown" && menu.contains(event.target as Node)) return;
-    closeMenu();
-    owner.removeEventListener("pointerdown", close, true); owner.removeEventListener("keydown", close, true);
-  };
-  owner.addEventListener("pointerdown", close, true); owner.addEventListener("keydown", close, true);
+  if (!openedMenu) {
+    const owner = panel.ownerDocument, opener = owner.activeElement;
+    const onKey = (event: KeyboardEvent): void => { if (event.key === "Escape") closeMenu(); };
+    const onPointer = (event: PointerEvent): void => {
+      if (menu.contains(event.target as Node)) return;
+      closeMenu();
+      // A click on another control focuses that control; a click on anything else would leave focus nowhere.
+      owner.defaultView?.setTimeout(() => {
+        const active = owner.activeElement;
+        if (menu.hidden && (!active || active === owner.body || active === panel)) returnFocus(opener);
+      });
+    };
+    owner.addEventListener("pointerdown", onPointer, true); owner.addEventListener("keydown", onKey, true);
+    openedMenu = { opener, release: () => {
+      owner.removeEventListener("pointerdown", onPointer, true); owner.removeEventListener("keydown", onKey, true);
+    } };
+  }
+  menuItems()[0]?.focus();
 }
-/** Keyboard focus returns to the panel, so the next Shift+F10 or Tab starts from there. */
-function closeMenu(): void {
-  const hadFocus = menu.contains(panel.ownerDocument.activeElement);
+/** Hides the menu; focus returns to where it was opened from (Escape, a choice or a click outside), unless `refocus` is false. */
+function closeMenu(refocus = true): void {
   menu.hidden = true;
-  if (hadFocus) panel.focus({ preventScroll: true });
+  const opened = openedMenu;
+  if (!opened) return;
+  openedMenu = undefined;
+  opened.release();
+  if (refocus) returnFocus(opened.opener);
 }
-panel.addEventListener("contextmenu", event => { event.preventDefault(); openMenu(event.clientX, event.clientY); });
-menu.addEventListener("keydown", event => {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+// Right-click, or Shift+F10 / the menu key on the focused panel or one of its buttons. Inside the open menu it stays as it is.
+panel.addEventListener("contextmenu", event => {
   event.preventDefault();
-  const items = [...menu.querySelectorAll<HTMLButtonElement>("button:not(:disabled):not([hidden])")];
+  if (!menu.contains(event.target as Node)) openMenu(event.clientX, event.clientY);
+});
+menu.addEventListener("keydown", event => {
+  // Tab leaves the menu from where it was opened.
+  if (event.key === "Tab") { closeMenu(); return; }
+  const items = menuItems(), last = items.length - 1;
   const index = items.indexOf(panel.ownerDocument.activeElement as HTMLButtonElement);
-  items[(index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+  const next = event.key === "ArrowDown" ? index < last ? index + 1 : 0
+    : event.key === "ArrowUp" ? index > 0 ? index - 1 : last
+    : event.key === "Home" ? 0 : event.key === "End" ? last : undefined;
+  if (next === undefined) return;
+  event.preventDefault();
+  items[next]?.focus();
 });
 menu.addEventListener("click", event => {
-  const action = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]")?.dataset.action;
-  if (!action) return;
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (!button) return;
+  const opener = openedMenu?.opener ?? null;
+  // Every item closes the menu; the items LiveCoach.exe adds (opacity, minimize, exit) run their own action.
   closeMenu();
-  runAction(action);
+  if (button.dataset.action) runAction(button.dataset.action);
+  // A choice can turn off the button the menu was opened from (stop turns off pause): focus then goes to the panel.
+  const focused = panel.ownerDocument.activeElement;
+  if (focused === opener ? !canFocus(opener) : !focused || focused === panel.ownerDocument.body) returnFocus(opener);
 });
 
 // ---------- Settings dialog ----------
@@ -733,7 +777,10 @@ function renderAccount(): void {
   $("signin").hidden = auth.isFake;
   $("signin").textContent = auth.signedIn ? (auth.isDemo ? "다시 로그인" : "다른 계정으로 연결") : label;
 }
+/** The element the settings dialog was opened from; focus returns to it when the dialog closes. */
+let settingsOpener: Element | null = null;
 function openSettings(): void {
+  settingsOpener = panel.ownerDocument.activeElement;
   if (pipWindow) window.focus();
   renderAccount();
   void navigator.mediaDevices?.enumerateDevices().then(fillDevices).catch(() => undefined);
@@ -742,7 +789,7 @@ function openSettings(): void {
 $("signin").addEventListener("click", () => {
   void auth.signIn().then(renderAccount, error => { $("account-status").textContent = `로그인 실패: ${asError(error).message}`; });
 });
-settingsDialog.addEventListener("close", () => { saveSettings(); render(); });
+settingsDialog.addEventListener("close", () => { saveSettings(); render(); returnFocus(settingsOpener); });
 
 // ---------- Always-on-top floating window (Document Picture-in-Picture, Edge/Chrome) ----------
 
@@ -775,7 +822,7 @@ async function toggleFloat(): Promise<void> {
   liveDocument = floating.document;
   pipWindow = floating;
   floating.addEventListener("pagehide", () => {
-    stage.append(panel); liveDocument = document; pipWindow = undefined; closeMenu(); pending = false; render();
+    stage.append(panel); liveDocument = document; pipWindow = undefined; closeMenu(false); pending = false; render();
   });
   render();
 }

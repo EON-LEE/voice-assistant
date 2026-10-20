@@ -44,6 +44,12 @@ function reply(server, id, text) {
     sources: [], grounding: 'disabled' });
 }
 const live = page => expect(page.locator('#live-panel')).toHaveAttribute('data-capture', 'on');
+const focusedItem = page => page.evaluate(() => document.activeElement?.dataset.action ?? document.activeElement?.id);
+async function openMenuFrom(page, selector) {
+  await page.locator(selector).focus();
+  await page.keyboard.press('Shift+F10');
+  await expect(page.locator('#live-menu')).toBeVisible();
+}
 
 test('the header start/stop and pause buttons run the session like the menu and follow the same state', async ({ page }) => {
   const server = await liveFixture(page);
@@ -183,4 +189,128 @@ test('A−/A+ resize the English answers only, are remembered, and long answers 
   await expect(page.locator('#answer-smaller')).toBeDisabled();
   expect((await sizes()).scale).toBe('0.85');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).answerSize)).toBe(85);
+});
+
+test('the menu opens from the keyboard, moves with the arrow keys, and Escape returns focus to the panel', async ({ page }) => {
+  await liveFixture(page);
+  const panel = page.locator('#live-panel'), menu = page.locator('#live-menu');
+  await panel.focus();
+  await panel.press('Shift+F10');
+  await expect(menu).toBeVisible();
+  const items = await page.evaluate(() => [...document.querySelectorAll('#live-menu button')]
+    .filter(button => !button.disabled && button.getClientRects().length).map(button => button.dataset.action));
+  expect(items.slice(0, 2)).toEqual(['settings', 'start']);
+  await expect(page.locator('[data-action="settings"]')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('[data-action="start"]')).toBeFocused();
+  await page.keyboard.press('End');
+  expect(await focusedItem(page)).toBe(items.at(-1));
+  await page.keyboard.press('Home');
+  await expect(page.locator('[data-action="settings"]')).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  expect(await focusedItem(page)).toBe(items.at(-1));
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('[data-action="settings"]')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(panel).toBeFocused();
+
+  // The menu key opens it as well, and Enter runs the focused item.
+  await panel.press('ContextMenu');
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(menu).toBeHidden();
+  await live(page);
+  await expect(panel).toBeFocused();
+});
+
+test('closing the menu or the settings returns focus to the button they were opened from', async ({ page }) => {
+  const server = await liveFixture(page);
+  const toggle = page.locator('#live-toggle'), menu = page.locator('#live-menu'), dialog = page.locator('#settings');
+  await openMenuFrom(page, '#live-toggle');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(toggle).toBeFocused();
+
+  // Space runs an item too; the settings dialog then gives focus back to where the menu was opened.
+  await openMenuFrom(page, '#answer-larger');
+  await page.keyboard.press('Space');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('#answer-larger')).toBeFocused();
+  await openMenuFrom(page, '#answer-larger');
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await expect(page.locator('#answer-larger')).toBeFocused();
+
+  // A click outside on nothing in particular returns focus to the opener; a click on another control keeps it there.
+  await openMenuFrom(page, '#live-toggle');
+  const box = await page.locator('#live-panel').boundingBox(), shown = await menu.boundingBox();
+  const point = { x: box.x + 24, y: box.y + box.height - 24 };
+  expect(point.y > shown.y + shown.height || point.x < shown.x).toBe(true);
+  await page.mouse.click(point.x, point.y);
+  await expect(menu).toBeHidden();
+  await expect(toggle).toBeFocused();
+  await openMenuFrom(page, '#live-toggle');
+  await page.locator('#live-details summary').click();
+  await expect(menu).toBeHidden();
+  await expect(page.locator('#live-details summary')).toBeFocused();
+  await expect(page.locator('#live-details')).toHaveAttribute('open', '');
+
+  // A choice that turns off its opener (stop turns off pause) leaves focus on the panel.
+  await toggle.click();
+  await live(page);
+  await openMenuFrom(page, '#live-pause');
+  while (await focusedItem(page) !== 'stop') await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect.poll(server.commands).toContain('session.stop');
+  await expect(page.locator('#live-pause')).toBeDisabled();
+  await expect(page.locator('#live-panel')).toBeFocused();
+
+  // So does closing the settings after their opener turned off meanwhile (the session ended while they were open).
+  await toggle.click();
+  await live(page);
+  await openMenuFrom(page, '#live-pause');
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  server.send({ type: 'error', code: 'session_superseded', message: 'Another session started.', retryable: false });
+  await expect(page.locator('#live-action')).toHaveText('다시 시작');
+  await expect(page.locator('#live-pause')).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('#live-panel')).toBeFocused();
+});
+
+test('streaming replies and reconnects never move keyboard focus', async ({ page }) => {
+  const server = await liveFixture(page, { audioSource: 'microphone', showCaptions: true });
+  await page.locator('#live-toggle').click();
+  await live(page);
+  // Focus is somewhere else, as it would be in Teams or PowerPoint; any focus() call from the page is counted.
+  await page.evaluate(() => {
+    const input = Object.assign(document.createElement('input'), { id: 'elsewhere' });
+    document.body.append(input);
+    input.focus();
+    window.__focusCalls = 0;
+    const focus = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (...args) { window.__focusCalls++; return focus.apply(this, args); };
+  });
+  for (let id = 1; id <= 3; id++) {
+    server.send({ type: 'transcript.partial', turnId: `t${id}`, revision: 1, text: `Question ${id}` });
+    server.send({ type: 'transcript.final', turnId: `t${id}`, revision: 2, text: `Question ${id}?` });
+    server.send({ type: 'response.started', turnId: `t${id}`, responseId: `r${id}` });
+    for (const part of ['We should ', 'check the ', 'plan first.'])
+      server.send({ type: 'response.delta', turnId: `t${id}`, responseId: `r${id}`, text: part, primaryDone: part === 'plan first.' });
+    server.send({ type: 'response.completed', turnId: `t${id}`, responseId: `r${id}`, text: `We should check plan ${id} first.`,
+      suggestions: [`We should check plan ${id} first.`], sources: [], grounding: 'disabled' });
+    await expect(page.locator('#answer-text')).toHaveText(`We should check plan ${id} first.`);
+  }
+  await server.connections.at(-1).ws.close({ code: 1011, reason: 'Synthetic network drop' });
+  await expect.poll(() => server.connections.length).toBe(2);
+  await live(page);
+  await expect(page.locator('#live-pause')).toBeEnabled();
+  await expect(page.locator('#elsewhere')).toBeFocused();
+  expect(await page.evaluate(() => window.__focusCalls)).toBe(0);
 });
