@@ -119,6 +119,18 @@ try {
             Remove-Item -LiteralPath $suite, $score -ErrorAction SilentlyContinue
         }
     }
+    Invoke-Verification 'quality-eval-offline-tests' {
+        # Offline only: loopback fake server and injected transports. EVAL_* URLs and credentials stay hidden.
+        $evalSettings = @(Get-ChildItem Env: | Where-Object { $_.Name -like 'EVAL_*' })
+        try {
+            foreach ($setting in $evalSettings) { Remove-Item -LiteralPath "Env:$($setting.Name)" }
+            & $Python -m unittest discover -s (Join-Path $root 'tools\QualityEval') -p 'test_*.py' -v
+            if ($LASTEXITCODE -ne 0) { throw 'QualityEval offline tests failed.' }
+        }
+        finally {
+            foreach ($setting in $evalSettings) { Set-Item -LiteralPath "Env:$($setting.Name)" -Value $setting.Value }
+        }
+    }
     Invoke-Verification 'live-probe-job-template' {
         $compiled = [IO.Path]::GetTempFileName()
         try {

@@ -62,6 +62,9 @@ python -m unittest discover -s .\tools\QualityEval -p "test_*.py"     # or: cd t
 - forbidden patterns are valid regular expressions;
 - multi-turn, not-covered and commitment items are well formed.
 
+Windows CI runs the same unit tests in the `quality-eval-offline-tests` stage of `scripts/verify-release.ps1`. That
+stage hides every `EVAL_*` variable, so the tests cannot pick up a server URL or a credential.
+
 ## Dry run against a local Fake-mode API (no Azure)
 
 ```powershell
