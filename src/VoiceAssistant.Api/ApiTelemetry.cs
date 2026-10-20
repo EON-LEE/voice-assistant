@@ -24,7 +24,14 @@ public static class ApiTelemetry
         if (string.IsNullOrWhiteSpace(connectionString)) return false;
         var serviceName = ServiceName(configuration);
         var credential = Credential(configuration);
-        services.AddSingleton(_ => Sdk.CreateMeterProviderBuilder()
+        services.AddHostedService(provider => new TelemetryExport(() => CreateProvider(connectionString, serviceName, credential),
+            provider.GetRequiredService<ILogger<TelemetryExport>>()));
+        return true;
+    }
+
+    /// <summary>The meter provider limited to this app's meter, exporting to Azure Monitor.</summary>
+    internal static MeterProvider CreateProvider(string connectionString, string serviceName, TokenCredential credential) =>
+        Sdk.CreateMeterProviderBuilder()
             .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(serviceName))
             .AddMeter(MeetingMetrics.MeterName)
             .AddAzureMonitorMetricExporter(options =>
@@ -35,10 +42,7 @@ public static class ApiTelemetry
                 // Nothing is written to disk: a failed export is dropped rather than kept in local retry storage.
                 options.DisableOfflineStorage = true;
             })
-            .Build());
-        services.AddHostedService<TelemetryStarter>();
-        return true;
-    }
+            .Build();
 
     /// <summary>The service name, which Application Insights shows as the cloud role.</summary>
     internal static string ServiceName(IConfiguration configuration) =>
@@ -50,15 +54,35 @@ public static class ApiTelemetry
             ? new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(clientId))
             : new DefaultAzureCredential();
 
-    /// <summary>Creates the meter provider when the host starts; the container disposes (and flushes) it on shutdown.</summary>
-    private sealed class TelemetryStarter(MeterProvider provider) : IHostedService
+    /// <summary>
+    /// Creates the meter provider when the host starts and disposes (flushes) it on shutdown. The exporter parses the
+    /// connection string in its constructor, so a malformed value turns export off with one warning instead of stopping
+    /// the app.
+    /// </summary>
+    internal sealed class TelemetryExport(Func<MeterProvider> create, ILogger<TelemetryExport> logger) : IHostedService, IDisposable
     {
+        private MeterProvider? provider;
+
+        internal bool Exporting => Volatile.Read(ref provider) is not null;
+
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            GC.KeepAlive(provider);
+            try { Volatile.Write(ref provider, create()); }
+            catch (Exception exception)
+            {
+                // The exception message could echo the connection string, so only its type is logged.
+                logger.LogWarning("Metric export is off: the Azure Monitor exporter could not start ({ExceptionType}). " +
+                    "Check APPLICATIONINSIGHTS_CONNECTION_STRING.", exception.GetType().Name);
+            }
             return Task.CompletedTask;
         }
 
-        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            Dispose();
+            return Task.CompletedTask;
+        }
+
+        public void Dispose() => Interlocked.Exchange(ref provider, null)?.Dispose();
     }
 }
