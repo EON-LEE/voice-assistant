@@ -1,13 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DisplayAudioSource, type AudioSource, type CaptureSourceKind } from "../../src/VoiceAssistant.Web/src/capture.js";
+import { DisplayAudioSource, isHostSource, type AudioSource, type CaptureSourceKind } from "../../src/VoiceAssistant.Web/src/capture.js";
 import { CodedError } from "../../src/VoiceAssistant.Web/src/errors.js";
+import { HostAudioSource, hostKind } from "../../src/VoiceAssistant.Web/src/host-audio.js";
 import { LiveController, SilenceWatch, liveLimits, type LiveClock, type LiveNetwork, type SourceHooks } from "../../src/VoiceAssistant.Web/src/live-controller.js";
-import { liveMessage, type Classified } from "../../src/VoiceAssistant.Web/src/live-errors.js";
+import { liveMessage, warningMessage, type Classified } from "../../src/VoiceAssistant.Web/src/live-errors.js";
 import { LiveState } from "../../src/VoiceAssistant.Web/src/live-state.js";
 import { defaultOptions } from "../../src/VoiceAssistant.Web/src/options.js";
 import type { ServerEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 import { maxAudioMessageBytes, type Transport } from "../../src/VoiceAssistant.Web/src/transport.js";
+import { FakeWebView } from "./fake-webview.js";
 
 const flush = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 
@@ -513,4 +515,153 @@ test("A stalled upload is counted, and four seconds of backlog while connected r
   assert.equal(h.disconnects.at(-1)?.code, "upload_backpressure");
   assert.equal(h.controller.phase, "reconnecting");
   assert.equal(source.stopped, 0);
+});
+
+/** Real HostAudioSources over a fake LiveCoach bridge; capture ids are c1, c2, … in creation order. */
+function hostHarness(answerTimeoutMs?: number) {
+  const webview = new FakeWebView();
+  let made = 0;
+  const h = harness((kind, hooks) => {
+    assert.ok(isHostSource(kind), kind);
+    return new HostAudioSource({ webview, source: hostKind(kind), id: `c${++made}`, onWarning: hooks.warning,
+      onGap: missing => hooks.stall(missing), ...(answerTimeoutMs ? { answerTimeoutMs } : {}) });
+  });
+  return { ...h, webview };
+}
+async function liveHost(h: ReturnType<typeof hostHarness>, state = "capturing"): Promise<void> {
+  h.controller.start("teams");
+  h.webview.status("c1", state, "Teams process tree (PID 42)");
+  await flush();
+  h.latest().ready();
+  assert.equal(h.controller.phase, "live");
+}
+
+test("LiveCoach Teams audio: one host capture for the whole session, frames reach the server, a reconnect keeps the capture", async () => {
+  const h = hostHarness();
+  h.controller.start("teams");
+  assert.deepEqual(h.webview.posted, [{ type: "host-audio.start", source: "teams", id: "c1" }]);
+  assert.equal(h.transports.length, 0, "the session waits for LiveCoach's answer");
+  h.webview.status("c1", "capturing", "Teams process tree (PID 42)");
+  await flush();
+  h.latest().ready();
+  h.webview.frames(0, 1, 2);
+  assert.deepEqual(h.latest().binary.map(item => item.bytes[0]), [1, 2]);
+  h.latest().onError(new CodedError("socket_closed", "dropped"));
+  h.webview.frames(2, 3); // heard while reconnecting: kept
+  h.clock.advance(3000);
+  await flush();
+  h.latest().ready();
+  h.webview.frames(3, 4);
+  assert.deepEqual(h.latest().binary.map(item => item.bytes[0]), [3, 4], "the backlog first, then live frames, in order");
+  assert.equal(h.transports.length, 2);
+  assert.equal(h.webview.sent("host-audio.start").length, 1, "a reconnect never asks LiveCoach again");
+  assert.equal(h.webview.sent("host-audio.stop").length, 0);
+  await h.controller.stop();
+  assert.deepEqual(h.webview.sent("host-audio.stop"), [{ type: "host-audio.stop", id: "c1" }]);
+  assert.equal(h.transports[1]!.types.at(-1), "session.stop");
+  assert.equal(h.webview.listening, 0);
+});
+
+test("LiveCoach statuses: Teams not running and capture trouble only warn; a host stop or an unsupported Windows ends the session", async () => {
+  const h = hostHarness();
+  await liveHost(h, "teams-not-running");
+  assert.equal(h.controller.warning, "teams-not-running", "LiveCoach sends silence until Teams starts, so the session stays");
+  assert.equal(warningMessage(h.controller.warning!, h.controller.source, "app"), "Teams가 실행 중이 아닙니다. Teams를 켜면 자동으로 연결됩니다.");
+  h.webview.status("c1", "capturing", "Teams process tree (PID 42)");
+  assert.equal(h.controller.warning, null);
+  h.webview.status("c1", "error", "Teams is playing sound, but the capture gets only silence.", "teams", "teams-silent");
+  assert.equal(h.controller.warning, "teams-silent");
+  h.webview.status("c1", "error", "The audio device is in use (0x8889000A).");
+  assert.deepEqual([h.controller.warning, h.controller.warningDetail], ["capture-error", "The audio device is in use (0x8889000A)."]);
+  assert.equal(h.controller.phase, "live");
+  assert.equal(h.transports.length, 1);
+  h.webview.status("c1", "stopped", "Capture stopped.");
+  assert.equal(h.controller.phase, "stopped");
+  assert.deepEqual([h.controller.failure?.capture?.kind, h.controller.failure?.action], ["ended", "restart"]);
+  assert.match(liveMessage(h.controller.failure!, "app"), /^LiveCoach가 Teams 앱 소리 캡처를 멈췄습니다. '다시 시작'/);
+  assert.equal(h.transports[0]!.types.at(-1), "session.stop");
+  assert.equal(h.controller.warning, null);
+
+  const older = hostHarness();
+  older.controller.start("teams");
+  older.webview.status("c1", "unsupported-os", "Capturing only Teams needs Windows 10 build 20348 or later; this PC runs Windows build 19045.");
+  await flush();
+  assert.equal(older.controller.phase, "stopped");
+  assert.equal(older.transports.length, 0, "no server session for audio that cannot be captured");
+  assert.deepEqual([older.controller.failure?.capture?.kind, older.controller.failure?.action], ["unsupported", undefined]);
+  assert.match(liveMessage(older.controller.failure!, "app"), /20348/);
+});
+
+test("Switching from Teams to PC audio keeps the server connection: no reconnect, no new session, the Teams capture ends", async () => {
+  const h = hostHarness();
+  await liveHost(h);
+  h.webview.status("c1", "error", "Teams is playing sound, but the capture gets only silence.", "teams", "teams-silent");
+  h.webview.frames(0, 1);
+  h.controller.switchSource("host-system");
+  assert.deepEqual(h.webview.lastStart, { type: "host-audio.start", source: "system", id: "c2" });
+  assert.equal(h.controller.switching, "host-system");
+  assert.equal(h.controller.source, "teams", "until LiveCoach answers, the Teams capture stays the session's source");
+  h.webview.status("c2", "capturing", "System audio: Speakers", "system");
+  await flush();
+  assert.deepEqual([h.controller.source, h.controller.switching, h.controller.warning], ["host-system", undefined, null]);
+  assert.deepEqual(h.webview.sent("host-audio.stop"), [{ type: "host-audio.stop", id: "c1" }]);
+  h.webview.frames(0, 7);
+  assert.deepEqual(h.latest().binary.map(item => item.bytes[0]), [1, 7]);
+  assert.equal(h.transports.length, 1);
+  assert.deepEqual(h.latest().types, ["session.start"]);
+  assert.equal(h.controller.phase, "live");
+  h.controller.switchSource("host-system");
+  assert.equal(h.webview.sent("host-audio.start").length, 2, "switching to the source in use does nothing");
+});
+
+test("A switch keeps a pause, and a switch LiveCoach cannot make stops with that source's reason", async () => {
+  const h = hostHarness(20);
+  await liveHost(h);
+  h.controller.pause(true);
+  h.controller.switchSource("host-system");
+  h.webview.status("c2", "capturing", "System audio: Speakers", "system");
+  await flush();
+  h.webview.frames(0, 5);
+  assert.equal(h.latest().binary.length, 0, "still paused after the switch");
+  h.controller.pause(false);
+  h.webview.frames(1, 6);
+  assert.deepEqual(h.latest().binary.map(item => item.bytes[0]), [6]);
+  h.controller.switchSource("teams"); // LiveCoach never answers this one
+  await new Promise(resolve => setTimeout(resolve, 60));
+  await flush();
+  assert.equal(h.controller.phase, "stopped");
+  assert.deepEqual([h.controller.failure?.capture?.kind, h.controller.failure?.capture?.source], ["unsupported", "teams"]);
+  assert.equal(h.webview.listening, 0, "both captures were released");
+  assert.deepEqual(h.webview.sent("host-audio.stop").map(message => message.id), ["c1", "c3", "c2"]);
+});
+
+test("Choosing Teams again while PC audio is still being prepared asks LiveCoach for Teams again, since it runs one capture", async () => {
+  const h = hostHarness();
+  await liveHost(h);
+  h.controller.switchSource("host-system");
+  h.controller.switchSource("teams");
+  assert.equal(h.controller.switching, "teams");
+  h.webview.status("c3", "capturing", "Teams process tree (PID 42)");
+  await flush();
+  assert.deepEqual([h.controller.source, h.controller.switching], ["teams", undefined]);
+  assert.deepEqual(h.webview.posted.filter(message => message.type !== "host-audio.ack").map(message => `${message.type} ${message.id}`),
+    ["host-audio.start c1", "host-audio.start c2", "host-audio.stop c2", "host-audio.start c3", "host-audio.stop c1"]);
+  h.webview.frames(0, 9);
+  assert.equal(h.latest().binary.at(-1)?.bytes[0], 9);
+  assert.equal(h.transports.length, 1);
+});
+
+test("A LiveCoach warning comes before the silence warning, and the silence count restarts when it clears", async () => {
+  const h = harness();
+  await live(h, "teams");
+  const hooks = h.hooks();
+  hooks.warning("teams-not-running");
+  for (let i = 0; i < 200; i++) { h.clock.advance(100); hooks.level(0); }
+  assert.equal(h.controller.warning, "teams-not-running");
+  hooks.warning(null);
+  hooks.level(0);
+  assert.equal(h.controller.warning, null, "Teams just started: its silence counts from now");
+  for (let i = 0; i < 150; i++) { h.clock.advance(100); hooks.level(0); }
+  assert.equal(h.controller.warning, "silent");
+  assert.match(warningMessage("silent", "teams", "app"), /^Teams 앱 소리가 들어오지 않습니다 \(15초\)/);
 });

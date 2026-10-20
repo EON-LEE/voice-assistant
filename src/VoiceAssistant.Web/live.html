@@ -93,6 +93,8 @@
         <button id="signin" type="button">Microsoft 계정 연결</button>
         <label>오디오 소스
           <select id="audio-source">
+            <option value="teams" hidden disabled>Teams 앱 소리 (LiveCoach · 공유 창 없음)</option>
+            <option value="host-system" hidden disabled>PC 전체 소리 (LiveCoach · 기본 출력 장치)</option>
             <option value="microphone">마이크 (대면 회의실 등)</option>
             <option value="display">탭/시스템 오디오 (Teams 등 · 헤드셋 사용 시)</option>
           </select>
@@ -102,7 +104,10 @@
             <select id="mic-device"><option value="">브라우저 기본 마이크</option></select>
           </label>
         </div>
+        <p id="teams-hint" class="live-hint" hidden>LiveCoach가 <strong>Teams 데스크톱 앱의 소리만</strong> 직접 듣습니다. 공유 선택창이 없고 헤드셋을 써도 됩니다. Teams가 꺼져 있으면 켜질 때 자동으로 연결됩니다.</p>
+        <p id="host-system-hint" class="live-hint" hidden>LiveCoach가 <strong>Windows 기본 출력 장치의 모든 소리</strong>(다른 앱 알림 포함)를 듣습니다. 'Teams 앱 소리'가 비어 있을 때 쓰고, Teams 소리가 기본 출력 장치로 나오는지 확인하세요.</p>
         <p id="display-hint" class="live-hint" hidden>라이브 시작 시 뜨는 공유 선택창에서 <strong>Teams 웹 탭</strong>을 고르고 <strong>'탭 오디오도 공유'</strong>를 켜거나, Teams 데스크톱 앱이면 <strong>'전체 화면'</strong>을 고르고 <strong>'시스템 오디오 공유'</strong>를 체크하세요. 창(Window) 공유에는 소리가 없고, 시스템 오디오는 Windows 기본 출력 장치의 소리만 가져옵니다.</p>
+        <p id="source-note" class="live-hint" hidden>공유 선택창은 클릭으로만 열 수 있어 탭/시스템 오디오는 다음 '라이브 시작'부터 사용합니다.</p>
         <label>입력 음량
           <meter id="input-level" min="0" max="1" value="0"></meter>
         </label>
@@ -116,7 +121,7 @@
         <label>회의 주제 (선택)
           <input id="topic" maxlength="300" placeholder="예: Azure migration weekly sync">
         </label>
-        <p class="live-hint">라이브 시작은 선택한 오디오(마이크 또는 공유된 탭/시스템 오디오)를 Azure로 전송합니다. 회의 참여자의 허락을 받은 뒤 시작하세요. 오디오는 저장하지 않습니다.</p>
+        <p class="live-hint">라이브 시작은 선택한 오디오(마이크, 공유한 탭/시스템 오디오 또는 LiveCoach가 듣는 Teams/PC 소리)를 Azure로 전송합니다. 회의 참여자의 허락을 받은 뒤 시작하세요. 오디오는 저장하지 않습니다.</p>
         <p><a href="/materials.html" target="_blank" rel="noopener">내 문서 업로드 / 관리 (새 탭)</a></p>
         <div class="live-settings-actions"><button value="close">닫기</button></div>
       </form>

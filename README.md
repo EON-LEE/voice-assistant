@@ -12,7 +12,9 @@ commitments on the user's behalf. Read-aloud playback is explicitly requested.
 `/live.html` UI in a transparent, always-on-top WebView2 window. The page supports
 an in-person microphone and browser tab/system-audio sharing; capture still requires
 explicit Start, browser/OS permission, and participant consent. Launching the host
-does not capture audio. See the [WebOverlay instructions](src/VoiceAssistant.WebOverlay/README.md).
+does not capture audio. The host can also capture only the Teams desktop app natively
+for the page (Windows 10 build 20348+; **Teams 앱 소리** in the `/live.html` audio source list).
+See the [WebOverlay instructions](src/VoiceAssistant.WebOverlay/README.md).
 
 Publish a self-contained folder:
 
@@ -121,7 +123,8 @@ are possible later alternatives, not prerequisites for displaying text replies.
 | Component | Location | Responsibility |
 | --- | --- | --- |
 | Browser app | `src/VoiceAssistant.Web` | Audio-sharing consent, transcription, readable replies |
-| Transparent web host | `src/VoiceAssistant.WebOverlay` | Hosts `/live.html` in the current always-on-top Windows overlay |
+| Transparent web host | `src/VoiceAssistant.WebOverlay` | Hosts `/live.html` in the current always-on-top Windows overlay; native Teams/system audio for the page |
+| Shared audio conversion | `src/VoiceAssistant.Audio` | 16 kHz mono PCM16 conversion and 20 ms framing for the Windows clients |
 | ASP.NET Core API | `src/VoiceAssistant.Api` | Authentication, audio recognition, retrieval, streaming generation |
 | Wire contract | `contracts` | Versioned client/server message definitions |
 | Azure infrastructure | `infra` | Parameterized deployment and prerequisites |

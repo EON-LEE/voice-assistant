@@ -30,7 +30,7 @@ microphone, ticketed WebSocket and MSAL modules and matches the desktop behaviou
   up to 4 s for the push; when the line was reported `failed`, never arrives, or the server did not announce `replyKorean` in
   `session.ready`, the page translates that line itself through the same `translationOnly` enrichment (a server that does not
   announce it gets no waiting). The right-click **Korean retry** never waits. Questions heard in the transcript still use the HTTP enrichment.
-- **Reconnect without re-sharing.** One audio source (share or microphone) lives for the whole live session and is
+- **Reconnect without re-sharing.** One audio source (share, microphone or LiveCoach audio) lives for the whole live session and is
   prepared only from a click (**라이브 시작**, or the inline **다시 공유 / 다시 시작** button). A dropped connection reconnects
   only the server session (300 ms–3 s backoff, 20 attempts, counted again after 30 s of stable connection; time offline is
   not counted, the page waits for the network). The newest 4 s of audio wait meanwhile and are sent after `session.ready`:
@@ -46,6 +46,14 @@ microphone, ticketed WebSocket and MSAL modules and matches the desktop behaviou
   **다시 공유**; the steps differ in LiveCoach.exe (WebView2: whole screen + system audio; window shares carry no audio) and
   in a browser (Teams web tab + tab audio, or whole screen + system audio). A muted share and 15 s of continuous silence only
   warn. `grounding_unavailable` is a notice: that reply is labelled **자료 확인 불가** and the session continues.
+- **LiveCoach audio.** Inside `LiveCoach.exe` the audio source list also offers **Teams 앱 소리** and **PC 전체 소리** (hidden
+  in a browser; a stored choice falls back to the share there). Teams app audio is the default in LiveCoach and replaces a
+  stored share. Host statuses are classified by state and `code`: Teams not running and capture retries only warn (the host
+  keeps sending silence meanwhile); Teams sound that reaches the capture only as silence (`teams-silent`), capture errors and
+  15 s of silence offer an inline **PC 전체 소리로 전환**, which swaps the source on the same server connection; an unsupported
+  Windows build or a host stop ends the session with Korean steps. The status line names the active source, and the level
+  meter and silence warning work for host audio too. Choosing another source in the settings while live switches at once,
+  except a share, which waits for the next start because only a click may open its picker.
 - **Early primary line.** A `response.delta` with `primaryDone:true` makes the finished primary line the answer on screen
   before the reply completes; the alternative, grounding, sources and Korean follow at completion (the completed text wins if
   it differs). A held answer stays; the new line waits as the latest, like a completed reply.
@@ -194,11 +202,13 @@ For remote meetings use **Teams in a browser tab** where possible. After selecti
 
 The browser requires `video: true` to offer display audio; video is not attached to a video element, inspected, uploaded, recorded, or retained by this app. All video and audio tracks are stopped on Stop, session failure, permission/setup failure, source `ended`/audio `mute`, and page unload. A share granted after a cancelled/pending picker is also immediately stopped. Browsers do not let websites dismiss the picker themselves; dismiss an outstanding picker if you stop while it is open.
 
-Audio availability depends on the browser, OS, selected surface, and user's audio-sharing option. **Teams desktop/system audio is not guaranteed.** Window sharing supplies no audio. For the Teams desktop app choose the whole screen and **Share system audio**; system audio is the loopback of the Windows default output device, so Teams sound routed to another device (for example a headset that is not the default) is not captured. Inside LiveCoach.exe (WebView2) there are no browser tabs to pick, so the whole screen with system audio is the only shared-audio option there. A stream without audio fails visibly and releases all tracks; there is no microphone fallback. Screen/system audio can include other applications. No browser permission can bypass participant consent or meeting policy.
+Audio availability depends on the browser, OS, selected surface, and user's audio-sharing option. **Teams desktop/system audio is not guaranteed.** Window sharing supplies no audio. For the Teams desktop app choose the whole screen and **Share system audio**; system audio is the loopback of the Windows default output device, so Teams sound routed to another device (for example a headset that is not the default) is not captured. Inside LiveCoach.exe (WebView2) there are no browser tabs to pick, so the whole screen with system audio is the only shared-audio option there; LiveCoach's own **Teams 앱 소리** (below) needs no share at all. A stream without audio fails visibly and releases all tracks; there is no microphone fallback. Screen/system audio can include other applications. No browser permission can bypass participant consent or meeting policy.
 
 The live source converts only audio tracks with a fixed-memory AudioWorklet: mono downmix, 127-tap low-pass FIR anti-alias filter, continuous fractional resampling to 16 kHz (also up from an output device slower than 16 kHz, such as an 8 kHz hands-free headset), clipped signed little-endian PCM16. It sends 640-byte/20ms frames without a WAV header, only after `session.ready`. Video is never sent. 150 recyclable transferable buffers cap the worklet queue at three seconds (96,000 bytes), tolerating UI-thread stalls without losing samples; no growing per-sample arrays are used. A longer stall drops audio and reports how many frames were lost (the live page counts these stalls) instead of ending capture. WebSocket `bufferedAmount` beyond 96,000 bytes stops `/index.html` visibly; `/live.html` keeps at most four seconds of backlog and reconnects instead. Buffer capacity is not a fixed delay: frames are sent immediately while the UI thread is responsive.
 
 Pause while speaking drops audio locally and cancels suggestions. Epoch-tagged worklet frames prevent already-queued pre-pause buffers being uploaded after resume; DSP history is reset to avoid retaining paused speech. Pause leaves the shared tracks open; **Stop** releases them. Already-uploaded audio cannot be recalled. Browser throttling/suspension can interrupt capture; keep the page available. `/index.html` performs no automatic reconnect (see the live page above for its reconnect); neither page records audio, posts to Teams or navigates to source links. Read-aloud is explicit-click only in meetings; practice partner playback is attempted only after starting a practice round.
+
+**Native host audio (`src/host-audio.ts`).** Inside `LiveCoach.exe`, `/live.html` can use `HostAudioSource` instead of a share: the host captures only the Teams desktop app (**Teams 앱 소리**) or, when explicitly chosen, the default output device (**PC 전체 소리**) and sends 20 ms PCM16 frames as WebView2 web messages; the page passes them through the same live session and transport, with no picker and no browser permission. `isHostAudioAvailable("teams")` is true only inside that host on its trusted origin (Windows 10 build 20348 or later for Teams). See `src/VoiceAssistant.WebOverlay/README.md` for the message format and limits.
 
 ## In-person use
 

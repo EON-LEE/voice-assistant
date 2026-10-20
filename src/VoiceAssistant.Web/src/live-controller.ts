@@ -1,7 +1,7 @@
-import type { AudioSource, CaptureErrorKind, CaptureSourceKind } from "./capture.js";
+import { isHostSource, type AudioSource, type CaptureSourceKind } from "./capture.js";
 import { audioFrameBytes } from "./audio-limits.js";
 import { CodedError } from "./errors.js";
-import { classifyError, classifyServerError, type Classified } from "./live-errors.js";
+import { classifyError, classifyServerError, type Classified, type LiveWarning, type SourceWarning } from "./live-errors.js";
 import { createStartMessage, validateUpdate, type SessionOptions, type SessionUpdate } from "./options.js";
 import type { ServerEvent } from "./protocol.js";
 import { maxAudioMessageBytes, socketBufferedLimit, type Transport } from "./transport.js";
@@ -19,11 +19,12 @@ export interface LiveNetwork {
 /** What the audio source reports besides PCM frames. */
 export interface SourceHooks {
   level(level: number): void;
-  warning(kind: CaptureErrorKind | null): void;
+  /** A condition that does not stop capture, or null once it cleared; `detail` is the source's own wording, if any. */
+  warning(kind: SourceWarning | null, detail?: string): void;
   stall(frames: number): void;
 }
 export interface LiveControllerDeps {
-  /** Called only from `start()`, which runs inside the user's click. */
+  /** Called from `start()`, which runs inside the user's click, and from `switchSource()`. */
   createSource(kind: CaptureSourceKind, hooks: SourceHooks): AudioSource;
   createTransport(): Transport;
   /** Read at every connection, so each new session starts with the latest settings. */
@@ -34,6 +35,8 @@ export interface LiveControllerDeps {
   onDisconnect(reason: Classified): void;
   /** Something the page shows has changed. */
   onChange(): void;
+  /** The current source's input level (0..1) for a meter; a source being replaced is not shown. */
+  onLevel?(level: number): void;
   clock?: LiveClock;
   network?: LiveNetwork;
 }
@@ -96,11 +99,14 @@ function joinFrames(frames: ArrayBuffer[]): ArrayBuffer {
 }
 
 type TimerName = "handshake" | "retry" | "pump" | "keepalive";
+/** A source and what it last reported; its reports count only while it is the session's current source. */
+interface Attached { readonly audio: AudioSource; readonly kind: CaptureSourceKind; warning: SourceWarning | null; detail: string }
 
 /**
  * One live session: a single audio source, prepared once from the user's click, feeding a sequence of server
  * connections. A dropped connection is restored without touching the source, so a screen share never needs
  * the picker again; the newest four seconds of audio wait in a backlog and are flushed within the server's rate limits.
+ * `switchSource` replaces the source the other way round: same connection, new source.
  */
 export class LiveController {
   phase: LivePhase = "idle";
@@ -115,13 +121,17 @@ export class LiveController {
   failure: Classified | null = null;
   /** The latest non-fatal server notice; cleared when the next reply starts. */
   notice: Classified | null = null;
-  /** "muted" or "silent" while capture runs. */
-  warning: CaptureErrorKind | null = null;
+  /** A muted share, LiveCoach's report about its own capture, or 15 s of near-silence while capture runs. */
+  warning: LiveWarning | null = null;
+  /** The source's own wording of `warning` (LiveCoach's capture error), or "". */
+  warningDetail = "";
   readonly stats = { reconnects: 0, rollovers: 0, keepalives: 0, uploadStalls: 0, workletStalls: 0, droppedFrames: 0 };
 
   private readonly clock: LiveClock;
   private readonly network: LiveNetwork;
   private audio: AudioSource | undefined;
+  /** A source being prepared to take over from `audio` (see `switchSource`). */
+  private replacement: Attached | undefined;
   private capturing = false;
   private lifetime: AbortController | undefined;
   private transport: Transport | undefined;
@@ -143,7 +153,7 @@ export class LiveController {
   private lastSentAt = 0;
   private flushing = false;
   private stalled = false;
-  private muted = false;
+  private sourceWarning: SourceWarning | null = null;
   private readonly silence = new SilenceWatch(liveLimits.silenceMs, liveLimits.silenceLevel);
 
   constructor(private readonly deps: LiveControllerDeps) {
@@ -159,32 +169,75 @@ export class LiveController {
   get isCapturing(): boolean { return this.capturing; }
   /** The connection waits for an interactive sign-in; `resume()` continues with the same audio. */
   get needsSignIn(): boolean { return this.waitingForSignIn; }
+  /** The source kind `switchSource` is preparing, while it is. */
+  get switching(): CaptureSourceKind | undefined { return this.replacement?.kind; }
 
   /** Call directly from the user's click: the share picker (or microphone prompt) opens before anything is awaited. */
   start(kind: CaptureSourceKind): void {
     if (this.active) return;
     this.source = kind;
-    this.failure = this.notice = this.warning = null;
+    this.failure = this.notice = this.warning = this.sourceWarning = null;
+    this.warningDetail = "";
     this.attempt = 0;
     this.readyAt = undefined;
-    this.offline = this.rollingOver = this.paused = this.waitingForSignIn = this.muted = false;
+    this.offline = this.rollingOver = this.paused = this.waitingForSignIn = false;
     this.clearBacklog(); this.silence.reset();
     const lifetime = this.lifetime = new AbortController();
     this.setPhase("starting");
     let audio: AudioSource, prepared: Promise<void>;
     try {
-      audio = this.audio = this.deps.createSource(kind, this.hooks);
+      audio = this.audio = this.attach(kind).audio;
       prepared = audio.prepare(lifetime.signal);
     } catch (error) { this.halt(this.startFailure(error)); return; }
     prepared.then(() => {
       if (lifetime.signal.aborted || this.audio !== audio) return;
-      audio.start(this.onAudio, this.onSourceError);
+      audio.start(this.onAudio, this.sourceError(audio));
       this.capturing = true;
       if (this.paused) audio.pause(true);
       this.connect();
     }).catch(error => {
       if (lifetime.signal.aborted || this.audio !== audio) return;
       this.halt(this.startFailure(error));
+    });
+  }
+
+  /**
+   * Replaces the running session's audio source and keeps the server connection: nothing reconnects and the conversation
+   * goes on. The old source stops once the new one is ready; until then it keeps feeding the session. A source with a
+   * share picker must be switched to from a click.
+   */
+  switchSource(kind: CaptureSourceKind): void {
+    const lifetime = this.lifetime;
+    if (!this.active || !this.capturing || !lifetime) return;
+    const previous = this.replacement;
+    if (previous) {
+      this.replacement = undefined;
+      void previous.audio.stop().catch(() => undefined);
+      // LiveCoach runs one capture at a time, so a cancelled LiveCoach request has already ended a LiveCoach source.
+      if (kind === this.source && !(isHostSource(kind) && isHostSource(previous.kind))) { this.deps.onChange(); return; }
+    } else if (kind === this.source) return;
+    let next: Attached, prepared: Promise<void>;
+    try {
+      next = this.attach(kind);
+      prepared = next.audio.prepare(lifetime.signal);
+    } catch (error) { this.halt(this.startFailure(error, kind)); return; }
+    this.replacement = next;
+    this.deps.onChange();
+    prepared.then(() => {
+      if (lifetime.signal.aborted || this.replacement !== next) { void next.audio.stop().catch(() => undefined); return; }
+      next.audio.start(this.onAudio, this.sourceError(next.audio));
+      this.replacement = undefined;
+      const old = this.audio;
+      this.audio = next.audio;
+      this.source = kind;
+      if (this.paused) next.audio.pause(true);
+      this.silence.reset();
+      this.applyWarning(next);
+      void old?.stop().catch(() => undefined);
+    }).catch(error => {
+      if (lifetime.signal.aborted || this.replacement !== next) return;
+      this.replacement = undefined;
+      this.halt(this.startFailure(error, kind));
     });
   }
 
@@ -239,19 +292,34 @@ export class LiveController {
     try { transport.send(message); } catch (error) { this.lost(this.generation, error); }
   }
 
-  private readonly hooks: SourceHooks = {
-    level: level => {
-      if (this.silence.update(level, this.clock.now(), this.capturing && !this.paused && !this.muted)) this.updateWarning();
-    },
-    warning: kind => {
-      this.muted = kind === "muted";
-      if (this.muted) this.silence.reset();
-      this.updateWarning();
-    },
-    stall: frames => { this.stats.workletStalls++; this.stats.droppedFrames += frames; },
-  };
+  private attach(kind: CaptureSourceKind): Attached {
+    let attached: Attached | undefined;
+    const current = (): boolean => attached !== undefined && attached.audio === this.audio;
+    const audio = this.deps.createSource(kind, {
+      level: level => { if (current()) this.level(level); },
+      warning: (warning, detail = "") => {
+        if (!attached) return;
+        attached.warning = warning; attached.detail = detail;
+        if (current()) this.applyWarning(attached);
+      },
+      stall: frames => { if (current()) { this.stats.workletStalls++; this.stats.droppedFrames += frames; } },
+    });
+    attached = { audio, kind, warning: null, detail: "" };
+    return attached;
+  }
+  private level(level: number): void {
+    this.deps.onLevel?.(level);
+    if (this.silence.update(level, this.clock.now(), this.capturing && !this.paused && this.sourceWarning !== "muted")) this.updateWarning();
+  }
+  /** A new source condition starts the silence count again, so a long wait for Teams is not reported as silence too. */
+  private applyWarning(attached: Attached): void {
+    if (attached.warning !== this.sourceWarning) this.silence.reset();
+    this.sourceWarning = attached.warning;
+    this.warningDetail = attached.detail;
+    this.updateWarning();
+  }
   private updateWarning(): void {
-    this.warning = this.muted ? "muted" : this.silence.silent ? "silent" : null;
+    this.warning = this.sourceWarning ?? (this.silence.silent ? "silent" : null);
     this.deps.onChange();
   }
 
@@ -263,18 +331,21 @@ export class LiveController {
     if (this.ready) this.pump(); else this.trimBacklog();
   };
 
-  private readonly onSourceError = (error: Error): void => {
-    if (!this.active) return;
-    const reason = classifyError(error);
-    this.halt(reason.disposition === "fatal" ? reason : this.captureFailed());
-  };
-
-  private startFailure(error: unknown): Classified {
-    const reason = classifyError(error);
-    return reason.disposition === "fatal" ? reason : this.captureFailed();
+  /** Errors of the current source only: a source that was just replaced may still report its own end. */
+  private sourceError(audio: AudioSource): (error: Error) => void {
+    return error => {
+      if (!this.active || this.audio !== audio) return;
+      const reason = classifyError(error);
+      this.halt(reason.disposition === "fatal" ? reason : this.captureFailed());
+    };
   }
-  private captureFailed(): Classified {
-    return { code: "capture_failed", disposition: "fatal", action: this.source === "display" ? "reshare" : "restart" };
+
+  private startFailure(error: unknown, kind: CaptureSourceKind = this.source): Classified {
+    const reason = classifyError(error);
+    return reason.disposition === "fatal" ? reason : this.captureFailed(kind);
+  }
+  private captureFailed(kind: CaptureSourceKind = this.source): Classified {
+    return { code: "capture_failed", disposition: "fatal", action: kind === "display" ? "reshare" : "restart" };
   }
 
   private connect(): void {
@@ -501,12 +572,14 @@ export class LiveController {
       try { this.transport?.send({ type: "session.stop" }); } catch { /* the connection is already gone */ }
     }
     this.dropConnection();
-    const audio = this.audio;
-    this.audio = undefined;
-    this.capturing = this.muted = this.waitingForSignIn = false;
+    const audio = this.audio, replacement = this.replacement;
+    this.audio = this.replacement = undefined;
+    this.capturing = this.waitingForSignIn = false;
     this.clearBacklog();
     this.silence.reset();
-    this.warning = null;
+    this.warning = this.sourceWarning = null;
+    this.warningDetail = "";
+    if (replacement) void replacement.audio.stop().catch(() => undefined);
     return audio ? audio.stop().catch(() => undefined) : Promise.resolve();
   }
 
