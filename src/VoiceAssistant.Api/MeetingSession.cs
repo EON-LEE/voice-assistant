@@ -796,12 +796,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         // A confirmed introduction is composed at once at its final, so starting it early gains nothing.
         if (route == "profile") return;
         Task<RetrievalOutcome>? prefetched = null;
-        if (route == "knowledge")
-        {
-            // The retrieval this text's final would start begins now, and the speculative reply waits for that one.
-            prefetch!.Update(partial with { Final = true }, prior);
-            prefetched = prefetch.Claim(partial.TurnId, partial.Text, route, prior);
-        }
+        // Exactly as for a reply started at the final: it reuses this text's search only when that search has already started,
+        // and otherwise searches on its own at once, so it never waits behind the single prefetch worker.
+        if (route == "knowledge") prefetched = prefetch!.Take(partial.TurnId, partial.Text, route, prior);
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         cancellation.CancelAfter(ResponseDeadline);
         var deadline = clock.GetTimestamp() + (long)(ResponseDeadline.TotalSeconds * clock.TimestampFrequency);
@@ -891,6 +888,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         dropped.Output.Discard();
         dropped.Measurement.Discard();
         if (dropped.Scope is not null) dropped.Scope.Abandoned = true;
+        // No reply waits for the search it took any more: newer speech cancels it, an identical final may still reuse it.
+        if (dropped.Prefetched is { } taken) prefetch?.GiveBack(taken);
         // Awaited at session cleanup like a superseded reply; its cancellation source is released once it has finished.
         retired.RemoveAll(task => task.IsCompletedSuccessfully);
         retired.Add(dropped.Task);

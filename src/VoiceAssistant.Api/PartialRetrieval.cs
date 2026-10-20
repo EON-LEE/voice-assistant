@@ -20,6 +20,8 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     private readonly CancellationTokenSource lifetime;
     private readonly Task worker;
     private Candidate? candidate;
+    /// <summary>The candidate whose search the worker is running now, if any.</summary>
+    private Candidate? running;
     private string? turn;
     private int starts;
     private bool closed;
@@ -102,12 +104,11 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     }
 
     // Newer speech replaces the candidate, but a retrieval a reply is already waiting for finishes on its own so the
-    // answer is not turned into an error. It is no longer reachable here, so nothing can reuse it afterwards. A claimed
-    // candidate that has not started is cancelled: only a speculative reply claims one, and newer speech discards it.
+    // answer is not turned into an error. It is no longer reachable here, so nothing can reuse it afterwards.
     // Caller holds the gate.
     private void Release()
     {
-        if (candidate is { Selected: false } or { Started: false }) candidate.Cancel();
+        if (candidate is { Selected: false }) candidate.Cancel();
         candidate = null;
     }
 
@@ -133,22 +134,16 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     }
 
     /// <summary>
-    /// For a speculative reply that starts before its final (experiment <c>Session:SpeculativeStart</c>): the candidate the
-    /// final would take, also when the worker has not started it yet, provided it is a final-like (immediate) candidate, which
-    /// always starts. Unlike <see cref="Take"/>, nothing is cancelled when no candidate matches.
+    /// A speculative reply that took this retrieval was discarded unseen (experiment <c>Session:SpeculativeStart</c>), so no
+    /// reply waits for it any more. It follows the normal rules again: an identical final reuses it and newer speech cancels
+    /// it. One that newer speech already replaced is cancelled now, so an orphaned search never keeps the worker busy.
     /// </summary>
-    internal Task<RetrievalOutcome>? Claim(string turnId, string text, string route, IReadOnlyList<ConversationTurn>? history = null)
+    internal void GiveBack(Task<RetrievalOutcome> taken)
     {
         lock (gate)
         {
-            if (closed || route != "knowledge" || candidate is not { Cancelled: false } match || !(match.Started || match.Immediate) ||
-                match.TurnId != turnId || match.Text != ResponseRouting.Identity(text) ||
-                match.QueryIdentity != ResponseRouting.Identity(RetrievalQuery.Build(text, history)))
-                return null;
-            // A failed retrieval an earlier reply already took is not handed out again; the reply retrieves on its own.
-            if (match.Selected && match.Result.Task.IsCompletedSuccessfully && match.Result.Task.Result.Failure is not null) return null;
-            match.Selected = true;
-            return match.Result.Task;
+            if (candidate is { } current && current.Result.Task == taken) current.Selected = false;
+            else if (running is { } orphan && orphan.Result.Task == taken) orphan.Cancel();
         }
     }
 
@@ -178,6 +173,7 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                         if (current != candidate || current.Cancelled || (!current.Immediate && starts >= 3)) continue;
                         if (!current.Immediate) starts++;
                         current.Started = true;
+                        running = current;
                         current.Cancellation.CancelAfter(TimeSpan.FromSeconds(10));
                     }
                     // Keep a noncooperative cancelled provider occupying this single worker; don't spawn replacements.
@@ -194,11 +190,9 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                 }
                 finally
                 {
-                    // A candidate the worker skipped (replaced, cancelled or over the start cap) still completes, so a
-                    // claimed one can never leave its reply waiting.
-                    current.Result.TrySetResult(new(null, new("grounding_unavailable", "Prefetched grounding was cancelled.")));
                     lock (gate)
                     {
+                        if (running == current) running = null;
                         current.Finished = true;
                         current.Cancellation.Dispose();
                     }

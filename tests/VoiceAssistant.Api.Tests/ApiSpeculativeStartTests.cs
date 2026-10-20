@@ -399,7 +399,7 @@ public sealed partial class ApiTests
     }
 
     [Fact]
-    public async Task ASpeculativeReplyRetrievesOnceAndItsAdoptedReplyReusesThatRetrieval()
+    public async Task ASpeculativeReplyTakesOverAStartedSearchAndItsAdoptedReplyDoesNotSearchAgain()
     {
         using var capture = new MetricCapture();
         var clock = new ManualClock();
@@ -407,8 +407,14 @@ public sealed partial class ApiTests
         await using var host = await Host.StartAsync(provider: provider, clock: clock, configuration: SpeculationOn());
         using var socket = await host.ConnectAsync();
         await StartSpeculativeSessionAsync(socket, mode: "grounded");
+        var timers = clock.TimersCreated;
 
-        await PauseOnPartialAsync(socket, provider, clock, new("q", 1, RolloutPartial, false));
+        provider.Emit(new("q", 1, RolloutPartial, false));
+        Assert.Equal("transcript.partial", TypeOf(await Receive(socket)));
+        // The partial's prefetched search has started (its debounce runs in real time) before the speculation pause ends.
+        await NextAsync(provider.RetrievalCalls);
+        await clock.WaitForTimersAsync(timers + 1);
+        clock.Advance(MeetingSession.SpeculationPause);
         Assert.Equal(RolloutPartial, await NextAsync(provider.Finished));
         provider.Emit(new("q", 2, RolloutQuestion, true));
 
@@ -421,6 +427,90 @@ public sealed partial class ApiTests
         await ReceiveUntilCloseAsync(socket);
         Assert.Single(capture.Named("voiceassistant.reply.prefetch"), measurement => measurement.Tags.Contains(new("result", "hit")));
         Assert.Single(Speculations(capture, "adopted"), tags => tags.Contains(new("route", "knowledge")));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task NewWordsCancelASearchNobodyWaitsForAndFreeTheWorkerForTheNextOne(bool speculative)
+    {
+        using var capture = new MetricCapture();
+        var clock = new ManualClock();
+        var provider = new SpeculationProvider { BlockRetrievals = true };
+        await using var host = await Host.StartAsync(provider: provider, clock: clock,
+            configuration: speculative ? SpeculationOn() : EarlyStartOn());
+        using var socket = await host.ConnectAsync();
+        await StartSpeculativeSessionAsync(socket, mode: "grounded");
+        var timers = clock.TimersCreated;
+        const string longer = RolloutPartial + " for the launch";
+
+        provider.Emit(new("q", 1, RolloutPartial, false));
+        Assert.Equal("transcript.partial", TypeOf(await Receive(socket)));
+        var first = await NextAsync(provider.RetrievalCalls);
+        if (speculative)
+        {
+            // A speculative reply takes over the search that is running.
+            await clock.WaitForTimersAsync(timers + 1);
+            clock.Advance(MeetingSession.SpeculationPause);
+        }
+        provider.Emit(new("q", 2, longer, false));
+        Assert.Equal("transcript.partial", TypeOf(await Receive(socket)));
+
+        // The new words discard that reply; nobody waits for the search any more, so it is cancelled and the single
+        // prefetch worker moves on to the newer words.
+        await first.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = await NextAsync(provider.RetrievalCalls);
+        Assert.EndsWith(ResponseRouting.Normalize(longer), second.Query, StringComparison.Ordinal);
+        second.Release.SetResult(new("no_matches", []));
+        Assert.Equal(speculative ? 1 : 0, Speculations(capture, "started").Count());
+        Assert.Equal(speculative ? 1 : 0, Speculations(capture, "discarded").Count());
+        await Send(socket, """{"type":"session.stop"}""");
+        Assert.DoesNotContain(await ReceiveUntilCloseAsync(socket), message => TypeOf(message).StartsWith("response.", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AReplyKeepsItsGroundingWhenTheNextUtteranceAndAModeChangeArriveWhileItSearches(bool speculative)
+    {
+        var clock = new ManualClock();
+        var provider = new SpeculationProvider { BlockRetrievals = true, StubbornRetrievals = 1 };
+        await using var host = await Host.StartAsync(provider: provider, clock: clock,
+            configuration: speculative ? SpeculationOn() : EarlyStartOn());
+        using var socket = await host.ConnectAsync();
+        await StartSpeculativeSessionAsync(socket, mode: "grounded");
+
+        // A statement's prefetched search hangs and ignores cancellation, so it keeps the single prefetch worker busy.
+        provider.Emit(new("z", 1, "we discussed the timeline", false));
+        Assert.Equal("transcript.partial", TypeOf(await Receive(socket)));
+        var stuck = await NextAsync(provider.RetrievalCalls);
+        provider.Emit(new("z", 2, "We discussed the timeline.", true));
+        Assert.Equal("transcript.final", TypeOf(await Receive(socket)));
+
+        // A question follows. Its search cannot start on the busy worker, so the reply (speculative, then adopted, or started
+        // at the final) searches on its own at once.
+        await PauseOnPartialAsync(socket, provider, clock, new("a", 1, "what is the budget", false));
+        provider.Emit(new("a", 2, "What is the budget?", true));
+        var messages = await ReceiveUntilAsync(socket, found => found.Any(message => TypeOf(message) == "response.started"));
+        var own = await NextAsync(provider.RetrievalCalls);
+        Assert.Contains("what is the budget", own.Query, StringComparison.Ordinal);
+
+        // The next utterance starts and the document-search mode changes while that search is still running.
+        provider.Emit(new("n", 1, "and one more thing", false));
+        messages.AddRange(await ReceiveUntilAsync(socket, found => found.Any(message => TypeOf(message) == "transcript.partial")));
+        await Send(socket, """{"type":"session.update","options":{"responseMode":"balanced"}}""");
+        messages.AddRange(await ReceiveUntilAsync(socket, found => found.Any(message => TypeOf(message) == "session.updated")));
+        own.Release.SetResult(new("no_matches", []));
+
+        messages.AddRange(await ReceiveUntilAsync(socket, Completed));
+        Assert.DoesNotContain(messages, message => TypeOf(message) == "error");
+        var completed = messages.Single(message => TypeOf(message) == "response.completed");
+        Assert.Equal("a", completed.GetProperty("turnId").GetString());
+        Assert.Equal("no_matches", completed.GetProperty("grounding").GetString());
+        Assert.False(completed.GetProperty("retrievalPrefetched").GetBoolean());
+        stuck.Release.SetResult(new("no_matches", []));
+        await Send(socket, """{"type":"session.stop"}""");
+        await ReceiveUntilCloseAsync(socket);
     }
 
     [Fact]
@@ -485,10 +575,17 @@ public sealed partial class ApiTests
     public void APausedPartialIsJudgedAsAClosedSentence(string partial, string closed) =>
         Assert.Equal(closed, ReplyTrigger.Closed(partial));
 
-    private static async Task<string> NextAsync(Channel<string> signals)
+    private static async Task<T> NextAsync<T>(Channel<T> signals)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         return await signals.Reader.ReadAsync(timeout.Token);
+    }
+
+    /// <summary>One search call of the test provider: released by the test, and noted when it is cancelled.</summary>
+    private sealed record RetrievalCall(string Query, CancellationToken Cancellation)
+    {
+        public TaskCompletionSource<Grounding> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     /// <summary>
@@ -508,6 +605,12 @@ public sealed partial class ApiTests
         public bool IgnoreCancellation { get; init; }
         public int FailingAnswers { get; init; }
         public int FailingRetrievals { get; init; }
+        /// <summary>Every search blocks until the test releases it.</summary>
+        public bool BlockRetrievals { get; init; }
+        /// <summary>The first blocked searches also ignore cancellation, as a slow search call might, and keep the worker busy.</summary>
+        public int StubbornRetrievals { get; init; }
+        /// <summary>Every search, in call order.</summary>
+        public Channel<RetrievalCall> RetrievalCalls { get; } = Channel.CreateUnbounded<RetrievalCall>();
         public Exception? ClassifierFailure { get; init; }
         /// <summary>Each answer's target, once the session has taken that answer's first line.</summary>
         public Channel<string> FirstLines { get; } = Channel.CreateUnbounded<string>();
@@ -526,10 +629,18 @@ public sealed partial class ApiTests
             return Task.FromResult<ISpeechStream>(speech);
         }
 
-        public Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation) =>
-            Interlocked.Increment(ref Retrievals) <= FailingRetrievals
-                ? Task.FromException<Grounding>(new InvalidOperationException("Synthetic search failure."))
-                : Task.FromResult(new Grounding("no_matches", []));
+        public Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation)
+        {
+            var number = Interlocked.Increment(ref Retrievals);
+            var call = new RetrievalCall(query, cancellation);
+            cancellation.Register(() => call.Cancelled.TrySetResult());
+            RetrievalCalls.Writer.TryWrite(call);
+            // Like the Azure provider, a failed search is reported as grounding_unavailable.
+            if (number <= FailingRetrievals)
+                return Task.FromException<Grounding>(new ProviderException("grounding_unavailable", "Synthetic search failure."));
+            if (!BlockRetrievals) return Task.FromResult(new Grounding("no_matches", []));
+            return number <= StubbornRetrievals ? call.Release.Task : call.Release.Task.WaitAsync(cancellation);
+        }
 
         public IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding, CancellationToken cancellation) =>
             throw new InvalidOperationException("Replies use AnswerWithSuggestionsAsync.");
