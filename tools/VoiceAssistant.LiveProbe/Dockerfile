@@ -9,7 +9,7 @@ COPY tools/VoiceAssistant.LiveProbe/ tools/VoiceAssistant.LiveProbe/
 RUN dotnet publish tools/VoiceAssistant.LiveProbe/VoiceAssistant.LiveProbe.csproj \
     -c Release --no-restore -o /out /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-bookworm-slim AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends libasound2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
