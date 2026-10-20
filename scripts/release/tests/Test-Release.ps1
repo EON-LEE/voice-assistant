@@ -42,7 +42,7 @@ function New-Scenario {
         firstStatuses = (New-Object 'Collections.Generic.List[int]'); statusByHost = @{}
         headers = @{
             'Strict-Transport-Security' = 'max-age=31536000; includeSubDomains'; 'X-Content-Type-Options' = 'nosniff'
-            'Referrer-Policy' = 'no-referrer'; 'Content-Security-Policy' = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+            'Referrer-Policy' = 'no-referrer'; 'Content-Security-Policy' = "script-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
             'Permissions-Policy' = 'camera=(), geolocation=(), microphone=(self), display-capture=(self)'; 'Cache-Control' = 'no-store'
         }
         calls = (New-Object 'Collections.Generic.List[string]'); encodings = (New-Object 'Collections.Generic.List[string]')
