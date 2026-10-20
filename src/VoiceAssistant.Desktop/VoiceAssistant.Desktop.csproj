@@ -10,7 +10,7 @@
   <ItemGroup>
     <Using Include="System.IO" />
     <ProjectReference Include="..\VoiceAssistant.Audio\VoiceAssistant.Audio.csproj" />
-    <PackageReference Include="NAudio" Version="2.4.0" />
+    <PackageReference Include="NAudio" Version="3.3.0" />
     <PackageReference Include="Microsoft.Identity.Client" Version="4.91.1" />
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.91.1" />
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
