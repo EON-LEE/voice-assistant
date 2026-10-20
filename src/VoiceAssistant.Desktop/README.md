@@ -31,10 +31,14 @@ For a self-contained Windows build, publish with the repository's `scripts\deskt
 
 ```powershell
 dotnet publish .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -c Release -r win-x64 --self-contained true `
-  -o "$env:USERPROFILE\.copilot\session-state\<session-id>\files\desktop-publish"
+  -o C:\Apps\VoiceAssistantDesktop
 ```
 
-The shipped `appsettings.json` points to the configured Azure service. Opening the app shows only the overlay and does not sign in or capture audio. Right-click for secondary settings. There are no separate login buttons: starting Live or requesting materials/practice connects the configured Microsoft account when needed, before accessing protected resources. After the first successful authentication, the official MSAL persistence extension retains the cache across app restarts and portable-folder updates, encrypted with Windows DPAPI for the current Windows user. Tokens are acquired and refreshed silently when possible. Microsoft may still require interactive authentication after consent revocation, MFA/sign-in-frequency policies or account changes; persistence cannot bypass those policies. Cache persistence errors are surfaced instead of silently falling back to plaintext. Closing the secondary settings window returns to the overlay; **Exit application** in the overlay menu ends sessions and releases resources.
+The shipped `appsettings.json` holds `YOUR-...` placeholders for the deployment values, never a real tenant, client ID or
+URL. Copy `appsettings.local.example.json` to `appsettings.local.json` (git-ignored) in this folder before building or
+publishing, or next to the published `.exe`, and fill in `Endpoint`, `Origin`, `TenantId`, `ClientId` and `Scope`. The app
+reads `appsettings.json` and then lets `appsettings.local.json` replace those values (same strict schema). Without it,
+Production mode stops with a configuration error that names the file; `--demo` still works. Opening the app shows only the overlay and does not sign in or capture audio. Right-click for secondary settings. There are no separate login buttons: starting Live or requesting materials/practice connects the configured Microsoft account when needed, before accessing protected resources. After the first successful authentication, the official MSAL persistence extension retains the cache across app restarts and portable-folder updates, encrypted with Windows DPAPI for the current Windows user. Tokens are acquired and refreshed silently when possible. Microsoft may still require interactive authentication after consent revocation, MFA/sign-in-frequency policies or account changes; persistence cannot bypass those policies. Cache persistence errors are surfaced instead of silently falling back to plaintext. Closing the secondary settings window returns to the overlay; **Exit application** in the overlay menu ends sessions and releases resources.
 
 The cache is outside the portable distribution at
 `%LOCALAPPDATA%\VoiceAssistant\Identity\<tenant-id>\<client-id>\msal-cache.bin`.
@@ -45,11 +49,12 @@ Tenant/client-specific directories keep different app identities separate.
 
 ## Native Entra and meeting connection
 
-`appsettings.json` contains nonsecret public-client configuration: the approved tenant, desktop public-client application ID, delegated `Meeting.Access` scope, canonical allowed HTTPS origin, and WSS endpoint. The desktop app registration must remain a **native public client** with `http://localhost` redirect and delegated API permission. There is no client secret, PIN, SPA client ID, anonymous live mode, or owner-ID override.
+`appsettings.local.json` holds the nonsecret public-client configuration: the approved tenant, desktop public-client application ID, delegated `Meeting.Access` scope, canonical allowed HTTPS origin, and WSS endpoint. The desktop app registration must remain a **native public client** with `http://localhost` redirect and delegated API permission. There is no client secret, PIN, SPA client ID, anonymous live mode, or owner-ID override.
 
 The native client obtains an Entra access token for authenticated HTTP operations. To open a meeting socket it sends an authenticated `POST /api/session/ticket` with the configured **exact `Origin`** header, validates the short-lived ticket response, then connects to `/api/meeting?ticket=...` with that same Origin. The bearer token is not placed in the WebSocket URL or sent as a WebSocket bearer header. Tickets are one-use and bound by the API to the authenticated user's object ID and Origin. The API continues to enforce its normal delegated-scope, identity, Search ACL, and participant-session policies.
 
-Configuration can be supplied without modifying the published settings:
+Configuration can be supplied without modifying the published settings; an explicit `--settings` file is used on its own,
+without the local overlay:
 
 ```powershell
 dotnet run --project .\src\VoiceAssistant.Desktop\VoiceAssistant.Desktop.csproj -- `

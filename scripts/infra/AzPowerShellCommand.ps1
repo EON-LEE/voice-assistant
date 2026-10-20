@@ -44,7 +44,7 @@ function Get-ArmTags {
         if ($pair.Count -ne 2) { throw 'Invalid project tag.' }
         $tags[$pair[0]] = $pair[1]
     }
-    if ($tags.managedBy -ne 'voice-assistant-bootstrap' -or $tags.projectId -ne 'ff8f97b4-5db4-458e-99de-0d63cfc96a4a') { throw 'Unapproved project ownership.' }
+    if ($tags.managedBy -ne 'voice-assistant-bootstrap' -or $tags.projectId -ne $script:projectId) { throw 'Unapproved project ownership.' }
     return $tags
 }
 function Get-RegistryDigest {
@@ -71,11 +71,14 @@ function Get-RegistryDigest {
     return [string]$response.Headers['Docker-Content-Digest']
 }
 try {
+    Import-Module (Join-Path $PSScriptRoot 'ReleaseTarget.psm1') -Force
+    $approved = Get-ApprovedTarget
     $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($RequestBase64)) | ConvertFrom-Json
     $script:arguments = [string[]]$request.arguments
-    $script:subscription = Read-Option '--subscription'
-    $script:tenant = '2573db8c-dfe5-4805-9e28-a0859692e705'
-    if ($script:subscription -ne 'b0af194e-77a5-4471-bb43-67e78295b5c8') { throw 'Unapproved subscription.' }
+    if (-not (Test-SameGuid (Read-Option '--subscription') $approved.SubscriptionId)) { throw 'Unapproved subscription.' }
+    $script:subscription = $approved.SubscriptionId
+    $script:tenant = $approved.TenantId
+    $script:projectId = $approved.ProjectId
     Import-Module Az.Accounts -ErrorAction Stop
     $contexts = @(Get-AzContext -ListAvailable | Where-Object {
         $_.Subscription.Id -eq $script:subscription -and $_.Tenant.Id -eq $script:tenant -and $_.Environment.Name -eq 'AzureCloud'

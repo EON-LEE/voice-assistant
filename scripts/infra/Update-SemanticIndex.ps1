@@ -4,8 +4,8 @@ param(
     [string]$IndexName = 'meeting-knowledge',
     [string]$SearchName,
     [string]$ResourceGroup,
-    [string]$SubscriptionId = 'b0af194e-77a5-4471-bb43-67e78295b5c8',
-    [string]$TenantId = '2573db8c-dfe5-4805-9e28-a0859692e705',
+    [string]$SubscriptionId,
+    [string]$TenantId,
     [ValidateSet('AzureCli', 'AzPowerShell')][string]$AuthProvider = 'AzureCli',
     [string]$AzPath = 'az',
     [string[]]$AzPrefix = @(),
@@ -28,6 +28,10 @@ if ($SearchName -cnotmatch '^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$' -or [string]::IsN
     throw 'Apply requires explicit SearchName and ResourceGroup.'
 }
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'ReleaseTarget.psm1') -Force
+$target = Resolve-ApprovedTarget -SubscriptionId $SubscriptionId -TenantId $TenantId
+$SubscriptionId = $target.SubscriptionId
+$TenantId = $target.TenantId
 Set-AzureCli -AuthProvider $AuthProvider -AzPath $AzPath -AzPrefix $AzPrefix -TimeoutSeconds 90
 $null = Assert-Subscription $SubscriptionId $TenantId
 $service = Invoke-AzJson @('search', 'service', 'show', '--name', $SearchName, '--resource-group', $ResourceGroup, '--subscription', $SubscriptionId)

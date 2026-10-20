@@ -101,8 +101,8 @@ what-if before explicit create**. The main application's `Deploy.ps1` is not use
 here because it intentionally fixes its own main-template/parameter contract:
 
 ```powershell
-$sub = 'b0af194e-77a5-4471-bb43-67e78295b5c8'
-$group = 'rg-voice-assistant-web'
+$sub = '<subscription-guid>'   # the subscriptionId in your git-ignored infra/release.local.json
+$group = '<resource-group>'
 $bicep = 'C:\tools\bicep.exe'
 $compiled = 'C:\approved-artifacts\private-ingestion.json'
 $parameters = 'C:\approved-artifacts\private-ingestion.parameters.json'

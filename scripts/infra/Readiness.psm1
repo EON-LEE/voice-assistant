@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'AzureProcess.psm1')
 Import-Module (Join-Path $PSScriptRoot 'Common.psm1')
+Import-Module (Join-Path $PSScriptRoot 'ReleaseTarget.psm1')
 
 function Add-ReadinessCheck {
     param($Report, [string]$Id, [string]$Category, [ValidateSet('PASS', 'FAIL', 'BLOCKED')][string]$Status, [string]$Code)
@@ -118,10 +119,10 @@ function Get-ExistingIdentityChecks {
 }
 
 function Test-OwnedResource {
-    param($Resource)
+    param($Resource, [string]$ProjectId)
     return ($null -ne $Resource -and $Resource.PSObject.Properties['tags'] -and $Resource.tags -and
         $Resource.tags.PSObject.Properties['managedBy'] -and $Resource.tags.managedBy -ceq 'voice-assistant-bootstrap' -and
-        $Resource.tags.PSObject.Properties['projectId'] -and $Resource.tags.projectId -ceq 'ff8f97b4-5db4-458e-99de-0d63cfc96a4a')
+        $Resource.tags.PSObject.Properties['projectId'] -and $ProjectId -and $Resource.tags.projectId -ceq $ProjectId)
 }
 
 function Get-AzureReadiness {
@@ -132,8 +133,8 @@ function Get-AzureReadiness {
         [string]$AzPath = 'az',
         [string[]]$AzPrefix = @(),
         [ValidateSet('Auto', 'AzureCli', 'AzPowerShell')][string]$AuthProvider = 'Auto',
-        [string]$SubscriptionId = 'b0af194e-77a5-4471-bb43-67e78295b5c8',
-        [string]$TenantId = '2573db8c-dfe5-4805-9e28-a0859692e705',
+        [string]$SubscriptionId,
+        [string]$TenantId,
         [ValidateSet('Bootstrap', 'Application')][string]$Stage = 'Bootstrap',
         [switch]$Plan,
         [switch]$Check,
@@ -143,7 +144,7 @@ function Get-AzureReadiness {
     $report = [pscustomobject]@{
         schemaVersion = 1; generatedAtUtc = [datetime]::UtcNow.ToString('o')
         mode = $(if ($Apply) { 'Apply' } elseif ($Check) { 'Check' } else { 'Plan' }); stage = $Stage
-        target = @{ subscriptionId = $SubscriptionId; tenantId = $TenantId }
+        target = $null
         overallStatus = 'BLOCKED'; execution = 'NotRequested'; liveApplicationVerified = $false; selectedAuthProvider = $null
         checks = (New-Object 'Collections.Generic.List[object]')
         identityAlternatives = (New-Object 'Collections.Generic.List[object]')
@@ -153,12 +154,26 @@ function Get-AzureReadiness {
         Add-ReadinessCheck $report 'configuration.flags' 'configuration' 'FAIL' 'CONFLICTING_FLAGS'
         return Complete-ReadinessReport $report
     }
-    if ($SubscriptionId -ne 'b0af194e-77a5-4471-bb43-67e78295b5c8' -or $TenantId -ne '2573db8c-dfe5-4805-9e28-a0859692e705') {
+    # The approved subscription/tenant/ownership tag come only from the git-ignored release target file.
+    $approved = Find-ApprovedTarget
+    if ($approved.Status -eq 'Missing') {
+        Add-ReadinessCheck $report 'configuration.target' 'configuration' 'BLOCKED' 'APPROVED_TARGET_CONFIGURATION_REQUIRED'
+        return Complete-ReadinessReport $report
+    }
+    if ($approved.Status -ne 'Valid') {
+        Add-ReadinessCheck $report 'configuration.target' 'configuration' 'FAIL' 'INVALID_APPROVED_TARGET_CONFIGURATION'
+        return Complete-ReadinessReport $report
+    }
+    if (($SubscriptionId -and -not (Test-SameGuid $SubscriptionId $approved.Target.SubscriptionId)) -or
+        ($TenantId -and -not (Test-SameGuid $TenantId $approved.Target.TenantId))) {
         # Do not echo unvalidated target strings into the report.
-        $report.target = $null
         Add-ReadinessCheck $report 'configuration.target' 'configuration' 'FAIL' 'UNAPPROVED_TARGET'
         return Complete-ReadinessReport $report
     }
+    $SubscriptionId = $approved.Target.SubscriptionId
+    $TenantId = $approved.Target.TenantId
+    $projectId = $approved.Target.ProjectId
+    $report.target = @{ subscriptionId = $SubscriptionId; tenantId = $TenantId }
     Add-ReadinessCheck $report 'configuration.target' 'configuration' 'PASS' 'APPROVED_TARGET'
     $config = $null
     if (-not $ConfigFile -or -not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {
@@ -241,7 +256,7 @@ function Get-AzureReadiness {
         $group = Invoke-ReadinessAz $options @('group', 'show', '--name', $config.resourceGroup, '--subscription', $SubscriptionId)
         if (-not $group.Succeeded) {
             Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'BLOCKED' "RESOURCE_GROUP_READ_$($group.Code)"
-        } elseif (-not (Test-OwnedResource $group.Data) -or $group.Data.location -ne $config.location) {
+        } elseif (-not (Test-OwnedResource $group.Data $projectId) -or $group.Data.location -ne $config.location) {
             Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'FAIL' 'EXISTING_GROUP_NOT_OWNED_OR_LOCATION_MISMATCH'
         } else {
             Add-ReadinessCheck $report 'cloud.resourceGroup' 'availability' 'PASS' 'OWNED_GROUP_REUSED_UNCHANGED'
@@ -252,7 +267,7 @@ function Get-AzureReadiness {
                 $registry = @($registries.Data | Where-Object { $_ -and $_.name -eq $config.registryName })
                 if ($registry.Count -eq 1) {
                     $registryMissing = $false
-                    if (-not (Test-OwnedResource $registry[0]) -or $registry[0].location -ne $config.location -or
+                    if (-not (Test-OwnedResource $registry[0] $projectId) -or $registry[0].location -ne $config.location -or
                         $registry[0].sku.name -ne $config.registrySku -or $registry[0].adminUserEnabled -ne $false -or
                         ($registry[0].PSObject.Properties['roleAssignmentMode'] -and $registry[0].roleAssignmentMode -ne 'LegacyRegistryPermissions')) {
                         Add-ReadinessCheck $report 'cloud.registry' 'availability' 'FAIL' 'EXISTING_REGISTRY_NOT_OWNED_OR_INCOMPATIBLE'
@@ -305,11 +320,11 @@ function Get-AzureReadiness {
         }
     }
     if (-not $Apply) { return Complete-ReadinessReport $report }
-    $tags = @('managedBy=voice-assistant-bootstrap', 'projectId=ff8f97b4-5db4-458e-99de-0d63cfc96a4a')
+    $tags = @('managedBy=voice-assistant-bootstrap', "projectId=$projectId")
     if ($Stage -eq 'Bootstrap') {
         if ($groupMissing) {
             $created = Invoke-ReadinessAz $options (@('group', 'create', '--name', $config.resourceGroup, '--location', $config.location, '--tags') + $tags + @('--subscription', $SubscriptionId)) 120
-            if (-not $created.Succeeded -or -not (Test-OwnedResource $created.Data)) {
+            if (-not $created.Succeeded -or -not (Test-OwnedResource $created.Data $projectId)) {
                 $report.execution = 'Unknown'
                 Add-ReadinessCheck $report 'execution.bootstrap' 'mutation' 'FAIL' 'GROUP_CREATE_FAILED_OR_UNCONFIRMED_RECHECK_BEFORE_RETRY'
                 return Complete-ReadinessReport $report
@@ -318,7 +333,7 @@ function Get-AzureReadiness {
         if ($registryMissing) {
             $created = Invoke-ReadinessAz $options (@('acr', 'create', '--name', $config.registryName, '--resource-group', $config.resourceGroup,
                 '--location', $config.location, '--sku', $config.registrySku, '--admin-enabled', 'false', '--tags') + $tags + @('--subscription', $SubscriptionId)) 300
-            if (-not $created.Succeeded -or -not (Test-OwnedResource $created.Data) -or $created.Data.provisioningState -ne 'Succeeded') {
+            if (-not $created.Succeeded -or -not (Test-OwnedResource $created.Data $projectId) -or $created.Data.provisioningState -ne 'Succeeded') {
                 $report.execution = 'Unknown'
                 Add-ReadinessCheck $report 'execution.bootstrap' 'mutation' 'FAIL' 'REGISTRY_CREATE_FAILED_OR_UNCONFIRMED_RECHECK_BEFORE_RETRY'
                 return Complete-ReadinessReport $report

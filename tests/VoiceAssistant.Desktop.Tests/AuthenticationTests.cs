@@ -15,7 +15,7 @@ public sealed class AuthenticationTests
             {
                 Content = JsonContent($$"""{"ticket":"0123456789012345678901234567890123456789012","expiresAt":"{{expires}}"}""")
             });
-        var settings = new ClientSettings { Mode = ConnectionMode.Production };
+        var settings = TestSettings.Production;
         using var api = new AuthenticatedApiClient(settings, new FakeTokenProvider(), handler);
 
         Uri socket = await api.GetMeetingSocketAsync(CancellationToken.None);
@@ -37,7 +37,7 @@ public sealed class AuthenticationTests
         {
             Content = JsonContent("""{"correctedEnglish":"I can help.","easierEnglish":"I can help.","feedbackKo":"잘했어요.","points":[],"clarity":4}""")
         });
-        var settings = new ClientSettings { Mode = ConnectionMode.Production };
+        var settings = TestSettings.Production;
         using var api = new AuthenticatedApiClient(settings, new FakeTokenProvider(), handler);
 
         using var response = await api.PostJsonAsync("/api/practice/feedback",
@@ -60,7 +60,7 @@ public sealed class AuthenticationTests
             content.Headers.ContentType = new("application/json");
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
         });
-        using var api = new AuthenticatedApiClient(new ClientSettings { Mode = ConnectionMode.Production },
+        using var api = new AuthenticatedApiClient(TestSettings.Production,
             new FakeTokenProvider(), handler);
 
         await Assert.ThrowsAsync<InvalidDataException>(() => api.GetMeetingSocketAsync(CancellationToken.None));
@@ -73,7 +73,7 @@ public sealed class AuthenticationTests
         {
             Content = new StringContent(new string('x', 100000))
         });
-        using var api = new AuthenticatedApiClient(new ClientSettings { Mode = ConnectionMode.Production },
+        using var api = new AuthenticatedApiClient(TestSettings.Production,
             new FakeTokenProvider(), handler);
 
         var error = await Assert.ThrowsAsync<ApiRequestException>(() =>
@@ -85,9 +85,8 @@ public sealed class AuthenticationTests
     [Fact]
     public void ProductionStartOptionsCarryGroundingModeAndOnlyConfirmedProfileValues()
     {
-        var settings = new ClientSettings
+        var settings = TestSettings.Production with
         {
-            Mode = ConnectionMode.Production,
             ResponseMode = "grounded",
             Topic = "Quarterly planning",
             ProfileName = "Ari",

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "subscriptionId": "REPLACE_SUBSCRIPTION_GUID",
+  "tenantId": "REPLACE_TENANT_GUID",
+  "projectId": "REPLACE_PROJECT_TAG_GUID",
+  "resourceGroup": "REPLACE_RESOURCE_GROUP",
+  "registryName": "REPLACE_ACR_NAME",
+  "imageRepository": "voice-assistant",
+  "productionApp": "REPLACE_PRODUCTION_CONTAINER_APP",
+  "stagingApp": "REPLACE_STAGING_CONTAINER_APP"
+}

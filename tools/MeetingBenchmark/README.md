@@ -22,7 +22,7 @@ the speaker stopped there.
 Run from repository root (PowerShell; use your actual approved paths):
 
 ```powershell
-$files = 'C:\Users\eonlee.REDMOND\.copilot\session-state\94af7cb9-a5ba-44f9-baac-b89831b37a39\files'
+$files = 'C:\approved-media'   # your own working folder outside the repository
 python .\tools\MeetingBenchmark\benchmark.py prepare `
   --manifest .\tools\MeetingBenchmark\manifest.fosdem.json `
   --source "$files\fosdem-jmap-panel.av1.webm" `
