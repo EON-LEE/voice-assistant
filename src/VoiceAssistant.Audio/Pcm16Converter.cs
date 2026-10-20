@@ -1,9 +1,12 @@
 using System.Buffers.Binary;
 using NAudio.Wave;
 
-namespace VoiceAssistant.Desktop.Audio;
+namespace VoiceAssistant.Audio;
 
-/// <summary>Streaming downmix and band-limited resampling. Never stores audio outside memory.</summary>
+/// <summary>
+/// Streaming downmix and band-limited resampling to 16 kHz mono PCM16. Never stores audio outside memory.
+/// Uses the same 127-tap Blackman-windowed low-pass and fractional-phase resampler as the web worklet (src/VoiceAssistant.Web/src/pcm.ts).
+/// </summary>
 public sealed class Pcm16Converter
 {
     private const int OutputRate = 16000;
