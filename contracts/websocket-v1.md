@@ -44,7 +44,7 @@ Optional top-level `session.start.options` is immutable for this socket, except 
 {"responseMode":"balanced","profile":{"name":"Mina","role":"Software engineer","project":"Evaluating email client interoperability"},"profileConfirmed":true,"topic":"Email protocols","phrases":["JMAP","IMAP","CONDSTORE","QRESYNC"],"endSilenceMs":500}
 ```
 
-The example profile is fictional test data, not the user's identity. Missing options preserve legacy `grounded` mode and700ms segmentation silence. Missing individual properties use those same defaults; the new browser explicitly sends `balanced`/500ms. Allowed modes are `balanced`, `grounded`, `conversation`. Profile name/role/project limits are100/160/300 characters; topic300. Any nonempty profile requires explicit `profileConfirmed:true`; edit/reset confirmation in the browser before starting another session. Phrase list is at most40 nonblank strings, each at most64 characters, at most2048 total characters. Silence is an integer350..1500ms inclusive and applies to silence segmentation and recognition-only sessions; it has no effect under `semanticSegmentation` (see below). Unknown options/profile fields, duplicate fields, wrong types, control characters, unconfirmed profile and oversized values fail as `invalid_start`. JSON null is not an omission. No profile/topic/phrase is persisted or logged.
+The example profile is fictional test data, not the user's identity. Missing options preserve legacy `grounded` mode and700ms segmentation silence. Missing individual properties use those same defaults; the new browser explicitly sends `balanced`/500ms. Allowed modes are `balanced`, `grounded`, `conversation`. Profile name/role/project limits are100/160/300 characters; topic300. Any nonempty profile requires explicit `profileConfirmed:true`; edit/reset confirmation in the browser before starting another session. Phrase list is at most40 nonblank strings, each at most64 characters, at most2048 total characters. Silence is an integer350..1500ms inclusive and applies to silence segmentation and recognition-only sessions; it has no effect under `semanticSegmentation` (see below). Unknown options/profile fields, duplicate fields, wrong types, control characters, unconfirmed profile and oversized values fail as `invalid_start`. JSON null is not an omission. No profile/topic/phrase is persisted or logged. A server running the phrase-hint experiment (server configuration `Speech:MaterialPhraseHints`, off by default) also gives the speech recognizer up to 100 hints from the caller's own materials, after the client's phrases. Prompts and translation still use only the client's phrases, and `transcribeOnly` sessions get no hints.
 
 Optional `transcribeOnly` (boolean, default false, JSON null is not an omission) makes the socket recognition-only for practice mode: `transcript.partial/final` are emitted as usual but there is no automatic response, no Search and no model call, and `response.request` returns `error` `code:"transcribe_only"`, `retryable:false` while the session continues. See `practice-v1.md`.
 
@@ -76,6 +76,14 @@ Gathered speech is bounded by the same 12-turn history the model sees: a waiting
 from the reply target (and a remainder of only backchannels is discarded), never an error.
 While the server waits it already retrieves for the latest final. `response.request` replies at once. `0` keeps one reply per
 final utterance.
+
+A server may run with the early-start experiment switched on (server configuration `Session:EarlyStartAtFinal`, off by default;
+no client option). Then a final that makes the gathered speech a question or request that ends like a finished sentence starts
+its reply at once instead of after the shortened wait. The wait still runs. If more speech in it changes the target (anything
+but backchannels), that reply is replaced like a newer request: `response.cancelled`, then `response.started` for the whole
+gathered speech. Otherwise the reply stands, and no second reply follows. A reply that is already answering an earlier window
+still holds a new question back until it completes, exactly as without the switch. Clients need no change: every event is one
+they already handle.
 
 Optional `replyKorean` (boolean, default false, JSON null is not an omission) asks the server to translate every reply line into
 Korean and push it as `response.korean`, so the client needs no second HTTP request after `response.completed`. `session.ready`

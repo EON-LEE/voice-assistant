@@ -5,7 +5,7 @@ prototype. It is not the recommended current Windows path. For microphone plus
 tab/system audio in the current `/live.html` UI, publish
 [`VoiceAssistant.WebOverlay`](../../src/VoiceAssistant.WebOverlay/README.md).
 
-Run from a Windows checkout with the .NET 8 SDK:
+Run from a Windows checkout with the .NET 10 SDK:
 
 ```powershell
 .\scripts\desktop\Publish.ps1 -OutputDirectory C:\Apps\MeetingCoach
@@ -29,7 +29,7 @@ Double-click `Preview-Offline.cmd` to inspect the overlay and practice with
 clearly labeled canned content. This mode needs no sign-in or microphone and
 does not use Azure services. It is not a substitute for live acceptance.
 
-For a machine that already has the .NET 8 Windows Desktop runtime:
+For a machine that already has the .NET 10 Windows Desktop runtime:
 
 ```powershell
 .\scripts\desktop\Publish.ps1 -OutputDirectory C:\Apps\MeetingCoach-Test `

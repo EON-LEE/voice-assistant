@@ -246,7 +246,7 @@ Korean translation, Hangul reading or coaching quality as judged by a human.
 
 ## Build and test
 
-Contributors need Node.js 22 and the .NET 8 SDK, not only the .NET runtime.
+Contributors need Node.js 22 and the .NET 10 SDK, not only the .NET runtime.
 End users need only a supported browser. The preserved optional desktop
 prototype and its tests additionally require Windows.
 

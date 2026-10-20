@@ -470,7 +470,8 @@ public sealed partial class ApiTests
             VoiceAssistant.Api.Knowledge.IKnowledgeStore? knowledge = null, TimeProvider? clock = null,
             Dictionary<string, string?>? configuration = null,
             VoiceAssistant.Api.Practice.IPracticeModel? practiceModel = null,
-            VoiceAssistant.Api.Practice.IPracticeSpeech? practiceSpeech = null, IDependencyWarmup? warmup = null)
+            VoiceAssistant.Api.Practice.IPracticeSpeech? practiceSpeech = null, IDependencyWarmup? warmup = null,
+            Microsoft.Extensions.Logging.ILoggerProvider? logs = null)
         {
             var app = ApiApplication.Build([], builder =>
             {
@@ -498,6 +499,8 @@ public sealed partial class ApiTests
                 if (practiceSpeech is not null) builder.Services.AddSingleton(practiceSpeech);
                 // Azure-mode tests never reach real Azure: the startup warm-up succeeds at once unless a test supplies one.
                 builder.Services.AddSingleton<IDependencyWarmup>(warmup ?? new InstantWarmup());
+                // The logging factory takes every registered provider; this is what AddProvider does.
+                if (logs is not null) builder.Services.AddSingleton(logs);
                 builder.Services.AddSingleton<IMeetingProvider>(provider ?? new FakeMeetingProvider());
                 builder.Services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {

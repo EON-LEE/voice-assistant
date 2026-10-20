@@ -1,7 +1,7 @@
 # Azure browser hosting and approved knowledge ingestion
 
 This slice deploys an **installation-free browser app**, not the legacy desktop
-client. One Azure Container App serves the built web frontend from the .NET 8
+client. One Azure Container App serves the built web frontend from the .NET 10
 API's `wwwroot`, with same-origin HTTPS API/WebSocket traffic on container port
 8080. No separate CDN, Teams bot, Graph connector, WorkIQ integration, automatic
 document crawler, or production fake-authentication mode is provisioned.
@@ -250,7 +250,7 @@ names, request URLs with tokens, or credentials.
 3. Build the integrated repository's API Dockerfile from repository root and push
    to the approved existing ACR using your approved image-publishing procedure:
    `docker build -f .\src\VoiceAssistant.Api\Dockerfile -t <registry>.azurecr.io/voice-assistant:<version> .`
-   That Dockerfile builds `src/VoiceAssistant.Web`, publishes .NET 8 and copies
+   That Dockerfile builds `src/VoiceAssistant.Web`, publishes .NET 10 and copies
    the frontend to `wwwroot`. Resolve the pushed image digest and supply
    `<registry>.azurecr.io/voice-assistant@sha256:<64-hex-digest>`.
    Build/push tools are operator prerequisites, **not end-user installations**.
@@ -448,6 +448,8 @@ The coordinated API uses semantic reranking with explicit
 The template sets 1.5 since the October 2026 synthetic evaluation (pass 0.98 and
 retrieval hit 0.99 against 0.88 and 0.84 at 2.0, see the
 [quality baseline](../docs/runbooks/quality-baseline.md)); the API's own default is 2.0.
+The template also sets `Session__EarlyStartAtFinal=true` and `Speech__MaterialPhraseHints=true`; both
+passed the same staging evaluation (see the experiment switches in the API README).
 The index's `meeting-semantic` configuration prioritizes `title` as title and
 `content` as content. The Bicep parameter `searchSemanticSearch` allows `free`
 or `standard`, default `standard`. The free plan has a monthly query quota; once it

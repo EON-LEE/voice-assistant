@@ -11,7 +11,7 @@ const servers = [];
 if (process.env.VOICE_ASSISTANT_BACKEND_E2E === '1' &&
     process.env.VOICE_ASSISTANT_API_EXTERNAL !== '1') {
   servers.push({
-    command: `dotnet "${join('bin', 'Release', 'net8.0', 'VoiceAssistant.Api.dll')}"`,
+    command: `dotnet "${join('bin', 'Release', 'net10.0', 'VoiceAssistant.Api.dll')}"`,
     cwd: '../../src/VoiceAssistant.Api',
     url: 'http://localhost:5080/health/live',
     reuseExistingServer: false,

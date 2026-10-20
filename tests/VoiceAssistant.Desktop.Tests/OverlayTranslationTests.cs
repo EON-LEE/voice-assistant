@@ -213,6 +213,9 @@ public sealed class OverlayTranslationTests
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            // A real transport fails a cancelled send. Buffering the request content no longer observes the token
+            // (.NET 9+ buffers into a pooled stream), so the double checks it explicitly.
+            cancellationToken.ThrowIfCancellationRequested();
             Assert.Equal("/api/assist/enrich", request.RequestUri!.AbsolutePath);
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             Assert.Equal(expectedKind, body.RootElement.GetProperty("kind").GetString());
