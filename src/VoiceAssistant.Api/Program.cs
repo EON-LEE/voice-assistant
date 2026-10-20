@@ -92,7 +92,7 @@ namespace VoiceAssistant.Api
                 var headers = context.Response.Headers;
                 headers.CacheControl = "no-store";
                 headers.XContentTypeOptions = "nosniff";
-                headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+                headers["Referrer-Policy"] = "no-referrer";
                 headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self), display-capture=(self)";
                 headers.ContentSecurityPolicy = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'";
                 if (strictTransport && SecurityHeaders.IsHttps(context.Request))
