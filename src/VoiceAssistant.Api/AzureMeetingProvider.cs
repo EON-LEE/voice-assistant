@@ -32,12 +32,13 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     {
         this.settings = settings;
         this.credential = credential ?? new DefaultAzureCredential();
-        openAI = new(new Uri(settings.OpenAIEndpoint), this.credential);
+        openAI = new(new Uri(settings.OpenAIEndpoint), this.credential, LiveChatOptions());
         retrievalOpenAI = new(new Uri(settings.OpenAIEndpoint), this.credential, RetrievalOpenAIOptions());
         if (settings.SearchEnabled)
             search = new(new Uri(settings.SearchEndpoint), settings.SearchIndex, this.credential, RetrievalSearchOptions());
     }
 
+    /// <param name="openAI">Chat client of the live reply calls; production uses <see cref="LiveChatOptions"/>.</param>
     /// <param name="retrievalOpenAI">Embedding client for retrieval; defaults to <paramref name="openAI"/>.</param>
     internal AzureMeetingProvider(ServiceSettings settings, AzureOpenAIClient openAI, SearchClient? search,
         AzureOpenAIClient? retrievalOpenAI = null)
@@ -50,13 +51,21 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     }
 
     public AzureMeetingProvider(ServiceSettings settings, AzureServiceClients clients)
-        : this(settings, clients.OpenAI, clients.RetrievalSearch, clients.RetrievalOpenAI)
+        : this(settings, clients.LiveChat, clients.RetrievalSearch, clients.RetrievalOpenAI)
     {
         credential = clients.Credential;
     }
 
     /// <summary>Live retrieval does its own single fast retry, so the SDK must not add slow backoff retries first.</summary>
     internal static AzureOpenAIClientOptions RetrievalOpenAIOptions() => new() { RetryPolicy = new ClientRetryPolicy(maxRetries: 0) };
+
+    /// <summary>Live answer, classifier and translation calls: at most one short retry, never a long Retry-After wait.</summary>
+    internal static AzureOpenAIClientOptions LiveChatOptions(TimeProvider? clock = null) => new() { RetryPolicy = new LiveChatRetryPolicy(clock) };
+
+    /// <summary>How long each live chat call may run before a retry is no longer worth it; see <see cref="LiveChatRetryPolicy"/>.</summary>
+    internal static readonly TimeSpan AnswerBudget = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan ClassifierBudget = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan TranslationBudget = TimeSpan.FromSeconds(10);
 
     internal static SearchClientOptions RetrievalSearchOptions()
     {
@@ -256,6 +265,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     {
         var transcript = string.Join("\n", conversation.TakeLast(8).Select(turn => "- " + turn.Text.ReplaceLineEndings(" ")));
         var options = CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 1024 });
+        using var call = LiveChatCall.Begin("classifier", ClassifierBudget);
         var result = await openAI.GetChatClient(settings.ChatDeployment).CompleteChatAsync(
             [new SystemChatMessage(TurnPrompt), new UserChatMessage("Recent meeting speech (oldest first, speakers unknown):\n" + transcript)],
             options, cancellation);
@@ -280,6 +290,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     public async Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation)
     {
         var request = KoreanTranslation.Request(english, context);
+        using var call = LiveChatCall.Begin("translation", TranslationBudget);
         // One retry: a rejected answer (not Korean, echoed English) is usually fixed by asking again.
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -453,6 +464,8 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 grounding.Status,
                 Documents = grounding.Status == "grounded" ? grounding.Documents : Array.Empty<Evidence>()
             })));
+        // The request (and its single allowed retry) is sent within this scope, on the first step of the stream.
+        using var call = LiveChatCall.Begin("answer", AnswerBudget);
         await foreach (var update in openAI.GetChatClient(settings.ChatDeployment)
             .CompleteChatStreamingAsync(messages, CreateChatOptions(settings), cancellation))
         {
