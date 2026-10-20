@@ -19,24 +19,24 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.*.props', '**/global.json') }}
           restore-keys: nuget-${{ runner.os }}-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
           cache: npm
           cache-dependency-path: |
             src/VoiceAssistant.Web/package-lock.json
             tests/VoiceAssistant.Web.E2E/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Acquire verified Bicep compiler
@@ -54,21 +54,21 @@ jobs:
             -ReportPath (Join-Path $env:RUNNER_TEMP 'release-verification.json')
       - name: Upload verification evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verification-evidence
           path: ${{ runner.temp }}/release-verification.json
           if-no-files-found: warn
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: '**/TestResults/*.trx'
           if-no-files-found: ignore
       - name: Upload browser test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: browser-test-report
           path: tests/VoiceAssistant.Web.E2E/playwright-report/
@@ -78,10 +78,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build non-root Linux web image
         run: docker build --file src/VoiceAssistant.Api/Dockerfile --tag voice-assistant:test .
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
           cache: npm
@@ -109,7 +109,7 @@ jobs:
             node node_modules/@playwright/test/cli.js test
       - name: Upload Linux browser test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-browser-test-report
           path: tests/VoiceAssistant.Web.E2E/playwright-report/
