@@ -13,9 +13,13 @@
         <header class="live-status">
           <div class="live-status-row">
             <span id="capture-dot" class="live-dot" aria-hidden="true"></span>
-            <span id="capture-status" class="live-capture">마이크 꺼짐 · 우클릭으로 설정 및 시작</span>
+            <span id="capture-status" class="live-capture">마이크 꺼짐 · 시작을 누르세요</span>
             <meter id="live-level" class="live-level" min="0" max="1" value="0" aria-label="입력 음량" hidden></meter>
             <span class="live-version">WEB v2</span>
+            <div class="live-controls" role="group" aria-label="라이브 제어">
+              <button id="live-toggle" class="live-control" type="button" data-command="start">시작</button>
+              <button id="live-pause" class="live-control" type="button" data-paused="false" disabled>일시정지</button>
+            </div>
           </div>
           <div class="live-quick" role="group" aria-label="빠른 설정">
             <div class="live-seg" role="group" aria-labelledby="doc-label">
@@ -37,9 +41,13 @@
           </div>
           <div class="live-answers-header">
             <h1 class="live-answers-title">지금 읽을 답변</h1>
+            <div class="live-size" role="group" aria-label="답변 글자 크기">
+              <button id="answer-smaller" type="button" title="답변 글자 작게">A−</button>
+              <button id="answer-larger" type="button" title="답변 글자 크게">A+</button>
+            </div>
             <button id="hold-answer" class="live-hold" type="button" aria-pressed="false" disabled>답변 고정</button>
           </div>
-          <p id="reading-status" class="live-reading-status" role="status">우클릭으로 설정 / 라이브 시작</p>
+          <p id="reading-status" class="live-reading-status" role="status">시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴</p>
           <article class="live-card primary" aria-label="추천 답변 1">
             <div class="live-choice"><span id="primary-label">추천 영어 답변</span></div>
             <p id="answer-text" class="live-english" lang="en" aria-live="polite" aria-atomic="true">답변이 완성되면 여기에 표시됩니다.</p>

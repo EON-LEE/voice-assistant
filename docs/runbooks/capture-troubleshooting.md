@@ -12,12 +12,12 @@ The message names the problem; the fix depends on where the page runs.
 | 소리가 들어오지 않습니다 (15초) | A track exists but has carried silence for 15 seconds |
 | 화면 공유가 시스템 또는 조직 정책으로 차단되었습니다 | OS or organization policy blocks screen capture |
 
-After any fix press **다시 공유** (re-share) or **라이브 시작**. The input meter (입력 음량) in the status row must move
+After any fix press **다시 공유** (re-share) or **시작** in the header (the menu's **라이브 시작**). The input meter (입력 음량) in the status row must move
 when someone speaks; turn on **자막** (captions) to see what is recognized.
 
 On `/live.html` the source is chosen with right-click → **오디오 소스 설정** → **오디오 소스**: in LiveCoach.exe
 **Teams 앱 소리** (the default there) or **PC 전체 소리**, in any host **탭/시스템 오디오 (Teams 등)** (share picker) or
-**마이크 (대면 회의실 등)** for in-person. Then right-click → **라이브 시작**. On `/index.html` use **Live → Audio source**.
+**마이크 (대면 회의실 등)** for in-person. Then press **시작** in the header (or right-click → **라이브 시작**). On `/index.html` use **Live → Audio source**.
 
 ## Browser (Edge or Chrome)
 
