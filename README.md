@@ -13,7 +13,7 @@ commitments on the user's behalf. Read-aloud playback is explicitly requested.
 an in-person microphone and browser tab/system-audio sharing; capture still requires
 explicit Start, browser/OS permission, and participant consent. Launching the host
 does not capture audio. The host can also capture only the Teams desktop app natively
-for the page (Windows 10 build 20348+; not yet selectable in `/live.html`).
+for the page (Windows 10 build 20348+; **Teams 앱 소리** in the `/live.html` audio source list).
 See the [WebOverlay instructions](src/VoiceAssistant.WebOverlay/README.md).
 
 Publish a self-contained folder:

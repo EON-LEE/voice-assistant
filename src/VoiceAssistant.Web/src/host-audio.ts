@@ -1,12 +1,12 @@
 import { audioFrameBytes } from "./audio-limits.js";
-import type { AudioSource } from "./capture.js";
+import { CaptureError, type AudioSource, type CaptureErrorKind, type HostSourceKind } from "./capture.js";
 
 /**
  * Native meeting audio from the LiveCoach Windows host (LiveCoach.exe, WebView2).
  *
  * Page to host (JSON text through `window.chrome.webview.postMessage`):
  * `host-audio.start {source, id}`, `host-audio.stop {id}` and `host-audio.ack {seq, id}`.
- * Host to page: `host-audio.status {id, source, state, detail}` and `host-audio.frame {seq, pcm}`, where `pcm` is
+ * Host to page: `host-audio.status {id, source, state, detail, code?}` and `host-audio.frame {seq, pcm}`, where `pcm` is
  * base64 of 1 to 5 consecutive 20 ms frames (640 bytes each, 16 kHz mono PCM16LE) and `seq` numbers the first of them.
  * A capture starts at seq 0; a gap means the host dropped frames because the page did not keep up. The host keeps at
  * most 50 frames unacknowledged, so the page acknowledges every few frames. The host keeps the stream continuous
@@ -18,7 +18,15 @@ export interface HostAudioStatus {
   readonly state: HostAudioState;
   readonly detail: string;
   readonly source: HostAudioKind;
+  /** Why an `error` happened, when the host knows: "teams-silent" is Teams playing sound that the capture gets only as silence. */
+  readonly code?: string;
 }
+/** Conditions that do not end the meeting: the host keeps waiting for Teams, or keeps retrying the capture, meanwhile. */
+export type HostAudioWarning = "teams-not-running" | "teams-silent" | "capture-error";
+/** What a host status means for the meeting: a warning to show (null clears it), or the failure that ends the capture. */
+export type HostStatusEffect =
+  | { readonly fatal: false; readonly warning: HostAudioWarning | null }
+  | { readonly fatal: true; readonly error: CaptureError };
 
 /** The part of `window.chrome.webview` (WebView2) this module uses. */
 export interface HostWebView {
@@ -32,12 +40,18 @@ export const hostAudioVersion = 1;
 export const maxFramesPerMessage = 5;
 /** Frames between acknowledgements; well inside the host's 50-frame window. */
 export const ackEveryFrames = 5;
+/** How often the level meter reports, like the browser sources' meter. */
+export const levelIntervalMs = 100;
 const states: readonly HostAudioState[] = ["capturing", "teams-not-running", "unsupported-os", "error", "stopped"];
 const kinds: readonly HostAudioKind[] = ["teams", "system"];
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : undefined;
 }
+
+/** The page's source kind for a host capture kind, and back. */
+export function pageSource(kind: HostAudioKind): HostSourceKind { return kind === "teams" ? "teams" : "host-system"; }
+export function hostKind(source: HostSourceKind): HostAudioKind { return source === "teams" ? "teams" : "system"; }
 
 /** The WebView2 bridge when this page runs inside a WebView2 host, otherwise undefined. */
 export function hostWebView(scope: unknown = globalThis): HostWebView | undefined {
@@ -61,17 +75,16 @@ export function isHostAudioAvailable(source?: HostAudioKind, scope: unknown = gl
   return source ? offered.includes(source) : offered.some(value => kinds.includes(value as HostAudioKind));
 }
 
-/** What a host status means for the meeting: fatal errors end it, other messages are warnings ("" clears them). */
-export function describeHostStatus(status: HostAudioStatus): { fatal: boolean; message: string } {
-  const label = status.source === "teams" ? "Teams audio" : "System audio";
+/** What a host status means for the meeting. Classified by state and code only; `detail` is the host's own wording. */
+export function describeHostStatus(status: HostAudioStatus): HostStatusEffect {
+  const source = pageSource(status.source);
   switch (status.state) {
-    case "capturing": return { fatal: false, message: "" };
-    case "teams-not-running":
-      return { fatal: false, message: "Microsoft Teams is not running. Live Coach starts listening as soon as Teams opens." };
-    case "error": return { fatal: false, message: `${label}: ${status.detail}` };
-    case "unsupported-os":
-      return { fatal: true, message: `Capturing only Teams is unsupported on this Windows version. ${status.detail}`.trim() };
-    case "stopped": return { fatal: true, message: "LiveCoach stopped capturing audio. Start again." };
+    case "capturing": return { fatal: false, warning: null };
+    case "teams-not-running": return { fatal: false, warning: "teams-not-running" };
+    case "error": return { fatal: false, warning: status.code === "teams-silent" ? "teams-silent" : "capture-error" };
+    case "unsupported-os": return { fatal: true,
+      error: new CaptureError("unsupported", source, `Capturing only Teams is unsupported on this Windows version. ${status.detail}`.trim()) };
+    case "stopped": return { fatal: true, error: new CaptureError("ended", source, "LiveCoach stopped capturing audio. Start again.") };
   }
 }
 
@@ -103,10 +116,11 @@ function parseHostMessage(data: unknown): HostMessage | undefined {
   }
   const message = record(value);
   if (message?.["type"] === "host-audio.status") {
-    const { state, source, detail, id } = message;
+    const { state, source, detail, id, code } = message;
     if (!states.includes(state as HostAudioState) || !kinds.includes(source as HostAudioKind)) return undefined;
     return { kind: "status", id: typeof id === "string" ? id : undefined,
-      status: { state: state as HostAudioState, source: source as HostAudioKind, detail: typeof detail === "string" ? detail : "" } };
+      status: { state: state as HostAudioState, source: source as HostAudioKind, detail: typeof detail === "string" ? detail : "",
+        ...(typeof code === "string" && code ? { code } : {}) } };
   }
   if (message?.["type"] === "host-audio.frame") {
     const { seq, pcm } = message;
@@ -119,8 +133,10 @@ function parseHostMessage(data: unknown): HostMessage | undefined {
 export interface HostAudioDependencies {
   webview: HostWebView;
   source: HostAudioKind;
-  /** Conditions that do not end the meeting (Teams not running, capture problems); "" clears the warning. */
-  onWarning(message: string): void;
+  /** A condition that does not end the meeting, or null once it cleared; `detail` is the host's own (English) wording. */
+  onWarning(warning: HostAudioWarning | null, detail: string): void;
+  /** Peak level (0..1) of the audio received in each 100 ms; 0 while paused or when nothing arrived. */
+  onLevel?(level: number): void;
   /** Every status of this capture, for example to show the host's own wording. */
   onStatus?(status: HostAudioStatus): void;
   /** Frames the host dropped: missing in this gap and in total. */
@@ -138,10 +154,12 @@ let captures = 0;
  * An {@link AudioSource} whose audio LiveCoach.exe captures natively: only the Teams app ("teams"), or the default
  * output device when the user explicitly chooses "system". Same contract as the browser sources: `prepare` asks for
  * capture, `start` begins delivering 640-byte frames after `session.ready`, `pause` drops audio locally and `stop`
- * releases the host capture. Needs no user gesture and no browser permission.
+ * releases the host capture. Needs no user gesture and no browser permission. Failures are {@link CaptureError}s of
+ * the page source kind ("teams" or "host-system").
  */
 export class HostAudioSource implements AudioSource {
   private readonly id: string;
+  private readonly kind: HostSourceKind;
   private stopped = false;
   private paused = true;
   private requested = false;
@@ -150,6 +168,8 @@ export class HostAudioSource implements AudioSource {
   private expected = 0;
   private unacknowledged = 0;
   private missing = 0;
+  private peak = 0;
+  private meter: ReturnType<typeof setInterval> | undefined;
   private onAudio: ((buffer: ArrayBuffer) => void) | undefined;
   private onError: (error: Error) => void = () => {};
   private answer: { resolve(): void; reject(error: Error): void } | undefined;
@@ -158,13 +178,16 @@ export class HostAudioSource implements AudioSource {
 
   constructor(private readonly deps: HostAudioDependencies) {
     this.id = deps.id ?? `${pageId}-${++captures}`;
+    this.kind = pageSource(deps.source);
   }
+
+  private error(kind: CaptureErrorKind, message: string): CaptureError { return new CaptureError(kind, this.kind, message); }
 
   /** Asks LiveCoach to capture and waits for its first answer. Teams not running is a warning, not a failure. */
   async prepare(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    if (this.stopped) throw new Error("Host audio capture was stopped.");
-    const aborted = (): void => { this.settle(new Error("Audio capture cancelled.")); void this.stop(); };
+    if (this.stopped) throw this.error("ended", "Host audio capture was stopped.");
+    const aborted = (): void => { this.settle(this.error("cancelled", "Audio capture cancelled.")); void this.stop(); };
     signal.addEventListener("abort", aborted, { once: true });
     try {
       const answered = new Promise<void>((resolve, reject) => { this.answer = { resolve, reject }; });
@@ -173,13 +196,13 @@ export class HostAudioSource implements AudioSource {
       this.deps.webview.addEventListener("message", this.listener);
       this.requested = true;
       this.send({ type: "host-audio.start", source: this.deps.source, id: this.id });
-      this.timer = setTimeout(() => this.settle(new Error(
+      this.timer = setTimeout(() => this.settle(this.error("unsupported",
         "LiveCoach did not answer the audio request. Update LiveCoach or choose another audio source.")), this.deps.answerTimeoutMs ?? 5000);
       await answered;
       signal.throwIfAborted();
     } catch (error) {
       await this.stop();
-      throw error instanceof Error ? error : new Error(String(error));
+      throw error instanceof CaptureError ? error : this.error("ended", error instanceof Error ? error.message : String(error));
     } finally {
       clearTimeout(this.timer);
       signal.removeEventListener("abort", aborted);
@@ -189,24 +212,31 @@ export class HostAudioSource implements AudioSource {
   start(onAudio: (buffer: ArrayBuffer) => void, onError: (error: Error) => void): void {
     this.onError = onError;
     if (this.failure) throw this.failure;
-    if (this.stopped || !this.confirmed) throw new Error("Host audio is no longer available.");
+    if (this.stopped || !this.confirmed) throw this.error("ended", "Host audio is no longer available.");
     this.onAudio = onAudio;
+    if (this.deps.onLevel && this.meter === undefined) this.meter = setInterval(() => this.reportLevel(), levelIntervalMs);
     this.pause(false);
   }
 
-  pause(paused: boolean): void { this.paused = paused; }
+  pause(paused: boolean): void {
+    this.paused = paused;
+    if (paused) this.peak = 0;
+  }
 
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
     this.paused = true;
     this.onAudio = undefined;
+    clearInterval(this.meter);
+    this.meter = undefined;
     this.deps.webview.removeEventListener("message", this.listener);
-    this.settle(new Error("Host audio capture was stopped."));
+    this.settle(this.error("ended", "Host audio capture was stopped."));
     if (this.requested) {
       try { this.send({ type: "host-audio.stop", id: this.id }); } catch { /* the host is gone, so nothing captures for this page */ }
     }
-    this.deps.onWarning("");
+    this.deps.onLevel?.(0);
+    this.deps.onWarning(null, "");
   }
 
   private receive(data: unknown): void {
@@ -220,11 +250,11 @@ export class HostAudioSource implements AudioSource {
       this.deps.onStatus?.(message.status);
       const effect = describeHostStatus(message.status);
       if (effect.fatal) {
-        if (this.answer) this.settle(new Error(effect.message));
-        else this.fail(new Error(effect.message));
+        if (this.answer) this.settle(effect.error);
+        else this.fail(effect.error);
         return;
       }
-      this.deps.onWarning(effect.message);
+      this.deps.onWarning(effect.warning, message.status.detail);
       this.settle();
       return;
     }
@@ -235,7 +265,7 @@ export class HostAudioSource implements AudioSource {
       if (message.kind === "invalid") throw new Error("LiveCoach sent invalid audio data. Start again.");
       frames = decodeFrames(message.pcm);
     } catch (error) {
-      this.fail(error instanceof Error ? error : new Error(String(error)));
+      this.fail(this.error("ended", error instanceof Error ? error.message : String(error)));
       return;
     }
     if (message.seq < this.expected) return;
@@ -248,9 +278,23 @@ export class HostAudioSource implements AudioSource {
     this.acknowledge(this.expected - 1, frames.length);
     for (const frame of frames) {
       if (this.paused || this.stopped || !this.onAudio) return;
+      this.measure(frame);
       try { this.onAudio(frame); }
       catch (error) { this.onError(error instanceof Error ? error : new Error(String(error))); return; }
     }
+  }
+
+  private measure(frame: ArrayBuffer): void {
+    if (!this.deps.onLevel) return;
+    let peak = this.peak;
+    for (const sample of new Int16Array(frame)) peak = Math.max(peak, Math.abs(sample) / 32768);
+    this.peak = Math.min(1, peak);
+  }
+
+  private reportLevel(): void {
+    const level = this.paused ? 0 : this.peak;
+    this.peak = 0;
+    this.deps.onLevel?.(level);
   }
 
   private acknowledge(seq: number, frames: number): void {
@@ -258,7 +302,7 @@ export class HostAudioSource implements AudioSource {
     if (this.unacknowledged < ackEveryFrames) return;
     this.unacknowledged = 0;
     try { this.send({ type: "host-audio.ack", seq, id: this.id }); }
-    catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))); }
+    catch (error) { this.fail(this.error("ended", error instanceof Error ? error.message : String(error))); }
   }
 
   private send(message: object): void { this.deps.webview.postMessage(JSON.stringify(message)); }
