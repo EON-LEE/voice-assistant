@@ -17,6 +17,12 @@ updates:
           - "coverlet*"
       nuget-minor-and-patch:
         update-types: [minor, patch]
+    # NAudio 3 splits the packages, requires .NET 9+ and changes custom provider Read signatures. Moving the Teams
+    # process-loopback and PCM conversion code to it is a deliberate migration that needs a real-device capture test,
+    # not an automatic bump. Minor and patch updates of NAudio 2 still arrive.
+    ignore:
+      - dependency-name: "NAudio*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directories:
