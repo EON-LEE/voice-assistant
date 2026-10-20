@@ -63,6 +63,10 @@ Assign the runtime identity **Cognitive Services Speech User**, **Cognitive Serv
 
 Entra API registration must issue v2 tokens and expose delegated `Meeting.Access`; SPA registration uses code+PKCE and redirect URI equal to the browser origin. JWT issuer, signing key, expiry, API audience, delegated scope and GUID `oid` are validated before issuing tickets. TLS terminates at trusted Azure ingress. Origin validation uses the configured allowlist, not forwarded-host headers. **Keep one replica/process** until ticket storage is distributed or reliable ticket-to-WebSocket affinity is implemented.
 
+Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), geolocation=(), microphone=(self), display-capture=(self)` and `Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'` (no script restrictions yet). Outside Development, a request that arrived over HTTPS (directly, or as `X-Forwarded-Proto: https` from the Container Apps ingress, which ends TLS) also gets `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+
+The optional shared demo login (`DemoLogin__Username`, `DemoLogin__Password`, `DemoLogin__ObjectId`, `DemoLogin__SigningKey`) issues bearer tokens for one fixed identity that are valid for `DemoLogin__TokenDays` days: default 7, allowed 1..30; any other value prevents startup. Such a token cannot be revoked except by rotating the signing key.
+
 `GET /health/live` indicates the process is running. `GET /health/ready` indicates validated configuration and a running HTTP pipeline, not external Azure dependency availability; neither endpoint performs billable calls or exposes credentials. Operational monitoring must separately check resource/RBAC availability.
 
 ## Semantic relevance and no-match responses
