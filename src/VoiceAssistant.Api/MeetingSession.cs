@@ -915,7 +915,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             var classifierStarted = clock.GetTimestamp();
             var (respondNow, signal, classifierFailure) = await TurnSignalAsync(turnSignal);
             measurement.ClassifierWaited(clock.GetElapsedTime(classifierStarted), signal);
-            if (classifierFailure is not null)
+            // A classifier cancelled together with its reply (cancelled, superseded or timed out) did not fail.
+            if (classifierFailure is not null && !(classifierFailure is OperationCanceledException && cancellation.IsCancellationRequested))
                 logger.LogWarning("Turn classifier failed: {ExceptionType}, HTTP status {Status}; the reply is sent without emphasis.",
                     classifierFailure.GetType().Name, HttpStatusText(classifierFailure));
             await events.Writer.WriteAsync(new("complete",
