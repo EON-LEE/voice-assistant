@@ -92,6 +92,44 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private readonly List<Task> retired = [];
     private readonly List<Task> translations = [];
     private KoreanScope? koreanScope;
+    /// <summary>Recognizer restarts allowed per session after retryable cancellations; a failed restart attempt counts too.</summary>
+    internal const int MaxSpeechRestarts = 3;
+    private const string SpeechUnavailableMessage = "Speech recognition ended unexpectedly. Reconnect to continue.";
+    /// <summary>Number of the most recently started recognizer; errors of an earlier (replaced) one are ignored.</summary>
+    private int speechNumber;
+    private int speechRestarts;
+    private Task speechRestart = Task.CompletedTask;
+    private sealed record RestartedSpeech(ISpeechStream Stream, SpeechAttempt Attempt);
+
+    /// <summary>
+    /// Holds the errors a restarted recognizer reports before the event loop has taken it over, so none is lost and none
+    /// is mistaken for a failure of a recognizer that is not running yet.
+    /// </summary>
+    private sealed class SpeechAttempt(bool delivered = false)
+    {
+        private readonly object gate = new();
+        private bool handedOver = delivered;
+        private ProviderException? early;
+
+        public bool HoldIfNotHandedOver(ProviderException failure)
+        {
+            lock (gate)
+            {
+                if (handedOver) return false;
+                early ??= failure;
+                return true;
+            }
+        }
+
+        public ProviderException? HandOver()
+        {
+            lock (gate)
+            {
+                handedOver = true;
+                return early;
+            }
+        }
+    }
     private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false,
         bool PrimaryDone = false);
     private sealed record AudioMessage(byte[] Bytes);
@@ -132,10 +170,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             using (var json = JsonDocument.Parse(start.Bytes))
                 options = json.RootElement.TryGetProperty("options", out var input) ? SessionOptions.Parse(input) : SessionOptions.Legacy;
             if (!options.TranscribeOnly) prefetch = new(provider, objectId, options, lifetime.Token);
-            speech = await provider.StartSpeechAsync(
-                options,
-                transcript => EnqueueCallback(new("transcript", transcript, Timestamp: clock.GetTimestamp()), lifetime),
-                error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
+            speech = await StartSpeechAsync(options, new SpeechAttempt(delivered: true), lifetime, startup.Token);
             // The client learns which optional features this socket has: pushed Korean lines, and settings changes while running.
             var ready = new Dictionary<string, object> { ["type"] = "session.ready", ["protocolVersion"] = 1 };
             if (options.ReplyKorean) ready["replyKorean"] = true;
@@ -148,7 +183,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 switch (message.Kind)
                 {
                     case "audio":
-                        speech.Write(((AudioMessage)message.Value!).Bytes);
+                        // Dropped while a failed recognizer is being replaced.
+                        speech?.Write(((AudioMessage)message.Value!).Bytes);
                         break;
                     case "transcript":
                         var transcript = (Transcript)message.Value!;
@@ -242,7 +278,23 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                     case "closed":
                         endReason = "client_closed";
                         return;
-                    case "fatal": throw (ProviderException)message.Value!;
+                    case "fatal":
+                        var fatal = (ProviderException)message.Value!;
+                        // An error of a recognizer that was already replaced says nothing about the current one.
+                        if (message.Generation != 0 && message.Generation != Volatile.Read(ref speechNumber)) break;
+                        if (speech is null || RestartableSpeechFailure(fatal) is not { } failedWith) throw fatal;
+                        speechRestart = RestartSpeechAsync(speech, failedWith, options, lifetime);
+                        speech = null;
+                        break;
+                    case "speech.restarted":
+                        var restarted = (RestartedSpeech)message.Value!;
+                        speech = restarted.Stream;
+                        // A failure the new recognizer reported before this hand-over is handled like any other.
+                        if (restarted.Attempt.HandOver() is not { } early) break;
+                        if (RestartableSpeechFailure(early) is not { } earlyCode) throw early;
+                        speechRestart = RestartSpeechAsync(speech, earlyCode, options, lifetime);
+                        speech = null;
+                        break;
                     case "korean":
                         var line = (KoreanLine)message.Value!;
                         // A cancel can be handled while this event waits in the queue; a cancelled reply publishes no Korean.
@@ -372,15 +424,97 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             events.Writer.TryComplete();
             Task[] pendingTranslations;
             lock (translations) pendingTranslations = translations.ToArray();
-            await ObserveCleanupAsync(Task.WhenAll(retired.Concat(pendingTranslations).Append(receiver).Append(generationTask)));
+            await ObserveCleanupAsync(Task.WhenAll(retired.Concat(pendingTranslations).Append(receiver).Append(generationTask)
+                .Append(speechRestart)));
             generation?.Dispose();
-            if (speech is not null)
-            {
-                try { await speech.DisposeAsync(); }
-                catch (Exception) { logger.LogWarning("Speech cleanup failed; sensitive error detail suppressed."); }
-            }
+            // A recognizer restarted just as the session ended was never taken over by the loop.
+            while (events.Reader.TryRead(out var leftover))
+                if (leftover.Value is RestartedSpeech orphan) await DisposeSpeechAsync(orphan.Stream);
+            if (speech is not null) await DisposeSpeechAsync(speech);
             MeetingMetrics.SessionEnded(endReason);
         }
+    }
+
+    /// <summary>Starts a recognizer whose errors carry its number, so a late error of a replaced recognizer can be ignored.</summary>
+    private Task<ISpeechStream> StartSpeechAsync(SessionOptions settings, SpeechAttempt attempt, CancellationTokenSource lifetime,
+        CancellationToken cancellation)
+    {
+        var number = Interlocked.Increment(ref speechNumber);
+        return provider.StartSpeechAsync(settings,
+            transcript => EnqueueCallback(new("transcript", transcript, Timestamp: clock.GetTimestamp()), lifetime),
+            error =>
+            {
+                if (!attempt.HoldIfNotHandedOver(error)) EnqueueCallback(new("fatal", error, number), lifetime);
+            }, cancellation);
+    }
+
+    /// <summary>
+    /// The metric code of a recognizer cancellation worth an in-process restart (connection failure, service time-out or
+    /// service unavailable) while restarts remain; null when the failure must end the session.
+    /// </summary>
+    private string? RestartableSpeechFailure(ProviderException failure)
+    {
+        if (Volatile.Read(ref speechRestarts) >= MaxSpeechRestarts) return null;
+        return failure.SpeechCancellation is { Reason: Microsoft.CognitiveServices.Speech.CancellationReason.Error } cancellation
+            ? cancellation.ErrorCode switch
+            {
+                Microsoft.CognitiveServices.Speech.CancellationErrorCode.ConnectionFailure => "connection_failure",
+                Microsoft.CognitiveServices.Speech.CancellationErrorCode.ServiceTimeout => "service_timeout",
+                Microsoft.CognitiveServices.Speech.CancellationErrorCode.ServiceUnavailable => "service_unavailable",
+                _ => null
+            }
+            : null;
+    }
+
+    /// <summary>Backoff before restart attempt 1, 2, 3...: 0.5 s, 1 s, 2 s.</summary>
+    internal static TimeSpan SpeechRestartDelay(int restart) => TimeSpan.FromMilliseconds(500 * (1 << Math.Clamp(restart - 1, 0, 4)));
+
+    /// <summary>
+    /// Replaces a recognizer that stopped on a retryable cancellation. It runs beside the event loop, which keeps draining
+    /// (and dropping) audio meanwhile and keeps the transcript history. Each attempt waits its backoff on the session clock;
+    /// when the attempts allowed per session are used up without a working recognizer, the session ends as before.
+    /// </summary>
+    private async Task RestartSpeechAsync(ISpeechStream failed, string code, SessionOptions settings, CancellationTokenSource lifetime)
+    {
+        logger.LogWarning("Speech recognition stopped with {Code}; restarting the recognizer in-process.", code);
+        await DisposeSpeechAsync(failed);
+        while (true)
+        {
+            var restart = Interlocked.Increment(ref speechRestarts);
+            try
+            {
+                await Task.Delay(SpeechRestartDelay(restart), clock, lifetime.Token);
+                var attempt = new SpeechAttempt();
+                var stream = await StartSpeechAsync(settings, attempt, lifetime, lifetime.Token);
+                try { await events.Writer.WriteAsync(new("speech.restarted", new RestartedSpeech(stream, attempt)), lifetime.Token); }
+                catch
+                {
+                    await DisposeSpeechAsync(stream);
+                    throw;
+                }
+                MeetingMetrics.SpeechRestarted(code, restarted: true);
+                logger.LogInformation("Speech recognizer restarted (restart {Restart} of {Max}).", restart, MaxSpeechRestarts);
+                return;
+            }
+            catch (Exception) when (lifetime.IsCancellationRequested) { return; }
+            catch (Exception exception)
+            {
+                MeetingMetrics.SpeechRestarted(code, restarted: false);
+                logger.LogWarning("Speech restart {Restart} of {Max} failed with {ExceptionType}.", restart, MaxSpeechRestarts,
+                    exception.GetType().Name);
+                if (restart >= MaxSpeechRestarts)
+                {
+                    EnqueueCallback(new("fatal", new ProviderException("speech_unavailable", SpeechUnavailableMessage)), lifetime);
+                    return;
+                }
+            }
+        }
+    }
+
+    private async Task DisposeSpeechAsync(ISpeechStream stream)
+    {
+        try { await stream.DisposeAsync(); }
+        catch (Exception) { logger.LogWarning("Speech cleanup failed; sensitive error detail suppressed."); }
     }
 
     /// <summary>Statements wait for more context, but never longer than this before a reply is offered.</summary>

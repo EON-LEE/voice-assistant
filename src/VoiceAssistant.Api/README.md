@@ -301,7 +301,7 @@ The `VoiceAssistant.Api` .NET `Meter` exposes these instruments. Durations are m
 | `voiceassistant.chat.retries` | counter | `operation` | Live chat calls that were retried |
 | `voiceassistant.session.errors` | counter | `code` | `error` events sent to clients, by error code |
 | `voiceassistant.session.ended` | counter | `reason` | Ended sessions: `stopped`, `client_closed`, `superseded`, `overloaded`, `time_limit`, `aborted`, `ended`, `startup_timeout`, `transport_error`, `provider_unavailable` or the ending error code |
-| `voiceassistant.speech.restarts` | counter | `code` | In-process speech recognizer restarts after a retryable cancellation |
+| `voiceassistant.speech.restarts` | counter | `code=connection_failure\|service_timeout\|service_unavailable`, `outcome=restarted\|failed` | In-process speech recognizer restart attempts after a retryable cancellation |
 | `voiceassistant.sessions.active` | observable gauge | none | Open meeting sessions |
 
 Reply tags are `provider=Azure|Fake|TestDouble`, `trigger=automatic|manual`, `route=knowledge|transcript|profile`, `response_mode=balanced|grounded|conversation` and `grounding=grounded|no_matches|unavailable|disabled|pending`.
@@ -333,6 +333,16 @@ Every 429 is counted in `voiceassistant.chat.throttled`, and every retry in `voi
 The [live-provider acceptance probe](../../tools/VoiceAssistant.LiveProbe/README.md) directly exercises this same provider with an explicit opt-in original synthetic WAV and standard noninteractive `DefaultAzureCredential`. It separately reports content-free real service evidence or **BLOCKED**, never fake Azure success.
 
 The speech-stream contract separately exposes `CompleteInputAsync` for finite recordings: signal push-stream EOF and drain terminal recognition callbacks before disposal. The WebSocket session does not call it during live capture; silence and new utterances keep using the same continuous stream. Expected `EndOfStream`/`NoError` is normal only after explicit input completion; service errors remain explicit.
+
+**Speech recovery.** A recognizer cancelled with `ConnectionFailure`, `ServiceTimeout` or `ServiceUnavailable` is replaced in-process instead of ending the session. `MeetingSession` handles it as follows:
+
+- It disposes the failed recognizer and waits 0.5, 1, then 2 s on the session clock before each attempt.
+- It starts a new recognizer with the same options. The event loop keeps draining audio meanwhile and drops it. The conversation history is kept.
+- At most `MeetingSession.MaxSpeechRestarts` (3) attempts are made per session, and failed attempts count. After that, or for any other cancellation, the session ends with `speech_unavailable` as before.
+- Errors of a recognizer that was already replaced are ignored, using a per-recognizer number. A failure that a new recognizer reports before the loop takes it over is held, then handled like any other.
+- Each attempt is counted in `voiceassistant.speech.restarts`.
+
+Token renewal (every 5 minutes) no longer ends the session on the first failure. While the current token is still valid, it retries every 30 s, but never past the expiry. Only a token that expired without a successful renewal ends the session with `speech_authentication_failed`.
 
 ### Speech endpoint verification
 

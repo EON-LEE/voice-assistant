@@ -36,6 +36,8 @@ Wait for `{"type":"session.ready","protocolVersion":1}` before sending binary fr
 
 At the maximum duration the server emits existing `error` with `code:"session_time_limit"`, `retryable:false`, and message `Session reached its time limit. Start a new session to continue.`, then closes. This is distinct from `session_ended` for other cancellation and `idle_timeout` for90-second input inactivity. The duration is not controlled by untrusted `session.start` fields.
 
+Speech recovery: when the recognizer stops with a connection failure, a service time-out or service unavailable, the server recreates it in-process instead of ending the session. This happens at most 3 times per session, and a failed attempt also counts. The waits before the attempts are 0.5, 1 and 2 seconds. No event is sent. The transcript history, settings and any reply in progress are kept, but audio that arrives while the recognizer is being replaced is not transcribed. Any other cancellation, or a retryable one after the restarts are used up, ends the session with `error` `code:"speech_unavailable"` as before. A failed renewal of the Speech token is retried while the current token is still valid. Only a token that expired without a successful renewal ends the session, with `speech_authentication_failed`.
+
 Optional top-level `session.start.options` is immutable for this socket, except `responseMode` and `replyKorean`, which `session.update` can change while the session runs (see below):
 
 ```json

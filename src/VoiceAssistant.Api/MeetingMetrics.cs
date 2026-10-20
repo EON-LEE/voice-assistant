@@ -102,7 +102,8 @@ public static class MeetingMetrics
 
     public static void ErrorSent(string code) => Errors.Add(1, new KeyValuePair<string, object?>("code", Bounded(code)));
 
-    public static void SpeechRestarted(string code) => SpeechRestarts.Add(1, new KeyValuePair<string, object?>("code", Bounded(code)));
+    public static void SpeechRestarted(string code, bool restarted) => SpeechRestarts.Add(1,
+        new KeyValuePair<string, object?>("code", Bounded(code)), new KeyValuePair<string, object?>("outcome", restarted ? "restarted" : "failed"));
 
     public static void SessionStarted() => Interlocked.Increment(ref activeSessions);
 

@@ -81,9 +81,9 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     public async Task<ISpeechStream> StartSpeechAsync(SessionOptions options, Action<Transcript> transcript,
         Action<ProviderException> error, CancellationToken cancellation)
     {
-        var auth = await SpeechAuthorization.GetAsync(credential, settings.SpeechResourceId, cancellation);
-        var config = CreateSpeechConfig(settings, auth, options);
-        var stream = new AzureSpeechStream(config, credential, settings.SpeechResourceId, options.Phrases, transcript, error);
+        var auth = await SpeechAuthorization.AcquireAsync(credential, settings.SpeechResourceId, cancellation);
+        var config = CreateSpeechConfig(settings, auth.Authorization, options);
+        var stream = new AzureSpeechStream(config, credential, settings.SpeechResourceId, options.Phrases, transcript, error, auth.ExpiresOn);
         try
         {
             await stream.StartAsync(cancellation);
@@ -507,7 +507,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         private bool started;
 
         public AzureSpeechStream(SpeechConfig config, TokenCredential credential, string resourceId, IReadOnlyList<string> phrases,
-            Action<Transcript> transcript, Action<ProviderException> error)
+            Action<Transcript> transcript, Action<ProviderException> error, DateTimeOffset tokenExpiresOn)
         {
             input = AudioInputStream.CreatePushStream(format);
             completion = new(input.Close);
@@ -552,7 +552,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             };
             recognizer.SessionStopped += (_, _) => completion.Stopped();
             refresh = SpeechAuthorization.RefreshAsync(credential, resourceId,
-                token => recognizer.AuthorizationToken = token, error, lifetime.Token);
+                token => recognizer.AuthorizationToken = token, error, lifetime.Token, expiresOn: tokenExpiresOn);
         }
 
         public async Task StartAsync(CancellationToken cancellation)
