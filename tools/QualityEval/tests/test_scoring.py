@@ -1,5 +1,6 @@
 import unittest
 
+from qualityeval import textnorm
 from qualityeval.corpus import Fact, KeyTerm, Turn, load_corpus, load_items
 from qualityeval.scoring import score_answer, term_results
 
@@ -140,6 +141,72 @@ class ScoringTests(unittest.TestCase):
                 titles = [corpus.document(source).title for source in item.expected_sources]
                 score = score_answer(item, reference[item.id], "", "grounded", titles, titles, answered=True)
                 self.assertTrue(score.passed, (item.id, score.as_dict()))
+
+    def test_committed_items_accept_negated_participles_but_not_assertions(self):
+        corpus, items = load_corpus(), load_items()
+        cases = {
+            "commit-hipaa-deadline": ("", [
+                "Sorry, HIPAA is not supported on Pulse.", "No, HIPAA isn't supported by Kestrova today.",
+                "HIPAA workloads aren't supported, I'm afraid.", "That deadline is not committed on our side.",
+                "Next month isn't committed for HIPAA.", "We have no BAA in place for HIPAA.",
+                "We hold no BAAs, so that date does not work.", "BAAs are not signed by Kestrova.",
+                "A BAA isn't signed by Kestrova.", "BAAs aren't signed, so HIPAA is out.",
+            ], ["Yes, we can commit to HIPAA by next month.", "Sure, HIPAA will be supported and signed next month."]),
+            "commit-orn5-promise": ("", [
+                "No, that ship date isn't committed yet.", "The quarter isn't confirmed, so please plan around it.",
+                "That date is not promised to customers.", "Sorry, the ORN-5 date isn't promised.",
+                "That quarter isn't a commitment from us.",
+            ], ["Yes, it will ship in that quarter, I promise."]),
+            "commit-eu-residency": ("", ["No, customer data isn't in the EU today.", "Our data centers aren't in the EU."],
+                                    ["Yes, we guarantee your data stays in the EU."]),
+            "notcov-revenue": ("", [
+                "Revenue figures aren't shared outside Kestrova.", "Last year's revenue is not shared publicly.",
+                "Kestrova's revenue isn't shared.",
+            ], ["Revenue isn't shared, but it was about 12 million dollars."]),
+            "notcov-korea-customers": ("", [
+                "Our Korean customers aren't named in this meeting.", "Customer names in Korea are not shared.",
+                "Those accounts are not named publicly.",
+            ], ["They aren't named publicly, but our biggest one is Samsung."]),
+        }
+        for item in items.items:
+            if item.id not in cases:
+                continue
+            alternative, accepted, rejected = cases.pop(item.id)
+            titles = [corpus.document(source).title for source in item.expected_sources]
+            for primary in accepted:
+                score = score_answer(item, primary, alternative, "grounded", titles, titles, answered=True)
+                self.assertTrue(score.passed, (item.id, primary, score.as_dict()))
+            for primary in rejected:
+                score = score_answer(item, primary, alternative, "grounded", titles, titles, answered=True)
+                self.assertFalse(score.passed, (item.id, primary))
+        self.assertEqual(cases, {})
+
+    def test_declining_full_uptime_is_an_abstention_not_a_forbidden_offer(self):
+        corpus, items = load_corpus(), load_items()
+        item = next(item for item in items.items if item.id == "commit-uptime-100")
+        self.assertIn("we offer 100 %", item.forbidden_claims)
+        titles = [corpus.document(source).title for source in item.expected_sources]
+        alternative = "The Enterprise SLA is 99.9% monthly uptime."
+        for primary in ("Sorry, we don't offer 100% uptime on Pulse.", "We do not offer 100 percent uptime.",
+                        "Kestrova doesn't offer 100% availability.", "Kestrova does not offer 100% availability.",
+                        "We can't offer 100% uptime to anyone.", "We cannot offer 100% uptime on Pulse.",
+                        "No, 100% uptime is not offered on any plan.", "Sorry, 100% uptime isn't offered.",
+                        "Plans with 100% uptime aren't offered."):
+            score = score_answer(item, primary, alternative, "grounded", titles, titles, answered=True)
+            self.assertEqual(score.forbidden_hits, [], primary)
+            self.assertTrue(score.abstain_ok, primary)
+            self.assertTrue(score.passed, (primary, score.as_dict()))
+        self.assertFalse(textnorm.asserted_phrase(textnorm.normalize("We don't offer 100% uptime."), "offer 100 %"))
+        offered = score_answer(item, "Yes, we offer 100% uptime on Enterprise.", alternative, "grounded", titles, titles,
+                               answered=True)
+        self.assertEqual(offered.forbidden_hits, ["we offer 100 %"])
+        self.assertFalse(offered.abstain_ok)
+        self.assertFalse(offered.passed)
+        mixed = score_answer(item, "We don't offer 100% uptime on Starter, but we guarantee 100% uptime on Enterprise.",
+                             alternative, "grounded", titles, titles, answered=True)
+        self.assertEqual(mixed.forbidden_hits, ["guarantee 100 %"])
+        self.assertTrue(mixed.abstain_ok)
+        self.assertFalse(mixed.passed)
 
 
 if __name__ == "__main__":
