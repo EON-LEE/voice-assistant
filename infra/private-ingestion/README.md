@@ -25,8 +25,10 @@ only. The existing web runtime retains no Blob roles. Search/OpenAI stay on thei
 already-approved HTTPS endpoints; only Blob traffic uses Private Link.
 
 One execution has parallelism/completion count 1, **zero automatic retries** and
-an 1800-second deadline. The image uses the official PowerShell 7.4 Debian image
-as an unprivileged UID, with no Azure CLI/Az SDK/user-token cache inside. It gets
+an 1800-second deadline. The image uses the official .NET 10 SDK image
+(`dotnet/sdk:10.0-noble`, Ubuntu 24.04), which ships PowerShell 7.6 LTS on
+.NET 10; `mcr.microsoft.com/powershell` publishes 7.6 only as preview tags. It
+runs as an unprivileged UID, with no Azure CLI/Az SDK/user-token cache inside. It gets
 service tokens from the platform's local managed-identity endpoint, selecting
 the separate assigned identity. Tokens/platform identity headers are transient
 memory only and never sent to another service or printed.
@@ -215,6 +217,14 @@ The Docker image was built and its real nonroot Linux entrypoint passed with
 `--network none -ValidateOnly`. The shared version parser was corrected for
 PowerShell 7.4's materialized JSON dates while still rejecting unzoned versions.
 `Test-Offline.ps1` includes these tests automatically.
+
+After the base moved to the .NET 10 SDK image (2026-10-21), the image was rebuilt
+locally. `pwsh` resolves to `/usr/bin/pwsh` (PowerShell 7.6.7 on .NET 10.0.13)
+and runs as UID 65532 with `HOME=/tmp`. With `--network none` the entrypoint gave
+the same results as the PowerShell 7.4 image: `PASS` for zoned and offset
+versions, a `plan` failure for an unzoned version or an invalid principal, and a
+`maintenance` failure without the acknowledgement. The SDK base makes the image
+about 1.3 GB instead of 554 MB. No job execution was run for this change.
 
 The coordinating session reported live verification on 2026-09-20:
 `voice-ingest-job-l60o2w7` succeeded from 02:02:14 to 02:02:48 KST; the approved

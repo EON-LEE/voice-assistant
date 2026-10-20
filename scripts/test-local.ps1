@@ -12,7 +12,7 @@ $root = Split-Path $PSScriptRoot -Parent
 
 & $Dotnet --version
 if ($LASTEXITCODE -ne 0) {
-    throw 'A .NET SDK is required. Install the .NET 8 SDK or pass -Dotnet with its executable path.'
+    throw 'A .NET SDK is required. Install the .NET 10 SDK or pass -Dotnet with its executable path.'
 }
 
 $applications = @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.csproj' -Recurse)

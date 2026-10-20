@@ -1,7 +1,7 @@
 # Azure browser hosting and approved knowledge ingestion
 
 This slice deploys an **installation-free browser app**, not the legacy desktop
-client. One Azure Container App serves the built web frontend from the .NET 8
+client. One Azure Container App serves the built web frontend from the .NET 10
 API's `wwwroot`, with same-origin HTTPS API/WebSocket traffic on container port
 8080. No separate CDN, Teams bot, Graph connector, WorkIQ integration, automatic
 document crawler, or production fake-authentication mode is provisioned.
@@ -250,7 +250,7 @@ names, request URLs with tokens, or credentials.
 3. Build the integrated repository's API Dockerfile from repository root and push
    to the approved existing ACR using your approved image-publishing procedure:
    `docker build -f .\src\VoiceAssistant.Api\Dockerfile -t <registry>.azurecr.io/voice-assistant:<version> .`
-   That Dockerfile builds `src/VoiceAssistant.Web`, publishes .NET 8 and copies
+   That Dockerfile builds `src/VoiceAssistant.Web`, publishes .NET 10 and copies
    the frontend to `wwwroot`. Resolve the pushed image digest and supply
    `<registry>.azurecr.io/voice-assistant@sha256:<64-hex-digest>`.
    Build/push tools are operator prerequisites, **not end-user installations**.

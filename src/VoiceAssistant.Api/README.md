@@ -1,10 +1,10 @@
-# Browser streaming API (.NET 8)
+# Browser streaming API (.NET 10)
 
 ASP.NET Core serves the browser `wwwroot` and same-origin API/WebSocket. This is not a desktop application, Teams bot, or unattended recorder. See [protocol and security contract](../../contracts/websocket-v1.md) and [Search schema](../../contracts/search-index.json).
 
 ## Offline development
 
-From repository root in PowerShell, with .NET 8 installed:
+From repository root in PowerShell, with the .NET 10 SDK installed:
 
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
@@ -171,7 +171,7 @@ docker build --build-arg NUGET_SOURCE=https://pkgs.dev.azure.com/dnceng/public/_
 Keep credentials out of build arguments. This override is for a public or
 otherwise credential-free approved feed; it does not change runtime behavior.
 
-The multi-stage build runs frontend `npm ci` + `npm run build`, publishes the API, and copies `dist` to `wwwroot` in the final non-root .NET 8 image (port 8080). An API-only checkout can build/test/publish with dotnet; the full container intentionally requires browser sources. Repository `.dockerignore` should exclude all `node_modules`, `bin`, `obj`, `.git` and local secrets.
+The multi-stage build runs frontend `npm ci` + `npm run build`, publishes the API, and copies `dist` to `wwwroot` in the final non-root .NET 10 image (`aspnet:10.0-noble`, Ubuntu 24.04, port 8080). .NET 10 publishes no Debian images, so the runtime stage installs Ubuntu's `libasound2t64` (the renamed ALSA library the Speech SDK needs) instead of Debian's `libasound2`. An API-only checkout can build/test/publish with dotnet; the full container intentionally requires browser sources. Repository `.dockerignore` should exclude all `node_modules`, `bin`, `obj`, `.git` and local secrets.
 
 ## Data handling and limits
 
