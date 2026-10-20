@@ -33,7 +33,7 @@ $expectedHeaders = [ordered]@{
     'Strict-Transport-Security' = @('max-age=\d{8,}')
     'X-Content-Type-Options' = @('^nosniff$')
     'Referrer-Policy' = @('^no-referrer$')
-    'Content-Security-Policy' = @("frame-ancestors 'self'", "object-src 'none'")
+    'Content-Security-Policy' = @("script-src 'self'", "frame-ancestors 'self'", "object-src 'none'")
     'Permissions-Policy' = @('camera=\(\)', 'microphone=\(self\)')
     'Cache-Control' = @('no-store')
 }

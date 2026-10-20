@@ -89,7 +89,7 @@ public sealed partial class ApiTests
         Assert.Equal("nosniff", HeaderValue(response, "X-Content-Type-Options"));
         Assert.Equal("no-referrer", HeaderValue(response, "Referrer-Policy"));
         Assert.Equal("camera=(), geolocation=(), microphone=(self), display-capture=(self)", HeaderValue(response, "Permissions-Policy"));
-        Assert.Equal("frame-ancestors 'self'; object-src 'none'; base-uri 'self'", HeaderValue(response, "Content-Security-Policy"));
+        Assert.Equal("script-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'", HeaderValue(response, "Content-Security-Policy"));
         Assert.Equal("no-store", HeaderValue(response, "Cache-Control"));
     }
 }

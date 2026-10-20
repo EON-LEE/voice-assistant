@@ -115,7 +115,7 @@ namespace VoiceAssistant.Api
                 headers.XContentTypeOptions = "nosniff";
                 headers["Referrer-Policy"] = "no-referrer";
                 headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self), display-capture=(self)";
-                headers.ContentSecurityPolicy = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
+                headers.ContentSecurityPolicy = "script-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
                 if (strictTransport && SecurityHeaders.IsHttps(context.Request))
                     headers.StrictTransportSecurity = SecurityHeaders.StrictTransportSecurity;
                 await next(context);
