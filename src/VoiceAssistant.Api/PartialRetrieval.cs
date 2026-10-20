@@ -102,11 +102,12 @@ internal sealed class PartialRetrieval : IAsyncDisposable
     }
 
     // Newer speech replaces the candidate, but a retrieval a reply is already waiting for finishes on its own so the
-    // answer is not turned into an error. It is no longer reachable here, so nothing can reuse it afterwards.
+    // answer is not turned into an error. It is no longer reachable here, so nothing can reuse it afterwards. A claimed
+    // candidate that has not started is cancelled: only a speculative reply claims one, and newer speech discards it.
     // Caller holds the gate.
     private void Release()
     {
-        if (candidate is { Selected: false }) candidate.Cancel();
+        if (candidate is { Selected: false } or { Started: false }) candidate.Cancel();
         candidate = null;
     }
 
@@ -128,6 +129,26 @@ internal sealed class PartialRetrieval : IAsyncDisposable
             }
             candidate?.Cancel();
             return null;
+        }
+    }
+
+    /// <summary>
+    /// For a speculative reply that starts before its final (experiment <c>Session:SpeculativeStart</c>): the candidate the
+    /// final would take, also when the worker has not started it yet, provided it is a final-like (immediate) candidate, which
+    /// always starts. Unlike <see cref="Take"/>, nothing is cancelled when no candidate matches.
+    /// </summary>
+    internal Task<RetrievalOutcome>? Claim(string turnId, string text, string route, IReadOnlyList<ConversationTurn>? history = null)
+    {
+        lock (gate)
+        {
+            if (closed || route != "knowledge" || candidate is not { Cancelled: false } match || !(match.Started || match.Immediate) ||
+                match.TurnId != turnId || match.Text != ResponseRouting.Identity(text) ||
+                match.QueryIdentity != ResponseRouting.Identity(RetrievalQuery.Build(text, history)))
+                return null;
+            // A failed retrieval an earlier reply already took is not handed out again; the reply retrieves on its own.
+            if (match.Selected && match.Result.Task.IsCompletedSuccessfully && match.Result.Task.Result.Failure is not null) return null;
+            match.Selected = true;
+            return match.Result.Task;
         }
     }
 
@@ -173,6 +194,9 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                 }
                 finally
                 {
+                    // A candidate the worker skipped (replaced, cancelled or over the start cap) still completes, so a
+                    // claimed one can never leave its reply waiting.
+                    current.Result.TrySetResult(new(null, new("grounding_unavailable", "Prefetched grounding was cancelled.")));
                     lock (gate)
                     {
                         current.Finished = true;
