@@ -49,6 +49,7 @@ namespace VoiceAssistant.Api
                     services.GetRequiredService<ILogger<AzureKnowledgeStore>>());
             });
             builder.Services.AddSingleton<KnowledgeService>();
+            builder.Services.AddSingleton<MaterialPhraseHints>();
             builder.Services.AddSingleton<MaterialExtractor>();
             builder.Services.AddSingleton<KnowledgeRequestReader>();
             builder.Services.TryAddSingleton<IPracticeModel>(services => settings.Fake
@@ -95,6 +96,17 @@ namespace VoiceAssistant.Api
             }));
 
             var app = builder.Build();
+            var features = new MeetingFeatures
+            {
+                EarlyStartAtFinal = settings.EarlyStartAtFinal,
+                PhraseHints = settings.MaterialPhraseHints ? app.Services.GetRequiredService<MaterialPhraseHints>() : null
+            };
+            // Content-free: which experiment switches this process runs with, so a rejected request can be traced to one.
+            app.Logger.LogInformation("Live reply switches: answer reasoning effort {AnswerEffort}, classifier/translation reasoning effort " +
+                "{AuxiliaryEffort}, chat api-version {ApiVersion}, early start at final {EarlyStart}, material phrase hints {PhraseHints}, " +
+                "commitment policy {CommitmentPolicy}.",
+                settings.ChatReasoningEffort ?? "unset", settings.ChatAuxiliaryReasoningEffort ?? "unset", settings.ChatApiVersion ?? "sdk default",
+                features.EarlyStartAtFinal, features.PhraseHints is not null, settings.CommitmentPolicy);
             var strictTransport = !app.Environment.IsDevelopment();
             app.Use(async (context, next) =>
             {
@@ -130,7 +142,10 @@ namespace VoiceAssistant.Api
             app.MapPost("/api/session/ticket", (HttpContext context, TicketStore store) =>
             {
                 if (!OriginPolicy.Allows(context, settings)) return Results.StatusCode(403);
-                var ticket = store.Issue(MeetingIdentity.ObjectId(context.User)!, context.Request.Headers.Origin.ToString());
+                var objectId = MeetingIdentity.ObjectId(context.User)!;
+                var ticket = store.Issue(objectId, context.Request.Headers.Origin.ToString());
+                // A session follows the ticket within seconds; its phrase hints can be built meanwhile.
+                if (ticket is not null) features.PhraseHints?.Warm(objectId);
                 return ticket is null ? Results.StatusCode(429) : Results.Ok(ticket);
             }).RequireAuthorization("Meeting");
             app.Map("/api/meeting", async (HttpContext context, TicketStore store, IMeetingProvider provider, SessionSlots slots) =>
@@ -150,7 +165,7 @@ namespace VoiceAssistant.Api
                 if (slot is null) { context.Response.StatusCode = 429; return; }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
                 await new MeetingSession(socket, provider, objectId, app.Logger, settings.MaxSessionMinutes,
-                    context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(context.RequestAborted, slot.Superseded);
+                    context.RequestServices.GetRequiredService<TimeProvider>(), features).RunAsync(context.RequestAborted, slot.Superseded);
             });
             app.MapKnowledge(settings);
             app.MapPractice(settings);

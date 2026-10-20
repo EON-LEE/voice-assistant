@@ -30,4 +30,14 @@ public sealed class InMemoryKnowledgeStore : IKnowledgeStore
         lock (gate) documents.Remove((owner, documentId));
         return Task.CompletedTask;
     }
+
+    public Task<IReadOnlyList<MaterialText>> ReadTextAsync(string owner, int maxChunks, CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        owner = KnowledgeIds.Owner(owner);
+        lock (gate)
+            return Task.FromResult<IReadOnlyList<MaterialText>>(documents.Where(item => item.Key.Owner == owner)
+                .SelectMany(item => item.Value.Chunks.Select(chunk => new MaterialText(chunk.Id, item.Value.Document.Title, chunk.Content)))
+                .Take(maxChunks).ToArray());
+    }
 }

@@ -68,21 +68,27 @@ public sealed class ChatSerializationTests
         Assert.Contains("How does it help?", handler.RequestBody);
     }
 
-    [Fact]
-    public async Task ActualAzureClientSerializesModernCompletionBudgetWithoutLegacyTokensOrTemperature()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("minimal")]
+    [InlineData("low")]
+    [InlineData("medium")]
+    public async Task ActualAzureClientSerializesModernCompletionBudgetAndOnlyAConfiguredReasoningEffort(string? effort)
     {
         using var handler = new CaptureHandler();
         using var http = new HttpClient(handler);
         var client = new AzureOpenAIClient(new Uri("https://example.openai.azure.com"), new ApiKeyCredential("test-only-key"),
             new AzureOpenAIClientOptions { Transport = new HttpClientPipelineTransport(http) });
-        var options = AzureMeetingProvider.CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 2048 });
+        var options = AzureMeetingProvider.CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 2048 }, effort);
         await foreach (var _ in client.GetChatClient("test-deployment").CompleteChatStreamingAsync(
             [new UserChatMessage("Original synthetic test prompt.")], options)) { }
         using var json = JsonDocument.Parse(handler.RequestBody!);
         Assert.Equal(2048, json.RootElement.GetProperty("max_completion_tokens").GetInt32());
         Assert.False(json.RootElement.TryGetProperty("max_tokens", out _));
         Assert.False(json.RootElement.TryGetProperty("temperature", out _));
-        Assert.False(json.RootElement.TryGetProperty("reasoning_effort", out _));
+        // Unset sends nothing, so the deployment default applies exactly as before; a configured effort is sent as-is.
+        if (effort is null) Assert.False(json.RootElement.TryGetProperty("reasoning_effort", out _));
+        else Assert.Equal(effort, json.RootElement.GetProperty("reasoning_effort").GetString());
     }
 
     private sealed class CaptureHandler : HttpMessageHandler

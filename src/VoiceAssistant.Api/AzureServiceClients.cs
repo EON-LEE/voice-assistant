@@ -21,7 +21,7 @@ public sealed class AzureServiceClients
     {
         Credential = new DefaultAzureCredential();
         OpenAI = new(new Uri(settings.OpenAIEndpoint), Credential);
-        LiveChat = new(new Uri(settings.OpenAIEndpoint), Credential, AzureMeetingProvider.LiveChatOptions());
+        LiveChat = new(new Uri(settings.OpenAIEndpoint), Credential, AzureMeetingProvider.LiveChatOptions(apiVersion: settings.ChatApiVersion));
         RetrievalOpenAI = new(new Uri(settings.OpenAIEndpoint), Credential, AzureMeetingProvider.RetrievalOpenAIOptions());
         if (settings.SearchEnabled)
         {
