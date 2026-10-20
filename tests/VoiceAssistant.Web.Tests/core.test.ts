@@ -4,7 +4,7 @@ import { PcmConverter } from "../../src/VoiceAssistant.Web/src/pcm.js";
 import { ReplyState } from "../../src/VoiceAssistant.Web/src/state.js";
 import { parseEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 
-for (const rate of [16000, 44100, 48000, 96000, 192000]) {
+for (const rate of [8000, 11025, 12000, 16000, 44100, 48000, 96000, 192000]) {
   test(`PCM ${rate}Hz yields exactly 16000 mono samples per second`, () => {
     const converter = new PcmConverter(rate);
     const output: number[] = [];
@@ -34,7 +34,20 @@ test("Stereo downmix, clipping, nonfinite input and reset", () => {
   assert.equal(samples.at(-1), -32768);
   converter.reset(); samples = []; converter.process([new Float32Array(4800)], s => samples.push(s));
   assert.ok(samples.every(s => s === 0));
-  assert.throws(() => new PcmConverter(8000));
+  // An AudioContext follows the output device; a hands-free headset can run it below 16 kHz.
+  assert.doesNotThrow(() => new PcmConverter(8000));
+  for (const rate of [2999, 192001, 44100.5]) assert.throws(() => new PcmConverter(rate), /sample rate/);
+});
+test("Upsampling a hands-free 8 kHz stream keeps a voice-band tone and its continuity", () => {
+  const input = Float32Array.from({ length: 8000 }, (_, i) => .5 * Math.sin(2 * Math.PI * 1000 * i / 8000));
+  const whole: number[] = [], chunked: number[] = [];
+  new PcmConverter(8000).process([input], sample => whole.push(sample));
+  const converter = new PcmConverter(8000);
+  for (let offset = 0; offset < input.length; offset += 61) converter.process([input.subarray(offset, offset + 61)], sample => chunked.push(sample));
+  assert.equal(whole.length, 16000);
+  assert.deepEqual(chunked, whole);
+  const rms = Math.sqrt(whole.slice(1000).reduce((sum, n) => sum + (n / 32768) ** 2, 0) / 15000);
+  assert.ok(rms > .3 && rms < .37, String(rms));
 });
 test("Anti-alias filter preserves voice band and rejects 12kHz", () => {
   const rms = (frequency: number): number => {

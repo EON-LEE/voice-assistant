@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MeetingSession } from "../../src/VoiceAssistant.Web/src/session.js";
-import { DisplayAudioSource, type AudioSource, type CaptureDependencies } from "../../src/VoiceAssistant.Web/src/capture.js";
+import { CaptureError, DisplayAudioSource, displayError, type AudioSource, type CaptureDependencies } from "../../src/VoiceAssistant.Web/src/capture.js";
 import { SocketTransport, DemoTransport, type Transport } from "../../src/VoiceAssistant.Web/src/transport.js";
 import { startMessage, type ServerEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 
@@ -129,17 +129,62 @@ test("Source end stops every audio/video track and context", async () => {
     assert.match(errors[0]!.message, /Sharing ended/);
   } finally { Object.defineProperty(globalThis, "MediaStream", { configurable: true, value: original }); }
 });
-test("WebSocket buffering fails at bound and incoming binary fails explicitly", async () => {
+test("Display audio with page hooks: a mute only warns, the level is metered, stalls are reported, failures are typed", async () => {
+  const original = globalThis.MediaStream;
+  Object.defineProperty(globalThis, "MediaStream", { configurable: true, value: class { constructor(_tracks: unknown) {} } });
+  try {
+    const mock = captureMocks(true), warnings: [string, string | undefined][] = [], levels: number[] = [], stalls: number[] = [], errors: Error[] = [];
+    Object.assign(mock.context, { createAnalyser: () => ({ fftSize: 256, getFloatTimeDomainData: (samples: Float32Array) => samples.fill(.25), disconnect() {} }) });
+    const port = { messages: [] as { type: string }[], onmessage: null as ((event: { data: unknown }) => void) | null,
+      postMessage(message: { type: string }) { this.messages.push(message); }, close() {} };
+    mock.deps.node = () => ({ port, connect() {}, disconnect() {}, onprocessorerror: null }) as unknown as AudioWorkletNode;
+    const capture = new DisplayAudioSource({ ...mock.deps, onWarning: (message, kind) => warnings.push([message, kind]),
+      onLevel: level => levels.push(level), onStall: frames => stalls.push(frames) });
+    await capture.prepare(new AbortController().signal);
+    capture.start(() => {}, e => errors.push(e));
+    const audio = mock.tracks[1] as unknown as { onmute: () => void; onunmute: () => void; readyState: string };
+    audio.onmute();
+    assert.deepEqual(warnings.at(-1)?.[1], "muted");
+    assert.equal(audio.readyState, "live", "a muted share keeps running");
+    audio.onunmute();
+    assert.deepEqual(warnings.at(-1), ["", undefined]);
+    port.onmessage!({ data: { type: "stall", frames: 12 } });
+    assert.deepEqual(stalls, [12]);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert.ok(levels.includes(.25));
+    assert.deepEqual(errors, []);
+    await capture.stop();
+    assert.equal(levels.at(-1), 0);
+  } finally { Object.defineProperty(globalThis, "MediaStream", { configurable: true, value: original }); }
+});
+test("Share-picker rejections become typed capture errors and keep the browser's message", () => {
+  const cases: [string, string, string][] = [["NotAllowedError", "Permission denied", "cancelled"],
+    ["NotAllowedError", "Permission denied by system", "permission"], ["InvalidStateError", "requires a user gesture", "cancelled"],
+    ["AbortError", "aborted", "cancelled"], ["SecurityError", "blocked", "permission"], ["NotSupportedError", "no", "unsupported"]];
+  for (const [name, message, kind] of cases) {
+    const error = displayError(new DOMException(message, name));
+    assert.ok(error instanceof CaptureError, name);
+    assert.equal((error as CaptureError).kind, kind, `${name} ${message}`);
+    assert.equal(error.message, message);
+  }
+  const other = new Error("Unavailable");
+  assert.equal(displayError(other), other, "failures that are not picker rejections pass through");
+});
+test("WebSocket buffering fails at the three-second bound and incoming binary fails explicitly", async () => {
   const socket = {
-    readyState: 1, bufferedAmount: 31999, onopen: null as (() => void) | null,
+    readyState: 1, bufferedAmount: 95999, onopen: null as (() => void) | null,
     onmessage: null as ((event: { data: unknown }) => void) | null, onclose: null, onerror: null, send() {}, close() {},
   };
   const errors: Error[] = [];
   const transport = new SocketTransport(async () => new URL("ws://localhost/api/meeting"), () => socket as unknown as WebSocket);
   const pending = transport.connect(() => {}, e => errors.push(e), new AbortController().signal);
   await tick(); socket.onopen!(); await pending;
+  assert.equal(transport.bufferedAmount, 95999);
   assert.throws(() => transport.audio(new ArrayBuffer(640)), /cannot keep up/);
   assert.throws(() => transport.audio(new ArrayBuffer(2)), /20 ms/);
+  socket.bufferedAmount = 0;
+  transport.audio(new ArrayBuffer(640 * 51));
+  assert.throws(() => transport.audio(new ArrayBuffer(640 * 52)), /32 KiB/);
   socket.onmessage!({ data: new ArrayBuffer(4) });
   assert.match(errors[0]!.message, /must be text/);
   transport.close();

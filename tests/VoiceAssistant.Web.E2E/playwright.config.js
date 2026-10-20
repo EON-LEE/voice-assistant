@@ -37,7 +37,9 @@ export default defineConfig({
   globalSetup: './wait-for-api.js',
   testDir: './specs',
   timeout: 30_000,
-  globalTimeout: 300_000,
+  // Serial runs of the whole suite (including the 20-restart media case) take several minutes on a busy machine;
+  // a short global cap aborted the last specs as "did not run".
+  globalTimeout: 900_000,
   workers: 1,
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),

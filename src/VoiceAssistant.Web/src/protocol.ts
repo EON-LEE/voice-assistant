@@ -17,6 +17,8 @@ export interface ServerEvent {
   sessionUpdate?: boolean;
   /** `session.updated`: the effective document-search mode. */
   responseMode?: "balanced" | "grounded" | "conversation";
+  /** `response.delta`: the primary line (first suggestion) is complete with this delta; sent at most once per response. */
+  primaryDone?: boolean;
   /** `response.korean`: the reply line (0 = primary, 1 = alternative) and its Korean meaning, or `failed` when it has none. */
   index?: number; korean?: string; failed?: boolean;
 }
@@ -60,7 +62,13 @@ export function parseEvent(data: unknown): ServerEvent {
   }
   const responseId = text("responseId");
   if (type === "response.started" || type === "response.cancelled") return { type, turnId, responseId };
-  if (type === "response.delta") return { type, turnId, responseId, text: text("text") };
+  if (type === "response.delta") {
+    const delta = text("text");
+    if (e.primaryDone !== undefined && typeof e.primaryDone !== "boolean") throw new Error("Invalid primaryDone flag.");
+    // An empty delta exists only to say that the primary line is already complete.
+    if (!delta && e.primaryDone !== true) throw new Error("A response delta must carry text unless it marks the primary line done.");
+    return { type, turnId, responseId, text: delta, ...(e.primaryDone === true ? { primaryDone: true } : {}) };
+  }
   if (type === "response.korean") {
     if (e.index !== 0 && e.index !== 1) throw new Error("Invalid reply line index.");
     if (e.failed !== undefined) {
