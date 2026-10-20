@@ -15,6 +15,8 @@ namespace VoiceAssistant.Api;
 public static class ApiTelemetry
 {
     public const string ConnectionStringKey = "APPLICATIONINSIGHTS_CONNECTION_STRING";
+    /// <summary>The exporter's switch for Statsbeat, its own usage telemetry to Microsoft-owned resources.</summary>
+    public const string StatsbeatDisabledKey = "APPLICATIONINSIGHTS_STATSBEAT_DISABLED";
     public const string DefaultServiceName = "voice-web";
 
     /// <summary>Registers the metric exporter only when an Application Insights connection string is configured.</summary>
@@ -22,11 +24,23 @@ public static class ApiTelemetry
     {
         var connectionString = configuration[ConnectionStringKey];
         if (string.IsNullOrWhiteSpace(connectionString)) return false;
+        DisableStatsbeat();
         var serviceName = ServiceName(configuration);
         var credential = Credential(configuration);
         services.AddHostedService(provider => new TelemetryExport(() => CreateProvider(connectionString, serviceName, credential),
             provider.GetRequiredService<ILogger<TelemetryExport>>()));
         return true;
+    }
+
+    /// <summary>
+    /// Statsbeat would send the exporter's usage data to Microsoft-owned resources and probe the instance metadata endpoint;
+    /// only this app's meter is exported, so it is switched off before the exporter starts. The exporter has no public
+    /// option for it, only this environment variable. An explicit value from the operator is kept.
+    /// </summary>
+    internal static void DisableStatsbeat()
+    {
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(StatsbeatDisabledKey)))
+            Environment.SetEnvironmentVariable(StatsbeatDisabledKey, "true");
     }
 
     /// <summary>The meter provider limited to this app's meter, exporting to Azure Monitor.</summary>

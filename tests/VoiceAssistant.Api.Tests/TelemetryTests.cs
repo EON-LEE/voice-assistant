@@ -47,14 +47,32 @@ internal sealed class MetricCapture : IDisposable
     public void Dispose() => listener.Dispose();
 }
 
+/// <summary>Restores the process-wide Statsbeat variable that enabling export may set.</summary>
+internal sealed class StatsbeatVariable : IDisposable
+{
+    private readonly string? previous = Environment.GetEnvironmentVariable(ApiTelemetry.StatsbeatDisabledKey);
+
+    public static StatsbeatVariable Preserve(string? value = null)
+    {
+        var preserved = new StatsbeatVariable();
+        Environment.SetEnvironmentVariable(ApiTelemetry.StatsbeatDisabledKey, value);
+        return preserved;
+    }
+
+    public void Dispose() => Environment.SetEnvironmentVariable(ApiTelemetry.StatsbeatDisabledKey, previous);
+}
+
 public sealed class TelemetryTests
 {
+    private const string ValidLooking = "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://example.invalid/";
+
     private static IConfiguration Configuration(params (string Key, string? Value)[] values) => new ConfigurationBuilder()
         .AddInMemoryCollection(values.Select(value => new KeyValuePair<string, string?>(value.Key, value.Value))).Build();
 
     [Fact]
     public void ExporterIsRegisteredOnlyWhenAConnectionStringIsConfigured()
     {
+        using var statsbeat = StatsbeatVariable.Preserve();
         foreach (var empty in new[] { null, "", "   " })
         {
             var services = new ServiceCollection();
@@ -63,15 +81,31 @@ public sealed class TelemetryTests
         }
         var configured = new ServiceCollection();
         // Registration only: the provider and its exporter are never built here, so nothing is sent anywhere.
-        Assert.True(ApiTelemetry.Configure(configured, Configuration((ApiTelemetry.ConnectionStringKey,
-            "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://example.invalid/"))));
+        Assert.True(ApiTelemetry.Configure(configured, Configuration((ApiTelemetry.ConnectionStringKey, ValidLooking))));
         Assert.Contains(configured, descriptor => descriptor.ServiceType == typeof(IHostedService));
         Assert.DoesNotContain(configured, descriptor => descriptor.ServiceType == typeof(MeterProvider));
     }
 
     [Fact]
+    public void EnablingExportSwitchesStatsbeatOffUnlessTheOperatorSetIt()
+    {
+        using var statsbeat = StatsbeatVariable.Preserve();
+
+        ApiTelemetry.Configure(new ServiceCollection(), Configuration((ApiTelemetry.ConnectionStringKey, "")));
+        Assert.Null(Environment.GetEnvironmentVariable(ApiTelemetry.StatsbeatDisabledKey));
+
+        ApiTelemetry.Configure(new ServiceCollection(), Configuration((ApiTelemetry.ConnectionStringKey, ValidLooking)));
+        Assert.Equal("true", Environment.GetEnvironmentVariable(ApiTelemetry.StatsbeatDisabledKey));
+
+        Environment.SetEnvironmentVariable(ApiTelemetry.StatsbeatDisabledKey, "false");
+        ApiTelemetry.Configure(new ServiceCollection(), Configuration((ApiTelemetry.ConnectionStringKey, ValidLooking)));
+        Assert.Equal("false", Environment.GetEnvironmentVariable(ApiTelemetry.StatsbeatDisabledKey));
+    }
+
+    [Fact]
     public async Task AMalformedConnectionStringTurnsExportOffWithAContentFreeWarning()
     {
+        using var statsbeat = StatsbeatVariable.Preserve("true");
         var logger = new ListLogger();
         using var export = new ApiTelemetry.TelemetryExport(() => ApiTelemetry.CreateProvider(
             "not-a-connection-string-private-value", ApiTelemetry.DefaultServiceName, new DefaultAzureCredential()), logger);
@@ -140,6 +174,7 @@ public sealed partial class ApiTests
     [Fact]
     public async Task AMalformedTelemetryConnectionStringDoesNotStopTheApp()
     {
+        using var statsbeat = StatsbeatVariable.Preserve();
         await using var host = await Host.StartAsync(configuration: new() { [ApiTelemetry.ConnectionStringKey] = "not-a-connection-string" });
         using var client = host.Client;
         using var live = await client.GetAsync("/health/live");
