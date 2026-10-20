@@ -132,8 +132,8 @@ public sealed class ReasoningEffortTests
         var query = Assert.Single(handler.Uris).Query;
         var versions = query.TrimStart('?').Split('&').Where(part => part.StartsWith("api-version=", StringComparison.Ordinal)).ToArray();
         var sent = Assert.Single(versions)["api-version=".Length..];
-        if (version is null) Assert.NotEqual("2025-04-01-preview", sent);
-        else Assert.Equal(version, sent);
+        // Unset keeps the pinned SDK's default api-version.
+        Assert.Equal(version ?? "2024-10-21", sent);
     }
 
     private static async Task AnswerAsync(AzureMeetingProvider provider)
