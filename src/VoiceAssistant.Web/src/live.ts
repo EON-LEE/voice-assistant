@@ -1,8 +1,9 @@
 import "./live.css";
 import workletUrl from "./audio.worklet.ts?worker&url";
 import { BrowserAuth } from "./auth.js";
-import { CaptureError, DisplayAudioSource, MicrophoneAudioSource, type AudioSource, type CaptureErrorKind,
+import { CaptureError, DisplayAudioSource, MicrophoneAudioSource, isHostSource, type AudioSource, type CaptureErrorKind,
   type CaptureSourceKind } from "./capture.js";
+import { HostAudioSource, hostKind, hostWebView, isHostAudioAvailable } from "./host-audio.js";
 import { SocketTransport, asError } from "./transport.js";
 import { defaultOptions, type SessionOptions } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
@@ -11,9 +12,10 @@ import { LiveState, answers, meaningTexts, primaryMeaning, translatable, transla
   type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
 import { parseSettings, pendingUpdate, settingsKey, withDocumentSearch, withResponseMode, documentSearchOn,
-  type LiveSettings, type ResponseMode } from "./live-settings.js";
+  type HostSources, type LiveSettings, type ResponseMode } from "./live-settings.js";
 import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
-import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, type RecoveryAction } from "./live-errors.js";
+import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, sourceNames, warningMessage, type LiveWarning,
+  type PageAction } from "./live-errors.js";
 import { LatencyMarks, debugEnabled } from "./live-latency.js";
 
 let liveDocument = document;
@@ -30,6 +32,12 @@ const audioSource = $<HTMLSelectElement>("audio-source");
 const microphoneSettings = $("microphone-settings"), displayHint = $("display-hint");
 /** LiveCoach.exe (WebView2) or a browser tab: the share picker offers different surfaces in each. */
 const host = liveHost(window);
+/** What LiveCoach.exe captures natively for this page: Teams app audio, its PC (default output) audio, or nothing. */
+const offered: HostSources = { teams: isHostAudioAvailable("teams"), system: isHostAudioAvailable("system") };
+for (const [value, available] of [["teams", offered.teams], ["host-system", offered.system]] as const) {
+  const option = audioSource.querySelector<HTMLOptionElement>(`option[value="${value}"]`);
+  if (option) option.hidden = option.disabled = !available;
+}
 
 const auth = new BrowserAuth(undefined, { persistent: true });
 const coach = new CoachClient((path, init) => auth.coachRequest(path, init), () => auth.isFake);
@@ -66,30 +74,40 @@ const debug = debugEnabled(location.search, storage());
 const latency = new LatencyMarks(() => performance.now(), debug ? name => { performance.mark(name); } : undefined);
 
 function loadSettings(): LiveSettings {
-  try { return parseSettings(localStorage.getItem(settingsKey)); } catch { return parseSettings(null); }
+  try { return parseSettings(localStorage.getItem(settingsKey), offered); } catch { return parseSettings(null, offered); }
 }
 let settings = loadSettings();
 responseMode.value = settings.responseMode; topic.value = settings.topic; audioSource.value = settings.audioSource;
 if (host === "app") {
   // WebView2 has no browser tabs to pick; only a whole screen carries (system) audio there.
   displayHint.textContent = "라이브 시작 시 뜨는 공유 선택창에서 '전체 화면'을 고르고 '시스템 오디오 공유'를 체크하세요. "
-    + "창(Window) 공유에는 소리가 없습니다. 시스템 오디오는 Windows 기본 출력 장치의 소리만 가져옵니다.";
+    + "창(Window) 공유에는 소리가 없습니다. 시스템 오디오는 Windows 기본 출력 장치의 소리만 가져옵니다."
+    + (offered.teams ? " Teams 데스크톱 앱이면 'Teams 앱 소리'가 더 정확합니다." : "");
 }
 function renderAudioSource(): void {
-  const display = audioSource.value === "display";
-  microphoneSettings.hidden = display; displayHint.hidden = !display;
+  const kind = audioSource.value;
+  microphoneSettings.hidden = kind !== "microphone"; displayHint.hidden = kind !== "display";
+  $("teams-hint").hidden = kind !== "teams"; $("host-system-hint").hidden = kind !== "host-system";
 }
 renderAudioSource();
 function persist(): void {
   try { localStorage.setItem(settingsKey, JSON.stringify(settings)); } catch { /* storage unavailable: the choice lasts until the page closes */ }
 }
+function selectedSource(): CaptureSourceKind {
+  const value = audioSource.value;
+  return value === "display" || value === "teams" || value === "host-system" ? value : "microphone";
+}
 function saveSettings(): void {
-  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: audioSource.value as LiveSettings["audioSource"] };
+  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: selectedSource() };
   persist();
 }
 micDevice.addEventListener("change", saveSettings);
 topic.addEventListener("change", saveSettings);
-audioSource.addEventListener("change", () => { renderAudioSource(); saveSettings(); });
+audioSource.addEventListener("change", () => {
+  renderAudioSource(); saveSettings();
+  // Choosing the source in use again also cancels a switch that is still being prepared.
+  if (controller.active && (settings.audioSource !== controller.source || controller.switching)) changeLiveSource(settings.audioSource);
+});
 
 // ---------- Quick settings: document search, captions, Korean ----------
 
@@ -156,12 +174,17 @@ function showLevel(level: number): void {
   }
 }
 function createSource(kind: CaptureSourceKind, hooks: SourceHooks): AudioSource {
-  const level = (value: number): void => { showLevel(value); hooks.level(value); };
+  if (isHostSource(kind)) {
+    const webview = hostWebView();
+    if (!webview) throw new CaptureError("unsupported", kind, "LiveCoach audio is not available here.");
+    return new HostAudioSource({ webview, source: hostKind(kind), onWarning: hooks.warning, onLevel: hooks.level,
+      onGap: missing => hooks.stall(missing) });
+  }
   const warning = (_message: string, warned?: CaptureErrorKind): void => hooks.warning(warned === "muted" ? "muted" : null);
   const shared = {
     context: () => new AudioContext(),
     node: (context: AudioContext) => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
-    workletUrl, onStall: hooks.stall, onLevel: level, onWarning: warning,
+    workletUrl, onStall: hooks.stall, onLevel: hooks.level, onWarning: warning,
   };
   if (kind === "display") return new DisplayAudioSource({
     ...shared,
@@ -189,6 +212,7 @@ const controller = new LiveController({
   onEvent,
   onDisconnect,
   onChange: schedule,
+  onLevel: showLevel,
 });
 
 // ---------- Live session lifecycle ----------
@@ -199,6 +223,15 @@ function resetConversation(): void {
   pushedAtStart.clear();
 }
 
+/** Whether this page can capture `kind` here at all: a browser API, or LiveCoach.exe offering it. */
+function sourceAvailable(kind: CaptureSourceKind): boolean {
+  switch (kind) {
+    case "display": return !!navigator.mediaDevices?.getDisplayMedia;
+    case "microphone": return !!navigator.mediaDevices?.getUserMedia;
+    case "teams": case "host-system": return isHostAudioAvailable(hostKind(kind));
+  }
+}
+
 /**
  * Starts from a click, so the share picker (or microphone prompt) opens inside it. `resume` keeps the conversation on
  * screen ("다시 공유" / "다시 시작"). Reconnects never come back here: they keep the source and only reconnect the server.
@@ -207,7 +240,7 @@ function startLive(resume = false): void {
   if (controller.active) return;
   const kind = settings.audioSource;
   infoMessage = ""; startOffered = false;
-  if (kind === "display" ? !navigator.mediaDevices?.getDisplayMedia : !navigator.mediaDevices?.getUserMedia) {
+  if (!sourceAvailable(kind)) {
     infoMessage = captureMessage("unsupported", kind, host);
     render(); return;
   }
@@ -230,9 +263,9 @@ async function signInFirst(resume: boolean): Promise<void> {
   offerStart(resume, "로그인되었습니다. '라이브 시작'을 눌러 공유할 화면을 고르세요.");
 }
 
-/** After an await, only a microphone may start by itself; a share picker needs the user's next click. */
+/** After an await, only a share picker needs the user's next click; the microphone and LiveCoach audio start by themselves. */
 function offerStart(resume: boolean, message: string): void {
-  if (settings.audioSource === "microphone") { startLive(resume); return; }
+  if (settings.audioSource !== "display") { startLive(resume); return; }
   startOffered = true; offeredResume = resume;
   infoMessage = message;
   render();
@@ -256,17 +289,36 @@ async function stopLive(message = ""): Promise<void> {
   render();
 }
 
-/** The recovery step the inline button offers, if any. */
-function currentAction(): RecoveryAction | "start" | undefined {
+/** Warnings that 'PC 전체 소리' can fix while Teams app audio is used. */
+const switchableWarnings: ReadonlySet<LiveWarning> = new Set(["teams-silent", "capture-error", "silent"]);
+/** The step the inline button offers, if any: a recovery step, a start that needs its own click, or the switch to PC audio. */
+function currentAction(): PageAction | undefined {
   if (startOffered && !controller.active) return "start";
-  return controller.failure?.action;
+  if (controller.failure) return controller.failure.action;
+  if (controller.active && controller.source === "teams" && offered.system && !controller.switching && controller.warning
+    && switchableWarnings.has(controller.warning)) return "switch-system";
+  return undefined;
 }
 $("live-action").addEventListener("click", () => {
   const action = currentAction();
   if (action === "signin") void signInAndResume();
   else if (action === "start") startLive(offeredResume);
   else if (action === "reshare" || action === "restart") startLive(true);
+  else if (action === "switch-system") {
+    settings = { ...settings, audioSource: "host-system" }; persist();
+    audioSource.value = "host-system"; renderAudioSource();
+    changeLiveSource("host-system");
+  }
 });
+
+/**
+ * A source chosen while live replaces the running one on the same connection. A share needs a picker, which only a
+ * click may open, so that choice waits for the next start (the settings dialog says so).
+ */
+function changeLiveSource(kind: CaptureSourceKind): void {
+  if (kind !== "display") controller.switchSource(kind);
+  render();
+}
 
 /** A dropped or replaced connection: replies in flight end, the next `session.ready` restates the capabilities. */
 function onDisconnect(): void {
@@ -414,7 +466,7 @@ function statusMessage(): string {
   if (controller.phase === "reconnecting" && !controller.rollingOver)
     return reconnectText(controller.attempt, liveLimits.maxReconnects, controller.offline);
   if (infoMessage) return infoMessage;
-  if (controller.warning) return captureMessage(controller.warning, controller.source, host);
+  if (controller.warning) return warningMessage(controller.warning, controller.source, host, controller.warningDetail);
   return controller.notice ? liveMessage(controller.notice, host) : "";
 }
 
@@ -422,17 +474,19 @@ function render(): void {
   pending = false;
   const phase = controller.phase, live = phase === "live", reconnecting = phase === "reconnecting";
   const source = controller.active ? controller.source : settings.audioSource;
-  const sourceLabel = source === "display" ? "탭/시스템 오디오" : "마이크";
+  const sourceLabel = sourceNames[source], switching = controller.switching;
   panel.dataset.capture = reconnecting ? "reconnecting" : live ? paused ? "paused" : "on" : "off";
   setText("capture-status", reconnecting
     ? controller.rollingOver ? `새 세션으로 이어서 듣는 중 · ${sourceLabel} 계속 켜짐`
       : controller.needsSignIn ? `로그인 필요 · ${sourceLabel} 계속 켜짐`
       : controller.offline ? `네트워크 대기 중 · ${sourceLabel} 계속 켜짐` : `재연결 중 · ${sourceLabel} 계속 켜짐`
+    : live && switching ? `${sourceNames[switching]}로 전환 중…`
     : live && paused ? `${sourceLabel} 일시정지 · 오디오 전송 중지`
-    : live ? "듣는 중 · 영어 · 이전 대화 맥락 연결"
-    : phase === "starting" ? source === "display" ? "공유할 화면 선택 중…" : "마이크 준비 중…"
+    : live ? `듣는 중 · ${sourceLabel} · 영어`
+    : phase === "starting" ? source === "display" ? "공유할 화면 선택 중…" : isHostSource(source) ? `${sourceLabel} 연결 중…` : "마이크 준비 중…"
     : phase === "connecting" ? "연결 중…" : `${sourceLabel} 꺼짐 · 우클릭으로 설정 및 시작`);
   setHidden("live-level", !controller.isCapturing);
+  setHidden("source-note", !(controller.active && settings.audioSource === "display" && controller.source !== "display"));
   const message = statusMessage();
   setText("session-error", message); setHidden("session-error", !message);
   const action = currentAction();

@@ -1,5 +1,6 @@
-import { CaptureError, type CaptureErrorKind, type CaptureSourceKind } from "./capture.js";
+import { CaptureError, isHostSource, type CaptureErrorKind, type CaptureSourceKind, type HostSourceKind } from "./capture.js";
 import { CodedError } from "./errors.js";
+import type { HostAudioWarning } from "./host-audio.js";
 
 /**
  * What a failure means for a running live session:
@@ -10,12 +11,18 @@ import { CodedError } from "./errors.js";
  */
 export type Disposition = "transient" | "rollover" | "notice" | "fatal";
 export type RecoveryAction = "reshare" | "restart" | "signin";
+/** What the page's inline button can do: a recovery step, a start offered after sign-in, or a switch to LiveCoach's PC audio. */
+export type PageAction = RecoveryAction | "start" | "switch-system";
 export interface Classified {
   code: string;
   disposition: Disposition;
   action?: RecoveryAction;
   capture?: { kind: CaptureErrorKind; source: CaptureSourceKind };
 }
+/** A condition that does not stop capture: a muted share, or what LiveCoach reports about its own capture. */
+export type SourceWarning = "muted" | HostAudioWarning;
+/** What the page warns about while capture runs: the source's own condition, or 15 s of near-silence. */
+export type LiveWarning = SourceWarning | "silent";
 /** Where the page runs: inside LiveCoach.exe (WebView2) or a regular browser tab. */
 export type LiveHost = "app" | "browser";
 
@@ -106,8 +113,13 @@ export function liveHost(scope: object = globalThis): LiveHost {
   return chrome?.webview ? "app" : "browser";
 }
 
-export const actionLabels: Readonly<Record<RecoveryAction | "start", string>> = {
-  reshare: "다시 공유", restart: "다시 시작", signin: "로그인", start: "라이브 시작",
+export const actionLabels: Readonly<Record<PageAction, string>> = {
+  reshare: "다시 공유", restart: "다시 시작", signin: "로그인", start: "라이브 시작", "switch-system": "PC 전체 소리로 전환",
+};
+
+/** How the page names each audio source (status line, settings, messages). */
+export const sourceNames: Readonly<Record<CaptureSourceKind, string>> = {
+  microphone: "마이크", display: "탭/시스템 오디오", teams: "Teams 앱 소리", "host-system": "PC 전체 소리",
 };
 
 const displaySteps: Readonly<Record<LiveHost, string>> = {
@@ -115,8 +127,26 @@ const displaySteps: Readonly<Record<LiveHost, string>> = {
   browser: "Teams 웹 탭을 고르고 '탭 오디오도 공유'를 켜거나, '전체 화면'을 고르고 '시스템 오디오 공유'를 체크하세요. 창(Window) 공유에는 소리가 포함되지 않습니다.",
 };
 
+/** Audio LiveCoach.exe captures itself: no picker, so there is nothing to share again, only to restart or switch. */
+function hostCaptureMessage(kind: CaptureErrorKind, source: HostSourceKind, host: LiveHost): string {
+  switch (kind) {
+    case "unsupported":
+      if (host === "browser") return "'Teams 앱 소리'와 'PC 전체 소리'는 LiveCoach 앱에서만 쓸 수 있습니다. 우클릭 → 설정에서 다른 오디오 소스를 고르세요.";
+      return source === "teams"
+        ? "이 PC에서는 'Teams 앱 소리'를 쓸 수 없습니다 (Windows 11 또는 Windows 10 빌드 20348 이상과 최신 LiveCoach 필요). 우클릭 → 설정에서 'PC 전체 소리', 탭/시스템 오디오(화면 공유) 또는 마이크를 고르세요."
+        : "이 LiveCoach에서는 'PC 전체 소리'를 쓸 수 없습니다. LiveCoach를 업데이트하거나 우클릭 → 설정에서 탭/시스템 오디오(화면 공유) 또는 마이크를 고르세요.";
+    case "silent": return source === "teams"
+      ? "Teams 앱 소리가 들어오지 않습니다 (15초). 회의 소리가 들리는데도 계속되면 'PC 전체 소리'로 바꾸세요."
+      : "PC 소리가 들어오지 않습니다 (15초). 회의 소리가 Windows 기본 출력 장치로 나오는지 확인하세요.";
+    case "muted": return "LiveCoach 소리가 잠시 끊겼습니다. 소리가 돌아오면 자동으로 이어집니다.";
+    case "cancelled": case "no-audio": case "ended": case "permission":
+      return `LiveCoach가 ${sourceNames[source]} 캡처를 멈췄습니다. '다시 시작'을 누르세요. 계속되면 LiveCoach를 다시 실행하세요.`;
+  }
+}
+
 /** The Korean message for a capture problem, with the steps for this host. */
 export function captureMessage(kind: CaptureErrorKind, source: CaptureSourceKind, host: LiveHost): string {
+  if (isHostSource(source)) return hostCaptureMessage(kind, source, host);
   if (source === "display") {
     switch (kind) {
       case "cancelled": return `화면 공유가 시작되지 않았습니다. '다시 공유'를 눌러 공유 창을 다시 여세요. ${displaySteps[host]}`;
@@ -142,6 +172,20 @@ export function captureMessage(kind: CaptureErrorKind, source: CaptureSourceKind
     case "permission": return host === "app"
       ? "마이크 권한이 거부되었습니다. Windows 설정 → 개인 정보 → 마이크에서 앱 접근을 허용한 뒤 '다시 시작'을 누르세요."
       : "마이크 권한이 거부되었습니다. 주소창의 사이트 권한에서 마이크를 허용한 뒤 '다시 시작'을 누르세요.";
+  }
+}
+
+/** The Korean warning shown while capture keeps running; `detail` is the source's own wording (LiveCoach's capture error). */
+export function warningMessage(warning: LiveWarning, source: CaptureSourceKind, host: LiveHost, detail = ""): string {
+  switch (warning) {
+    case "muted": case "silent": return captureMessage(warning, source, host);
+    case "teams-not-running": return "Teams가 실행 중이 아닙니다. Teams를 켜면 자동으로 연결됩니다.";
+    case "teams-silent": return "Teams에서 소리가 감지되지만 캡처가 비어 있습니다. 'PC 전체 소리'로 바꾸세요.";
+    case "capture-error": {
+      const advice = source === "teams" ? " 계속되면 'PC 전체 소리'로 바꾸세요." : " 소리가 나오는 출력 장치를 확인하세요.";
+      const shown = detail.trim().slice(0, 160);
+      return `${sourceNames[source]}를 가져오지 못해 자동으로 다시 시도하는 중입니다.${advice}${shown ? ` (LiveCoach: ${shown})` : ""}`;
+    }
   }
 }
 

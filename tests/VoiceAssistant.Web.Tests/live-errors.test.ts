@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { CaptureError, type CaptureErrorKind, type CaptureSourceKind } from "../../src/VoiceAssistant.Web/src/capture.js";
 import { CodedError } from "../../src/VoiceAssistant.Web/src/errors.js";
 import { actionLabels, captureMessage, classifyCapture, classifyError, classifyServerError, liveHost, liveMessage, reconnectText,
-  type Disposition, type RecoveryAction } from "../../src/VoiceAssistant.Web/src/live-errors.js";
+  sourceNames, warningMessage, type Disposition, type LiveWarning, type RecoveryAction } from "../../src/VoiceAssistant.Web/src/live-errors.js";
 
 const hangul = /[\uac00-\ud7a3]/u;
 
@@ -119,5 +119,40 @@ test("The reconnect line counts attempts, and waiting offline says so instead", 
   assert.equal(reconnectText(3, 20, false), "연결이 끊겨 자동 재연결 중 (3/20) · 대화와 추천은 유지됩니다");
   assert.equal(reconnectText(0, 20, false), "연결이 끊겨 자동 재연결 중 · 대화와 추천은 유지됩니다", "no count before the first attempt");
   assert.match(reconnectText(0, 20, true), /네트워크 연결을 기다리는 중/);
-  assert.deepEqual(actionLabels, { reshare: "다시 공유", restart: "다시 시작", signin: "로그인", start: "라이브 시작" });
+  assert.deepEqual(actionLabels, { reshare: "다시 공유", restart: "다시 시작", signin: "로그인", start: "라이브 시작",
+    "switch-system": "PC 전체 소리로 전환" });
+});
+
+test("LiveCoach sources: their own Korean steps, a restart instead of a re-share, and warnings that keep the session", () => {
+  const kinds: CaptureErrorKind[] = ["cancelled", "no-audio", "ended", "muted", "silent", "unsupported", "permission"];
+  for (const source of ["teams", "host-system"] as const) {
+    for (const kind of kinds) {
+      const classified = classifyCapture(kind, source);
+      const notice = kind === "muted" || kind === "silent";
+      assert.equal(classified.disposition, notice ? "notice" : "fatal", `${source} ${kind}`);
+      assert.equal(classified.action, notice || kind === "unsupported" ? undefined : "restart", `${source} ${kind}`);
+      for (const host of ["app", "browser"] as const) {
+        const text = liveMessage(classified, host);
+        assert.match(text, hangul, `${source} ${kind} ${host}`);
+        assert.doesNotMatch(text, /다시 공유|공유 선택창/, "LiveCoach captures by itself: there is nothing to share again");
+      }
+    }
+  }
+  assert.match(captureMessage("unsupported", "teams", "app"), /20348/);
+  assert.match(captureMessage("unsupported", "teams", "app"), /'PC 전체 소리', 탭\/시스템 오디오\(화면 공유\) 또는 마이크/);
+  assert.match(captureMessage("unsupported", "host-system", "browser"), /LiveCoach 앱에서만/);
+  assert.match(captureMessage("ended", "host-system", "app"), /^LiveCoach가 PC 전체 소리 캡처를 멈췄습니다. '다시 시작'/);
+  assert.match(captureMessage("silent", "teams", "app"), /^Teams 앱 소리가 들어오지 않습니다 \(15초\).*'PC 전체 소리'로 바꾸세요/);
+  const detail = "The audio device is in use (0x8889000A).";
+  const warnings: [LiveWarning, CaptureSourceKind, RegExp][] = [
+    ["teams-not-running", "teams", /^Teams가 실행 중이 아닙니다\. Teams를 켜면 자동으로 연결됩니다\.$/],
+    ["teams-silent", "teams", /^Teams에서 소리가 감지되지만 캡처가 비어 있습니다\. 'PC 전체 소리'로 바꾸세요\.$/],
+    ["capture-error", "teams", /^Teams 앱 소리를 가져오지 못해 자동으로 다시 시도하는 중입니다\. 계속되면 'PC 전체 소리'로 바꾸세요\. \(LiveCoach: The audio device is in use \(0x8889000A\)\.\)$/],
+    ["capture-error", "host-system", /^PC 전체 소리를 가져오지 못해 .*출력 장치를 확인하세요\./],
+    ["muted", "display", /^공유한 소리가 잠시 끊겼습니다/],
+    ["silent", "microphone", /^마이크 소리가 들어오지 않습니다/],
+  ];
+  for (const [warning, source, expected] of warnings) assert.match(warningMessage(warning, source, "app", detail), expected);
+  assert.doesNotMatch(warningMessage("capture-error", "teams", "app"), /LiveCoach:/, "no empty detail");
+  assert.deepEqual(Object.values(sourceNames), ["마이크", "탭/시스템 오디오", "Teams 앱 소리", "PC 전체 소리"]);
 });

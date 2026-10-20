@@ -1,3 +1,4 @@
+import type { CaptureSourceKind } from "./capture.js";
 import type { SessionOptions, SessionUpdate } from "./options.js";
 
 export type ResponseMode = SessionOptions["responseMode"];
@@ -9,17 +10,39 @@ export interface LiveSettings {
   /** The document-search mode that "document search: on" returns to after it was switched off. */
   documentMode: DocumentMode;
   topic: string;
-  audioSource: "microphone" | "display";
+  audioSource: CaptureSourceKind;
   /** Show what the other person said (the question strip and the heard conversation). */
   showCaptions: boolean;
   /** Show Korean meanings. Off means no Korean is requested, pushed or translated at all. */
   showKorean: boolean;
 }
 
+/** The audio LiveCoach.exe offers to capture natively for this page (none in a browser). */
+export interface HostSources { teams: boolean; system: boolean }
+export const noHostSources: HostSources = { teams: false, system: false };
+
 export const settingsKey = "live-coach-settings";
 
-/** Reads the stored settings. Anything missing or invalid falls back to its default, so older stored versions keep working. */
-export function parseSettings(raw: string | null): LiveSettings {
+/**
+ * The audio source to use here. LiveCoach sources exist only inside LiveCoach.exe (elsewhere a share takes their place);
+ * inside it, Teams app audio replaces a stored share and is the default, because a share there never offers the Teams
+ * app's own audio. "PC 전체 소리" is used only when it was chosen.
+ */
+export function resolveAudioSource(stored: unknown, offered: HostSources): CaptureSourceKind {
+  switch (stored) {
+    case "microphone": return "microphone";
+    case "teams": return offered.teams ? "teams" : "display";
+    case "host-system": return offered.system ? "host-system" : "display";
+    case "display": return offered.teams ? "teams" : "display";
+    default: return offered.teams ? "teams" : "microphone";
+  }
+}
+
+/**
+ * Reads the stored settings. Anything missing or invalid falls back to its default, so older stored versions keep working.
+ * `offered` is what LiveCoach.exe can capture natively here (see {@link resolveAudioSource}).
+ */
+export function parseSettings(raw: string | null, offered: HostSources = noHostSources): LiveSettings {
   let value: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(raw ?? "{}");
@@ -31,7 +54,7 @@ export function parseSettings(raw: string | null): LiveSettings {
     responseMode,
     documentMode: responseMode !== "conversation" ? responseMode : value.documentMode === "balanced" ? "balanced" : "grounded",
     topic: typeof value.topic === "string" ? value.topic.slice(0, 300) : "",
-    audioSource: value.audioSource === "display" ? "display" : "microphone",
+    audioSource: resolveAudioSource(value.audioSource, offered),
     showCaptions: value.showCaptions === true,
     showKorean: value.showKorean === true,
   };

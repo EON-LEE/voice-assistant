@@ -22,6 +22,7 @@
     "../../src/VoiceAssistant.Web/src/errors.ts",
     "../../src/VoiceAssistant.Web/src/live-errors.ts",
     "../../src/VoiceAssistant.Web/src/live-controller.ts",
-    "../../src/VoiceAssistant.Web/src/live-latency.ts"
+    "../../src/VoiceAssistant.Web/src/live-latency.ts",
+    "../../src/VoiceAssistant.Web/src/host-audio.ts"
   ]
 }

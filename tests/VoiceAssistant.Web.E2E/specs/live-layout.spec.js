@@ -6,8 +6,10 @@ test.use({ launchOptions: { args: ['--use-fake-ui-for-media-stream', '--use-fake
 const hostRoot = new URL('../../../src/VoiceAssistant.WebOverlay/', import.meta.url);
 const hostFile = name => readFileSync(new URL(name, hostRoot), 'utf8');
 const shell = hostFile('ShellScript.cs').split('"""')[1];
-// The host script only activates on its configured origin, so build it for the origin the app is served from.
-const shellFor = origin => shell.replace('__ORIGIN__', JSON.stringify(origin)).replace('__OPACITY__', '0.8');
+// The host script only activates on its configured origin, so build it for the origin the app is served from. The host
+// announces native Teams and PC audio on Windows builds with process loopback.
+const shellFor = origin => shell.replace('__ORIGIN__', JSON.stringify(origin)).replace('__OPACITY__', '0.8')
+  .replace('__HOST_AUDIO__', JSON.stringify({ version: 1, sources: ['teams', 'system'] }));
 const english = 'I can confirm the next milestone after reviewing the dependencies with the team. '.repeat(12);
 const korean = '팀과 의존성을 검토한 뒤 다음 일정을 확인하겠습니다. '.repeat(18);
 const token = 'LongUnbrokenSyntheticIdentifier'.repeat(10);
@@ -33,7 +35,7 @@ async function fixture(page, native, expanded = true, settings = everything) {
   await seedSettings(page, settings);
   if (native) await page.addInitScript(script => {
     window.__shellMessages = [];
-    window.chrome = { webview: { postMessage: value => window.__shellMessages.push(value) } };
+    window.chrome = { webview: { postMessage: value => window.__shellMessages.push(value), addEventListener() {}, removeEventListener() {} } };
     (0, eval)(script);
   }, shellFor(new URL(test.info().project.use.baseURL).origin));
   await page.goto('/live.html');

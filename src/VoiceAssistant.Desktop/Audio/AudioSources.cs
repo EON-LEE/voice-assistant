@@ -1,5 +1,6 @@
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using VoiceAssistant.Audio;
 
 namespace VoiceAssistant.Desktop.Audio;
 

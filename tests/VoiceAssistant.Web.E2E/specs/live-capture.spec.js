@@ -135,7 +135,7 @@ test('session_time_limit rolls over to a new session with the same share and no 
   await expect.poll(() => server.connections.length).toBe(2);
   // "듣는 중" also appears in the rollover status ("새 세션으로 이어서 듣는 중"); only data-capture="on" means ready again.
   await expect(page.locator('#live-panel')).toHaveAttribute('data-capture', 'on');
-  await expect(page.locator('#capture-status')).toHaveText('듣는 중 · 영어 · 이전 대화 맥락 연결');
+  await expect(page.locator('#capture-status')).toHaveText('듣는 중 · 탭/시스템 오디오 · 영어');
   await expect(page.locator('#session-error')).toBeHidden();
   expect(await server.pickerCalls()).toBe(1);
   await expect.poll(() => server.connections[1].commands.find(command => command.type === 'session.start')).toBeTruthy();
