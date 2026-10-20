@@ -263,6 +263,28 @@ test("grounding_unavailable is a notice: the session stays connected and the rep
   assert.equal(h.controller.notice, null, "the next reply clears the notice");
 });
 
+test("response_filtered is a notice that also reaches the page, whose state removes the stopped reply", async () => {
+  const state = new LiveState();
+  const h = harness(undefined, { onEvent: event => state.apply(event) });
+  await live(h);
+  const transport = h.latest();
+  transport.onEvent({ type: "transcript.final", turnId: "t", revision: 1, text: "Status?" });
+  transport.onEvent({ type: "response.started", turnId: "t", responseId: "r" });
+  transport.onEvent({ type: "response.delta", turnId: "t", responseId: "r", text: "Withheld line.", primaryDone: true });
+  assert.equal(state.display?.id, "r");
+  transport.onEvent({ type: "error", code: "response_filtered", message: "The content filter stopped this response, so it was withdrawn.", retryable: true });
+  transport.onEvent({ type: "response.cancelled", turnId: "t", responseId: "r" });
+  h.clock.advance(10000);
+  await flush();
+  assert.equal(h.controller.phase, "live");
+  assert.equal(h.transports.length, 1);
+  assert.equal(h.controller.notice?.code, "response_filtered");
+  assert.equal(liveMessage(h.controller.notice!, "browser"), "안전 필터가 이 답변을 막아 지웠어요. 다음 발언을 기다릴게요.");
+  assert.equal(state.display, null, "the stopped line is gone, not kept as interrupted");
+  assert.deepEqual(h.events.map(event => event.type),
+    ["session.ready", "transcript.final", "response.started", "response.delta", "error", "response.cancelled"]);
+});
+
 /**
  * The server's audio budget (MeetingSession: 128 KB burst, refilled at 64 KB/s, charged on ARRIVAL) replayed against what
  * the client sent. Everything sent within `bunchMs` of the flush start arrives together at its end, as a stalled network

@@ -18,6 +18,7 @@ test("Every server error code maps to transient, rollover, notice or fatal with 
     ["response_unavailable", true, "notice"],
     ["empty_response", true, "notice"],
     ["response_limit", true, "notice"],
+    ["response_filtered", true, "notice"],
     ["transcribe_only", false, "notice"],
     ["idle_timeout", true, "transient"],
     ["session_ended", true, "transient"],
@@ -47,6 +48,7 @@ test("Every server error code maps to transient, rollover, notice or fatal with 
   }
   assert.equal(classifyServerError("session_time_limit", true).disposition, "rollover", "known codes ignore the retryable flag");
   assert.equal(classifyServerError("grounding_unavailable", false).disposition, "notice");
+  assert.equal(liveMessage(classifyServerError("response_filtered", true), "app"), "안전 필터가 이 답변을 막아 지웠어요. 다음 발언을 기다릴게요.");
 });
 
 test("Page errors classify by type and code, never by message wording", () => {

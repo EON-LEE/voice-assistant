@@ -10,7 +10,9 @@ document crawler, or production fake-authentication mode is provisioned.
 
 `main.bicep` targets an **existing resource group**. It creates a Consumption
 Container Apps environment/app, user-assigned runtime identity, Speech account
-with a custom subdomain, Azure OpenAI account with chat and embedding deployments,
+with a custom subdomain, Azure OpenAI account with chat and embedding deployments
+(plus a content filtering policy for the chat deployment, only with
+`chatContentFilterStreaming=Asynchronous`; see below),
 AI Search, an anonymous-access-disabled Blob documents container, and a
 metric-only no-replica alert. The Azure OpenAI resource exposes the standard
 Azure OpenAI endpoint usable with Foundry/Azure SDKs; this does not create a
@@ -552,6 +554,23 @@ and data-plane access separately with approved synthetic data. Details:
 [API health endpoints](../src/VoiceAssistant.Api/README.md). Provider
 content-processing/abuse-monitoring policies still apply; this template does not
 override service retention policy or disable model content filtering.
+
+**Streaming content filter.** `chatContentFilterStreaming` (`Default` or `Asynchronous`,
+default `Default`) selects how Azure OpenAI filters the streamed chat replies. `Default`
+leaves the chat deployment exactly as before: no `raiPolicyName` is sent, so it stays on
+`Microsoft.DefaultV2`, which checks the output before releasing it and returns a short
+reply in about one burst. `Asynchronous` creates the content filtering policy
+`<chatDeploymentName>-async-filter` on the Azure OpenAI account and makes it the chat
+deployment's `raiPolicyName`. The policy mirrors `Microsoft.DefaultV2` (hate, sexual,
+self-harm and violence at `Medium` for prompts and completions, jailbreak on prompts,
+protected material text blocking and protected material code annotating on completions)
+and changes only the mode to `Asynchronous_filter`: tokens stream at once and the first one
+comes earlier, but a violation is signalled only within about 1,000 characters of the text,
+possibly after the reply is on screen. The API then withdraws the reply (`response_filtered`)
+and the web pages remove the text they already showed; see
+[content streaming](https://learn.microsoft.com/azure/foundry/openai/concepts/content-streaming).
+Going back to `Default` stops sending `raiPolicyName` but does not delete the policy;
+confirm that the deployment is on `Microsoft.DefaultV2` again.
 
 Cost drivers are the always-on Container App (2 vCPU/4 GiB by default, `containerCpu`), Search
 replicas/partitions, Speech audio duration, chat input/output tokens, ingestion/

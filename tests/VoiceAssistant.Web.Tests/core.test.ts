@@ -105,6 +105,31 @@ test("New turns, pause and explicit cancellation reject obsolete response events
   state.apply({ type: "response.started", turnId: "new", responseId: "retry" });
   assert.equal(state.current!.id, "retry");
 });
+test("A reply the content filter stops is withdrawn with its pinned copy; an older pin and the session stay", () => {
+  const filtered = { type: "error", code: "response_filtered", message: "The content filter stopped this response, so it was withdrawn.", retryable: true };
+  const state = new ReplyState();
+  state.apply({ type: "transcript.final", turnId: "a", revision: 1, text: "Q" });
+  state.apply({ type: "response.started", turnId: "a", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "a", responseId: "r1", text: "Kept.", sources: [] });
+  state.pin();
+  state.apply({ type: "response.started", turnId: "a", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "a", responseId: "r2", text: "Withheld." });
+  state.apply(filtered);
+  assert.equal(state.current?.id, undefined);
+  assert.equal(state.pinned?.text, "Kept.", "an older pinned reply is untouched");
+  assert.match(state.error, /^response_filtered: /);
+  state.apply({ type: "response.cancelled", turnId: "a", responseId: "r2" });
+  assert.equal(state.current?.id, undefined);
+  state.apply({ type: "response.started", turnId: "a", responseId: "r3" });
+  state.apply({ type: "response.delta", turnId: "a", responseId: "r3", text: "Withheld too." });
+  state.pin();
+  state.apply(filtered);
+  state.apply({ type: "response.cancelled", turnId: "a", responseId: "r3" });
+  assert.equal(state.pinned, null, "a pinned copy of the stopped reply goes with it");
+  state.apply({ type: "response.started", turnId: "a", responseId: "r4" });
+  state.apply({ type: "response.completed", turnId: "a", responseId: "r4", text: "Next.", sources: [] });
+  assert.equal(state.current?.text, "Next.", "the session goes on");
+});
 test("Strict event contract and 64KiB message cap", () => {
   assert.deepEqual(parseEvent('{"type":"session.ready"}'), { type: "session.ready" });
   assert.throws(() => parseEvent(new ArrayBuffer(2)));

@@ -398,6 +398,73 @@ public sealed partial class ApiTests
         Assert.Single(logs.Messages, message => message.Contains("Turn classifier failed", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AFilteredSpeculativeReplyIsWithdrawnLikeAnyReplyWhenAdoptedAndLeaksNothingWhenDiscarded(bool adopted)
+    {
+        if (adopted)
+        {
+            // Adopted, it is withdrawn exactly like a reply started at its final: the same events, the same log line, no Korean.
+            var atFinal = await RunAsync(speculative: false, RolloutQuestion);
+            var speculated = await RunAsync(speculative: true, RolloutQuestion);
+            Assert.Equal(atFinal.Messages, speculated.Messages);
+            Assert.Equal(atFinal.Withdrawn, speculated.Withdrawn);
+            Assert.Equal(["transcript.partial", "transcript.final", "response.started", "response.delta", "error", "response.cancelled"],
+                speculated.Types);
+            Assert.Contains("\"code\":\"response_filtered\"", speculated.Messages[4], StringComparison.Ordinal);
+            Assert.Single(speculated.Withdrawn);
+            Assert.Empty(speculated.Provider.Translations);
+            Assert.Equal(1, speculated.Provider.Answers);
+        }
+        else
+        {
+            // Discarded, nothing of it is sent, translated or logged; the final's own reply completes as usual.
+            var run = await RunAsync(speculative: true, "What is the rollout plan for Q3?");
+            Assert.DoesNotContain(run.Types, type => type is "error" or "response.cancelled");
+            Assert.Single(run.Types, type => type == "response.started");
+            Assert.Contains("response.completed", run.Types);
+            Assert.Empty(run.Withdrawn);
+            Assert.DoesNotContain(SpeculationProvider.ReplyTo(RolloutPartial), run.Provider.Translations);
+            Assert.Equal(2, run.Provider.Answers);
+        }
+
+        static async Task<(List<string> Messages, List<string> Types, string[] Withdrawn, SpeculationProvider Provider)> RunAsync(
+            bool speculative, string final)
+        {
+            var logs = new CollectingLogs();
+            var clock = new ManualClock();
+            var provider = new SpeculationProvider { FilteredAnswers = 1 };
+            await using var host = await Host.StartAsync(provider: provider, clock: clock,
+                configuration: speculative ? SpeculationOn() : EarlyStartOn(), logs: logs);
+            using var socket = await host.ConnectAsync();
+            await StartSpeculativeSessionAsync(socket, korean: true);
+            var timers = clock.TimersCreated;
+            var messages = new List<JsonElement>();
+
+            provider.Emit(new("q", 1, RolloutPartial, false));
+            messages.Add(await Receive(socket));
+            if (speculative)
+            {
+                await clock.WaitForTimersAsync(timers + 1);
+                clock.Advance(MeetingSession.SpeculationPause);
+                // The speculative reply streamed its first line and was then stopped by the filter, all before its final.
+                Assert.Equal(RolloutPartial, await NextAsync(provider.Finished));
+            }
+            else clock.Advance(MeetingSession.SpeculationPause);
+            provider.Emit(new("q", 2, final, true));
+            messages.AddRange(await ReceiveUntilAsync(socket, found => found.Any(message => TypeOf(message) == "response.cancelled") ||
+                (Completed(found) && found.Count(message => TypeOf(message) == "response.korean") == 2)));
+            await Send(socket, """{"type":"session.stop"}""");
+            messages.AddRange(await ReceiveUntilCloseAsync(socket));
+            var withdrawn = logs.Messages.Where(message => message.Contains("Meeting response withdrawn", StringComparison.Ordinal)).ToArray();
+            // Response IDs are random; everything else must be the same.
+            return (messages.Select(message => JsonSerializer.Serialize(message.EnumerateObject()
+                    .Where(property => property.Name != "responseId").ToDictionary(property => property.Name, property => property.Value))).ToList(),
+                messages.Select(TypeOf).ToList(), withdrawn, provider);
+        }
+    }
+
     [Fact]
     public async Task ASpeculativeReplyTakesOverAStartedSearchAndItsAdoptedReplyDoesNotSearchAgain()
     {
@@ -604,6 +671,9 @@ public sealed partial class ApiTests
         public TaskCompletionSource? Hold { get; set; }
         public bool IgnoreCancellation { get; init; }
         public int FailingAnswers { get; init; }
+        /// <summary>The first answers stream their first line, then the content filter stops them, as the Azure provider reports it.</summary>
+        public int FilteredAnswers { get; init; }
+        public System.Collections.Concurrent.ConcurrentQueue<string> Translations { get; } = new();
         public int FailingRetrievals { get; init; }
         /// <summary>Every search blocks until the test releases it.</summary>
         public bool BlockRetrievals { get; init; }
@@ -659,6 +729,7 @@ public sealed partial class ApiTests
                 await Task.Yield();
                 if (number <= FailingAnswers) throw new InvalidOperationException("Synthetic answer failure.");
                 yield return new(ReplyTo(target));
+                if (number <= FilteredAnswers) throw new ProviderException("response_filtered", AzureMeetingProvider.FilteredMessage);
                 yield return new("", PrimaryDone: true);
                 FirstLines.Writer.TryWrite(target);
                 if (Hold is { } hold) await (IgnoreCancellation ? hold.Task : hold.Task.WaitAsync(cancellation));
@@ -674,7 +745,10 @@ public sealed partial class ApiTests
         public Task<bool> ShouldRespondAsync(IReadOnlyList<ConversationTurn> conversation, CancellationToken cancellation) =>
             ClassifierFailure is { } failure ? Task.FromException<bool>(failure) : Task.FromResult(true);
 
-        public Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation) =>
-            Task.FromResult<string?>("KO " + english);
+        public Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation)
+        {
+            Translations.Enqueue(english);
+            return Task.FromResult<string?>("KO " + english);
+        }
     }
 }
