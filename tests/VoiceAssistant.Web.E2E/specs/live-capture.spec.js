@@ -158,6 +158,27 @@ test('a search failure keeps the session and labels that reply 자료 확인 불
   expect(server.connections).toHaveLength(1);
 });
 
+test('a reply the content filter stops leaves the screen with a Korean note, and listening continues', async ({ page }) => {
+  const server = await liveFixture(page, { source: 'microphone' });
+  await server.start();
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  server.send({ type: 'transcript.final', turnId: 't1', revision: 1, text: 'How was the review?' });
+  server.send({ type: 'response.started', turnId: 't1', responseId: 'r1' });
+  server.send({ type: 'response.delta', turnId: 't1', responseId: 'r1', text: 'A withheld synthetic line.', primaryDone: true });
+  await expect(page.locator('#answer-text')).toHaveText('A withheld synthetic line.');
+  server.send({ type: 'error', code: 'response_filtered', message: 'The content filter stopped this response, so it was withdrawn.',
+    retryable: true });
+  server.send({ type: 'response.cancelled', turnId: 't1', responseId: 'r1' });
+  await expect(page.locator('#session-error')).toHaveText('안전 필터가 이 답변을 막아 지웠어요. 다음 발언을 기다릴게요.');
+  await expect(page.locator('#answer-text')).not.toContainText('withheld');
+  await expect(page.locator('#reading-status')).not.toContainText('중단');
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  expect(server.connections).toHaveLength(1);
+  reply(server, 2, 'Who owns it?', 'Alex owns it.');
+  await expect(page.locator('#answer-text')).toHaveText('Alex owns it.');
+  await expect(page.locator('#session-error')).toBeHidden();
+});
+
 test('the finished primary line shows before the reply completes, and completion fills in the rest', async ({ page }) => {
   const server = await liveFixture(page, { source: 'microphone', debug: true });
   await server.start();

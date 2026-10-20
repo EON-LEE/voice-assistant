@@ -167,6 +167,27 @@ try {
         $_.properties.roleDefinitionId -match 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' })
     Assert-True ($blobRoles.Count -eq 1 -and $blobRoles[0].properties.principalId -eq "[parameters('ingestionPrincipalId')]" -and
         $blobRoles[0].scope -match 'containers') 'Only the optional operator gets container-scoped Blob access'
+    $streaming = $template.parameters.chatContentFilterStreaming
+    Assert-True ($streaming.defaultValue -ceq 'Default' -and ($streaming.allowedValues -join ',') -ceq 'Default,Asynchronous' -and
+        $template.variables.chatAsynchronousFilter -ceq "[equals(parameters('chatContentFilterStreaming'), 'Asynchronous')]") 'Chat streaming content filter is Default or Asynchronous, Default unless chosen'
+    $policyName = "format('{0}-async-filter', parameters('chatDeploymentName'))"
+    $policies = @($template.resources | Where-Object type -EQ 'Microsoft.CognitiveServices/accounts/raiPolicies')
+    Assert-True ($policies.Count -eq 1 -and $policies[0].condition -ceq "[variables('chatAsynchronousFilter')]" -and
+        $policies[0].apiVersion -eq '2024-10-01' -and $policies[0].name.EndsWith(", $policyName)]")) 'Default creates no content filtering policy; Asynchronous creates one named after the chat deployment'
+    $filters = @($policies[0].properties.contentFilters | ForEach-Object {
+        $severity = if ($_.PSObject.Properties['severityThreshold']) { $_.severityThreshold } else { '-' }
+        '{0}/{1}/{2}/{3}/{4}' -f $_.name, $_.source, $severity, $_.blocking, $_.enabled })
+    $defaultV2 = @(foreach ($category in @('Hate', 'Sexual', 'Selfharm', 'Violence')) { "$category/Prompt/Medium/True/True"; "$category/Completion/Medium/True/True" }) +
+        @('Jailbreak/Prompt/-/True/True', 'Protected Material Text/Completion/-/True/True', 'Protected Material Code/Completion/-/False/True')
+    Assert-True ($policies[0].properties.basePolicyName -ceq 'Microsoft.DefaultV2' -and $policies[0].properties.mode -ceq 'Asynchronous_filter' -and
+        ($filters -join ';') -ceq ($defaultV2 -join ';')) 'The asynchronous policy mirrors Microsoft.DefaultV2 and changes only the streaming mode'
+    $chat = @($template.resources | Where-Object { $_.type -eq 'Microsoft.CognitiveServices/accounts/deployments' -and
+        $_.name -match "parameters\('chatDeploymentName'\)\)\]$" })
+    Assert-True ($chat.Count -eq 1 -and $chat[0].properties -is [string] -and
+        $chat[0].properties.StartsWith("[shallowMerge(createArray(createObject('model', createObject('format', 'OpenAI', 'name', parameters('chatModelName'), 'version', parameters('chatModelVersion')), 'versionUpgradeOption', 'NoAutoUpgrade'), ") -and
+        $chat[0].properties.EndsWith("if(variables('chatAsynchronousFilter'), createObject('raiPolicyName', $policyName), createObject())))]")) 'Default sends the chat deployment exactly as before, without raiPolicyName (Microsoft.DefaultV2); Asynchronous adds the policy name'
+    Assert-True (@($chat[0].dependsOn | Where-Object { $_.StartsWith("[resourceId('Microsoft.CognitiveServices/accounts/raiPolicies', ") -and
+        $_.EndsWith(", $policyName)]") }).Count -eq 1) 'The chat deployment waits for its content filtering policy'
 
     $parameters = Get-Content -LiteralPath (Join-Path $repoRoot 'infra\parameters.example.json') -Raw | ConvertFrom-Json
     Assert-Throws { Assert-DeploymentParameters $parameters $template } 'Unresolved example' 'Example placeholders fail closed'
@@ -188,6 +209,15 @@ try {
     $p.embeddingDeploymentSku.value = 'Standard'
     Assert-DeploymentParameters $parameters $template
     Assert-True $true 'Complete fixture parameters validate offline (not a quota/availability promise)'
+    foreach ($value in @('Default', 'Asynchronous')) {
+        $choice = Copy-Json $parameters
+        $choice.parameters | Add-Member -NotePropertyName chatContentFilterStreaming -NotePropertyValue ([pscustomobject]@{ value = $value })
+        Assert-DeploymentParameters $choice $template
+        Assert-True $true "Chat streaming content filter $value validates offline"
+    }
+    $invalid = Copy-Json $parameters
+    $invalid.parameters | Add-Member -NotePropertyName chatContentFilterStreaming -NotePropertyValue ([pscustomobject]@{ value = 'Deferred' })
+    Assert-Throws { Assert-DeploymentParameters $invalid $template } 'Unsupported deployment parameter' 'Only the two streaming content filter settings are accepted'
     $invalid = Copy-Json $parameters
     $invalid.parameters.spaClientId.value = $p.apiAudience.value
     Assert-Throws { Assert-DeploymentParameters $invalid $template } 'separate SPA' 'API audience cannot silently reuse SPA client ID'

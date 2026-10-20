@@ -286,6 +286,8 @@ internal sealed class FaultTransport : HttpMessageHandler
     public Action? OnSearch { get; init; }
     /// <summary>Streamed answer chunks; the newline starts the alternative line.</summary>
     public string[] ChatChunks { get; init; } = ["A general reply for now.", "\nThe exact details still need to be confirmed."];
+    /// <summary>Raw chunk JSON streamed after <see cref="ChatChunks"/>, before <c>[DONE]</c>: a finish reason or a filter verdict.</summary>
+    public string[] ChatTrailer { get; init; } = [];
     public ConcurrentQueue<string> ChatBodies { get; } = new();
     public int SearchCalls => Volatile.Read(ref searchCalls);
     public int EmbeddingCalls => Volatile.Read(ref embeddingCalls);
@@ -401,7 +403,7 @@ internal sealed class FaultTransport : HttpMessageHandler
         {
             id = "test", @object = "chat.completion.chunk", created = 1, model = "test",
             choices = new[] { new { index = 0, delta = new { content = text }, finish_reason = (string?)null } }
-        }) + "\n\n")) + "data: [DONE]\n\n";
+        }) + "\n\n")) + string.Concat(ChatTrailer.Select(chunk => "data: " + chunk + "\n\n")) + "data: [DONE]\n\n";
         return new(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
     }
 

@@ -601,6 +601,8 @@ public sealed partial class ApiTests
         public ManualResetEventSlim? BlockRetrieval { get; init; }
         public Func<string, TranslationContext, CancellationToken, Task<string?>>? Translate { get; init; }
         public TaskCompletionSource? HoldAlternative { get; init; }
+        /// <summary>When set, the turn classifier answers only once this completes; a finished reply waits for it at most 800 ms.</summary>
+        public TaskCompletionSource<bool>? TurnSignal { get; init; }
         public System.Collections.Concurrent.ConcurrentQueue<(string English, TranslationContext Context)> Translations { get; } = new();
         public TaskCompletionSource TurnSignalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public SessionOptions? SpeechOptions { get; private set; }
@@ -666,7 +668,7 @@ public sealed partial class ApiTests
         public Task<bool> ShouldRespondAsync(IReadOnlyList<ConversationTurn> conversation, CancellationToken cancellation)
         {
             TurnSignalStarted.TrySetResult();
-            return Task.FromResult(conversation.Count > 0 && ReplyTrigger.ContainsQuestion([conversation[^1].Text]));
+            return TurnSignal?.Task ?? Task.FromResult(conversation.Count > 0 && ReplyTrigger.ContainsQuestion([conversation[^1].Text]));
         }
         public Task<string?> TranslateReplyAsync(string english, TranslationContext context, CancellationToken cancellation)
         {
