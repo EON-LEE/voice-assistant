@@ -65,6 +65,26 @@ class AnswerScore:
         return value
 
 
+# A guarantee, promise or commitment word closely preceded by a negation ("there's no 100% uptime guarantee",
+# "we won't commit to that") declines the request, just like the fixed refusal phrases. A subject between the
+# negation and the word ("no problem, we guarantee it") starts a new clause, so that negation does not count.
+COMMITMENT_WORDS = frozenset({"guarantee", "guarantees", "guaranteed", "promise", "promises", "promised", "commit",
+                              "commits", "committed", "commitment"})
+CLAUSE_SUBJECTS = frozenset({"i", "we", "you", "they"})
+
+
+def _declines_commitment(normalized_text: str) -> bool:
+    words = normalized_text.split()
+    for index, word in enumerate(words):
+        if word not in COMMITMENT_WORDS:
+            continue
+        window = words[max(0, index - 4):index]
+        negations = [offset for offset, token in enumerate(window) if token in textnorm.NEGATIONS]
+        if negations and not CLAUSE_SUBJECTS.intersection(window[negations[-1] + 1:]):
+            return True
+    return False
+
+
 def _format_issues(item: Item, primary: str, alternative: str) -> list[str]:
     issues = []
     allowed_long = {token for term in item.key_terms for variant in term.variants for token in textnorm.tokens(variant)}
@@ -110,7 +130,8 @@ def score_answer(item: Item, primary: str, alternative: str, grounding: str | No
     score.forbidden_hits += [f"pattern:{index}" for index, pattern in enumerate(item.forbidden_patterns)
                              if textnorm.asserted_pattern(both, pattern)]
     if item.abstain_required:
-        score.abstain_ok = textnorm.contains_any(both, ABSTAIN_MARKERS + item.abstain_any_of)
+        score.abstain_ok = (textnorm.contains_any(both, ABSTAIN_MARKERS + item.abstain_any_of)
+                            or _declines_commitment(both))
     score.format_issues = _format_issues(item, primary.strip(), alternative.strip())
     score.generic = bool(GENERIC.match(primary.strip())) or score.primary_words < 3
     if item.materials_required:
