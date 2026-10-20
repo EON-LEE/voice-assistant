@@ -175,7 +175,7 @@ const codeTexts: Readonly<Record<string, string>> = {
 /** The reconnect line shown while the connection is being restored; the audio source keeps running meanwhile. */
 export function reconnectText(attempt: number, max: number, offline: boolean): string {
   return offline ? "네트워크 연결을 기다리는 중 · 연결되면 자동으로 이어집니다 (최근 4초 오디오 보관)"
-    : `연결이 끊겨 자동 재연결 중 (${attempt}/${max}) · 대화와 추천은 유지됩니다`;
+    : `연결이 끊겨 자동 재연결 중${attempt > 0 ? ` (${attempt}/${max})` : ""} · 대화와 추천은 유지됩니다`;
 }
 
 /** The Korean message shown for a classified failure or notice. */

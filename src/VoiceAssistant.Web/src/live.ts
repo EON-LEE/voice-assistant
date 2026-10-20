@@ -39,6 +39,8 @@ let paused = false;
 let infoMessage = "";
 /** Signed in first from a Start click: sharing needs a click of its own, offered inline. */
 let startOffered = false;
+/** Whether that offered start continues the conversation on screen. */
+let offeredResume = false;
 let translations = new AbortController();
 const meetingKo = new Map<string, string>();
 const failedTurns = new Map<string, string>();
@@ -223,10 +225,14 @@ async function signInFirst(resume: boolean): Promise<void> {
     infoMessage = `${auth.isDemo ? "로그인" : "Microsoft 계정 연결"} 실패: ${asError(error).message}`;
     render(); return;
   }
-  // A microphone needs no new click; a screen-share picker does.
+  offerStart(resume, "로그인되었습니다. '라이브 시작'을 눌러 공유할 화면을 고르세요.");
+}
+
+/** After an await, only a microphone may start by itself; a share picker needs the user's next click. */
+function offerStart(resume: boolean, message: string): void {
   if (settings.audioSource === "microphone") { startLive(resume); return; }
-  startOffered = true;
-  infoMessage = "로그인되었습니다. '라이브 시작'을 눌러 공유할 화면을 고르세요.";
+  startOffered = true; offeredResume = resume;
+  infoMessage = message;
   render();
 }
 
@@ -235,7 +241,7 @@ async function signInAndResume(): Promise<void> {
   catch (error) { infoMessage = `로그인 실패: ${asError(error).message}`; render(); return; }
   infoMessage = "";
   if (controller.needsSignIn) controller.resume();
-  else if (!controller.active) startLive(true);
+  else if (!controller.active) { offerStart(true, "로그인되었습니다. '라이브 시작'을 눌러 다시 공유하세요."); return; }
   render();
 }
 
@@ -256,7 +262,7 @@ function currentAction(): RecoveryAction | "start" | undefined {
 $("live-action").addEventListener("click", () => {
   const action = currentAction();
   if (action === "signin") void signInAndResume();
-  else if (action === "start") startLive(false);
+  else if (action === "start") startLive(offeredResume);
   else if (action === "reshare" || action === "restart") startLive(true);
 });
 

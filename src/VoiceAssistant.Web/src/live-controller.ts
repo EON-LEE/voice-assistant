@@ -199,6 +199,7 @@ export class LiveController {
     this.waitingForSignIn = false;
     this.failure = null;
     this.attempt = 0;
+    this.setPhase("connecting");
     this.connect();
   }
 

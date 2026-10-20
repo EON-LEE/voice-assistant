@@ -117,6 +117,7 @@ test("The host is LiveCoach.exe only when the WebView2 bridge exists", () => {
 
 test("The reconnect line counts attempts, and waiting offline says so instead", () => {
   assert.equal(reconnectText(3, 20, false), "연결이 끊겨 자동 재연결 중 (3/20) · 대화와 추천은 유지됩니다");
+  assert.equal(reconnectText(0, 20, false), "연결이 끊겨 자동 재연결 중 · 대화와 추천은 유지됩니다", "no count before the first attempt");
   assert.match(reconnectText(0, 20, true), /네트워크 연결을 기다리는 중/);
   assert.deepEqual(actionLabels, { reshare: "다시 공유", restart: "다시 시작", signin: "로그인", start: "라이브 시작" });
 });
