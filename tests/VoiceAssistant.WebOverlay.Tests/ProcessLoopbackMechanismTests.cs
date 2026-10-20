@@ -41,6 +41,7 @@ public sealed class ProcessLoopbackMechanismTests(ITestOutputHelper output)
         output.WriteLine($"Windows {version} (build {version.Build}); process loopback supported: {ProcessLoopbackCapture.IsSupported(version)}");
         DescribeOutputs();
         Assert.True(ProcessLoopbackCapture.IsSupported(version), "Process loopback needs Windows 10 build 20348 or later.");
+        RequireOutputDevice();
         await WithTonesAsync([1000, 600, 1500], async (wavs, children) =>
         {
             // Each player has its own frequency, so every capture shows exactly whose audio it contains.
@@ -89,10 +90,12 @@ public sealed class ProcessLoopbackMechanismTests(ITestOutputHelper output)
     [ManualFact]
     public async Task HostAudioServiceStreamsAProcessTreeAsPageMessages()
     {
+        RequireOutputDevice();
         await WithTonesAsync([1000], async (wavs, children) =>
         {
             var player = Start(children, "powershell.exe", $"-NoProfile -NonInteractive -Command \"{Play(wavs[0])}\"");
             await Task.Delay(TimeSpan.FromSeconds(2.5));
+            Assert.False(player.HasExited, $"The tone player exited early (exit code {(player.HasExited ? player.ExitCode : 0)}).");
             using var service = new HostAudioService(new FixedProcessPlatform(player.Id));
             var clock = Stopwatch.StartNew();
             service.Start(HostAudioKind.Teams, "manual-check");
@@ -269,6 +272,14 @@ public sealed class ProcessLoopbackMechanismTests(ITestOutputHelper output)
             var volume = device.AudioEndpointVolume;
             output.WriteLine($"Default {role} output: muted {volume.Mute}, volume {volume.MasterVolumeLevelScalar:P0}");
         }
+    }
+
+    /// <summary>The tone players need an output device (it may be muted); process loopback itself does not.</summary>
+    private static void RequireOutputDevice()
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        if (!enumerator.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia))
+            Assert.Fail("No active audio output device, so the tone players cannot play. Connect or enable one (it may stay muted) and run again.");
     }
 
     private static (double Rms, double Peak) Measure(byte[] pcm)
