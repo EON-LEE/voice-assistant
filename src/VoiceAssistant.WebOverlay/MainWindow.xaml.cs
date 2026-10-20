@@ -47,6 +47,7 @@ public partial class MainWindow : Window
         Height = Math.Min(Height, Math.Max(MinHeight, SystemParameters.WorkArea.Height));
         if (settings.Left is { } left && settings.Top is { } top && IsOnScreen(left, top)) { Left = left; Top = top; }
         else { Left = SystemParameters.WorkArea.Right - Width - 24; Top = SystemParameters.WorkArea.Top + 24; }
+        SourceInitialized += (_, _) => ExcludeFromCapture();
         Loaded += async (_, _) => await InitializeWebAsync();
         Closing += (_, _) => SaveSettings();
         Closed += (_, _) => hostAudio.Dispose();
@@ -161,6 +162,19 @@ public partial class MainWindow : Window
         SendMessage(handle, 0xA1 /* WM_NCLBUTTONDOWN */, (IntPtr)2 /* HTCAPTION */, IntPtr.Zero);
     }
 
+    /// <summary>
+    /// Leaves the overlay out of screen sharing, recordings and screenshots; it still shows on the local display. Only the
+    /// picture is affected, never audio capture. Windows before 10 version 2004 shows a black box in captures instead.
+    /// If Windows refuses, the window simply stays capturable.
+    /// </summary>
+    private void ExcludeFromCapture()
+    {
+        if (!settings.ExcludeFromCapture) return;
+        var handle = new WindowInteropHelper(this).Handle;
+        if (!SetWindowDisplayAffinity(handle, WdaExcludeFromCapture))
+            System.Diagnostics.Debug.WriteLine($"SetWindowDisplayAffinity failed ({Marshal.GetLastWin32Error()}); the overlay stays capturable.");
+    }
+
     private void ShowLoadError(string detail)
     {
         Loading.Visibility = Visibility.Visible;
@@ -192,9 +206,14 @@ public partial class MainWindow : Window
     private static extern bool ReleaseCapture();
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    private const uint WdaExcludeFromCapture = 0x00000011;
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
 }
 
-internal sealed record ShellSettings(double? Left = null, double? Top = null, double Width = 550, double Height = 860, int OpacityIndex = 1)
+/// <summary>Window placement and opacity, and <c>ExcludeFromCapture</c>: hide the overlay from screen sharing (on unless set false).</summary>
+internal sealed record ShellSettings(double? Left = null, double? Top = null, double Width = 550, double Height = 860, int OpacityIndex = 1,
+    bool ExcludeFromCapture = true)
 {
     private const string FileName = "overlay-settings.json";
     public static ShellSettings Load(string folder)

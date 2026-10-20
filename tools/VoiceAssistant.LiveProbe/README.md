@@ -1,6 +1,6 @@
 # Explicit live Azure acceptance probe
 
-This .NET 8 console references the **same `AzureMeetingProvider`** as the API. It sends an approved original synthetic English WAV through real Azure Speech, then submits only its recognized synthetic utterance to real Azure OpenAI streaming chat. It never substitutes Fake for Azure. It does not start an HTTP server or test browser capture, Entra API JWT/tickets, Search, source ACLs, or deployment readiness.
+This .NET 10 console references the **same `AzureMeetingProvider`** as the API. It sends an approved original synthetic English WAV through real Azure Speech, then submits only its recognized synthetic utterance to real Azure OpenAI streaming chat. It never substitutes Fake for Azure. It does not start an HTTP server or test browser capture, Entra API JWT/tickets, Search, source ACLs, or deployment readiness.
 
 ## Run without a login prompt
 
@@ -8,8 +8,8 @@ Build separately so MSBuild output is not mixed into the single-line JSON eviden
 
 ```powershell
 dotnet build .\tools\VoiceAssistant.LiveProbe\VoiceAssistant.LiveProbe.csproj -c Release
-dotnet .\tools\VoiceAssistant.LiveProbe\bin\Release\net8.0\VoiceAssistant.LiveProbe.dll --help
-dotnet .\tools\VoiceAssistant.LiveProbe\bin\Release\net8.0\VoiceAssistant.LiveProbe.dll --live --audio .\tests\VoiceAssistant.Web.E2E\fixtures\original-project.wav --metadata .\tests\VoiceAssistant.Web.E2E\fixtures\original-project.json --timeout-seconds 90
+dotnet .\tools\VoiceAssistant.LiveProbe\bin\Release\net10.0\VoiceAssistant.LiveProbe.dll --help
+dotnet .\tools\VoiceAssistant.LiveProbe\bin\Release\net10.0\VoiceAssistant.LiveProbe.dll --live --audio .\tests\VoiceAssistant.Web.E2E\fixtures\original-project.wav --metadata .\tests\VoiceAssistant.Web.E2E\fixtures\original-project.json --timeout-seconds 90
 ```
 
 `--live` is explicit permission to submit **the approved fixture only** to the configured Azure Speech/OpenAI resources and may incur service charges. Do not use meeting recordings, company text, third-party audio, or arbitrary downloaded fixtures. The original fixture is generated locally by the browser component and its metadata must authorize live use. The probe reads but never creates or changes Azure resources.
@@ -53,7 +53,7 @@ If organizational policy permits it, launch the probe from a process with **proc
 ```powershell
 Get-ExecutionPolicy -List
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned -Force
-dotnet .\tools\VoiceAssistant.LiveProbe\bin\Release\net8.0\VoiceAssistant.LiveProbe.dll --diagnose-default-auth
+dotnet .\tools\VoiceAssistant.LiveProbe\bin\Release\net10.0\VoiceAssistant.LiveProbe.dll --diagnose-default-auth
 # In this same process, run the explicit --live command once config and fixture are approved.
 ```
 
@@ -139,7 +139,7 @@ Tests cover headers/hash/provenance gates, sample/frame pacing, unknown ground t
 
 ## Linux runtime-managed-identity acceptance job
 
-`Dockerfile` builds the same probe/API code on .NET8 Debian Bookworm, includes only the original WAV/metadata fixture, and runs as the built-in non-root `APP_UID`. Speech1.48.2 and explicit fail-closed CRL settings are inherited from the API provider. The image has no listener, frontend, account keys, login cache or document access. Its fixed entrypoint runs `--live` with the original fixture and a120-second provider deadline; extra `--help` cannot replace these arguments and yield a false successful help-only run.
+`Dockerfile` builds the same probe/API code on .NET 10 Ubuntu 24.04 (`noble`; .NET 10 publishes no Debian images), includes only the original WAV/metadata fixture, and runs as the built-in non-root `APP_UID`. Speech1.48.2 and explicit fail-closed CRL settings are inherited from the API provider. The image has no listener, frontend, account keys, login cache or document access. Its fixed entrypoint runs `--live` with the original fixture and a120-second provider deadline; extra `--help` cannot replace these arguments and yield a false successful help-only run.
 
 From the integrated repository root (the original fixture commit must be present):
 

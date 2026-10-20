@@ -120,7 +120,7 @@ test('LiveCoach offers Teams app and PC audio, prefers Teams over a stored share
   expect(await app.pickerCalls()).toBe(0);
 
   await app.menu('stop');
-  await expect(page.locator('#capture-status')).toHaveText('Teams 앱 소리 꺼짐 · 우클릭으로 설정 및 시작');
+  await expect(page.locator('#capture-status')).toHaveText('Teams 앱 소리 꺼짐 · 시작을 누르세요');
   expect(await app.posted('host-audio.stop')).toHaveLength(1);
 });
 

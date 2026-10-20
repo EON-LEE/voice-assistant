@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { documentSearchOn, noHostSources, parseSettings, pendingUpdate, resolveAudioSource, settingsKey, withDocumentSearch, withResponseMode,
-  type HostSources, type LiveSettings } from "../../src/VoiceAssistant.Web/src/live-settings.js";
+import { answerSizes, documentSearchOn, noHostSources, parseSettings, pendingUpdate, resolveAudioSource, settingsKey, stepAnswerSize,
+  withDocumentSearch, withResponseMode, type HostSources, type LiveSettings } from "../../src/VoiceAssistant.Web/src/live-settings.js";
 import type { CaptureSourceKind } from "../../src/VoiceAssistant.Web/src/capture.js";
 
 const defaults: LiveSettings = { deviceId: "", responseMode: "grounded", documentMode: "grounded", topic: "", audioSource: "microphone",
-  showCaptions: false, showKorean: false };
+  showCaptions: false, showKorean: false, answerSize: 100 };
 
 test("Live settings: nothing stored means document search on, captions and Korean off", () => {
   assert.equal(settingsKey, "live-coach-settings");
@@ -16,7 +16,7 @@ test("Live settings: nothing stored means document search on, captions and Korea
 test("Live settings: settings stored by the previous version keep their choices and get the new ones off", () => {
   const stored = JSON.stringify({ deviceId: "mic-1", responseMode: "balanced", topic: "Azure sync", audioSource: "display" });
   assert.deepEqual(parseSettings(stored), { deviceId: "mic-1", responseMode: "balanced", documentMode: "balanced", topic: "Azure sync",
-    audioSource: "display", showCaptions: false, showKorean: false });
+    audioSource: "display", showCaptions: false, showKorean: false, answerSize: 100 });
   const off = parseSettings(JSON.stringify({ responseMode: "conversation" }));
   assert.equal(off.responseMode, "conversation");
   assert.equal(off.documentMode, "grounded", "an older version that stored only conversation turns back on as the default mode");
@@ -26,7 +26,7 @@ test("Live settings: stored values are used only when they are valid", () => {
   const stored = parseSettings(JSON.stringify({ responseMode: "conversation", documentMode: "balanced", showCaptions: true, showKorean: true }));
   assert.deepEqual([stored.responseMode, stored.documentMode, stored.showCaptions, stored.showKorean], ["conversation", "balanced", true, true]);
   const invalid = parseSettings(JSON.stringify({ deviceId: 3, responseMode: "fast", documentMode: "conversation", topic: 5, audioSource: "tab",
-    showCaptions: "true", showKorean: 1 }));
+    showCaptions: "true", showKorean: 1, answerSize: "115" }));
   assert.deepEqual(invalid, defaults);
   assert.equal(parseSettings(JSON.stringify({ topic: "x".repeat(400) })).topic.length, 300);
   for (const broken of ["not json", "[]", "null", "7", "\"text\""]) assert.deepEqual(parseSettings(broken), defaults, broken);
@@ -35,6 +35,18 @@ test("Live settings: stored values are used only when they are valid", () => {
 test("Live settings: a document mode and its remembered choice never disagree", () => {
   for (const mode of ["grounded", "balanced"] as const)
     assert.equal(parseSettings(JSON.stringify({ responseMode: mode, documentMode: mode === "grounded" ? "balanced" : "grounded" })).documentMode, mode);
+});
+
+test("Live settings: the answer size is one of the A−/A+ steps, the default one unless another step was stored", () => {
+  assert.deepEqual(answerSizes, [85, 100, 115, 130, 150]);
+  for (const size of answerSizes) assert.equal(parseSettings(JSON.stringify({ answerSize: size })).answerSize, size);
+  for (const stored of [120, 0, -100, 1.15, 1e9, null, "130", [130]])
+    assert.equal(parseSettings(JSON.stringify({ answerSize: stored })).answerSize, 100, JSON.stringify(stored));
+});
+
+test("Live settings: A−/A+ step one size at a time and stop at the smallest and largest", () => {
+  assert.deepEqual(answerSizes.map(size => stepAnswerSize(size, 1)), [100, 115, 130, 150, 150]);
+  assert.deepEqual(answerSizes.map(size => stepAnswerSize(size, -1)), [85, 85, 100, 115, 130]);
 });
 
 test("Live settings: LiveCoach audio is used only where LiveCoach offers it, and inside it Teams app audio replaces a share", () => {

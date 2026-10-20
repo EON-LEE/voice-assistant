@@ -13,7 +13,8 @@ commitments on the user's behalf. Read-aloud playback is explicitly requested.
 an in-person microphone and browser tab/system-audio sharing; capture still requires
 explicit Start, browser/OS permission, and participant consent. Launching the host
 does not capture audio. The host can also capture only the Teams desktop app natively
-for the page (Windows 10 build 20348+; **Teams 앱 소리** in the `/live.html` audio source list).
+for the page (Windows 10 build 20348+; **Teams 앱 소리** in the `/live.html` audio source list). Its window is hidden
+from screen sharing and recordings by default (`ExcludeFromCapture`), while it stays visible on your own screen.
 See the [WebOverlay instructions](src/VoiceAssistant.WebOverlay/README.md).
 
 Publish a self-contained folder:
@@ -40,7 +41,8 @@ quick row below. Streaming drafts do not replace the reading sentence; the
 previous completed answer is explicitly labeled while a newer one is prepared.
 Hold answer freezes that answer and its question locally without pausing
 capture or model requests. Release it to show the latest completed answer.
-Use the separate Pause control in the right-click menu to stop sending audio.
+Use the separate **일시정지** button in the header (or the right-click menu) to stop sending audio;
+**시작 / 종료** next to it starts and ends the session. **A− / A+** beside the answer change its text size.
 Conversation history (only while captions are on), alternative wording and
 source details are collapsed under the disclosure. Grounding warnings and
 connection errors remain visible. The overlay remains resizable, including narrow
@@ -244,7 +246,7 @@ Korean translation, Hangul reading or coaching quality as judged by a human.
 
 ## Build and test
 
-Contributors need Node.js 22 and the .NET 8 SDK, not only the .NET runtime.
+Contributors need Node.js 22 and the .NET 10 SDK, not only the .NET runtime.
 End users need only a supported browser. The preserved optional desktop
 prototype and its tests additionally require Windows.
 

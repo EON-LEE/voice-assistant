@@ -15,6 +15,22 @@ export interface LiveSettings {
   showCaptions: boolean;
   /** Show Korean meanings. Off means no Korean is requested, pushed or translated at all. */
   showKorean: boolean;
+  /** The English answer's text size, in percent of the default size. */
+  answerSize: AnswerSize;
+}
+
+/** The English answer text sizes A− and A+ step through, in percent of the default size (100). */
+export const answerSizes = [85, 100, 115, 130, 150] as const;
+export type AnswerSize = typeof answerSizes[number];
+
+function isAnswerSize(value: unknown): value is AnswerSize {
+  return (answerSizes as readonly unknown[]).includes(value);
+}
+
+/** The next smaller (`-1`) or larger (`1`) answer size; the smallest and the largest size stay as they are. */
+export function stepAnswerSize(size: AnswerSize, step: -1 | 1): AnswerSize {
+  const index = Math.min(answerSizes.length - 1, Math.max(0, answerSizes.indexOf(size) + step));
+  return answerSizes[index] ?? 100;
 }
 
 /** The audio LiveCoach.exe offers to capture natively for this page (none in a browser). */
@@ -57,6 +73,7 @@ export function parseSettings(raw: string | null, offered: HostSources = noHostS
     audioSource: resolveAudioSource(value.audioSource, offered),
     showCaptions: value.showCaptions === true,
     showKorean: value.showKorean === true,
+    answerSize: isAnswerSize(value.answerSize) ? value.answerSize : 100,
   };
 }
 

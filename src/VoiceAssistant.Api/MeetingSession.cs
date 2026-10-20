@@ -438,12 +438,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         finally
         {
             lifetime.Cancel();
-            // Send the close frame before cancelling the pending receive: cancelling it aborts the socket
-            // and the client would see an unexplained reset instead of a normal close.
+            // Send the close frame, then give the client's close (a browser answers at once) the rest of the budget to end the
+            // receive loop before cancelling it. Cancelling a pending receive aborts the socket, and since ASP.NET Core 9 that
+            // aborts the whole connection, which can discard the close frame and show the client a reset instead.
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
                 using var close = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                try { await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Session ended", close.Token); }
+                try
+                {
+                    await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Session ended", close.Token);
+                    await Task.WhenAny(receiver, Task.Delay(Timeout.InfiniteTimeSpan, close.Token));
+                }
                 catch (Exception exception) when (exception is WebSocketException or OperationCanceledException)
                 { logger.LogInformation("Meeting transport closed before shutdown completed."); }
             }
