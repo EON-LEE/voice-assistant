@@ -32,7 +32,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     {
         this.settings = settings;
         this.credential = credential ?? new DefaultAzureCredential();
-        openAI = new(new Uri(settings.OpenAIEndpoint), this.credential, LiveChatOptions());
+        openAI = new(new Uri(settings.OpenAIEndpoint), this.credential, LiveChatOptions(apiVersion: settings.ChatApiVersion));
         retrievalOpenAI = new(new Uri(settings.OpenAIEndpoint), this.credential, RetrievalOpenAIOptions());
         if (settings.SearchEnabled)
             search = new(new Uri(settings.SearchEndpoint), settings.SearchIndex, this.credential, RetrievalSearchOptions());
@@ -60,7 +60,12 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     internal static AzureOpenAIClientOptions RetrievalOpenAIOptions() => new() { RetryPolicy = new ClientRetryPolicy(maxRetries: 0) };
 
     /// <summary>Live answer, classifier and translation calls: at most one short retry, never a long Retry-After wait.</summary>
-    internal static AzureOpenAIClientOptions LiveChatOptions(TimeProvider? clock = null) => new() { RetryPolicy = new LiveChatRetryPolicy(clock) };
+    internal static AzureOpenAIClientOptions LiveChatOptions(TimeProvider? clock = null, string? apiVersion = null)
+    {
+        var options = new AzureOpenAIClientOptions { RetryPolicy = new LiveChatRetryPolicy(clock) };
+        if (apiVersion is not null) options.AddPolicy(new ApiVersionPolicy(apiVersion), PipelinePosition.PerCall);
+        return options;
+    }
 
     /// <summary>How long each live chat call may run before a retry is no longer worth it; see <see cref="LiveChatRetryPolicy"/>.</summary>
     internal static readonly TimeSpan AnswerBudget = TimeSpan.FromSeconds(30);
@@ -264,7 +269,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     public async Task<bool> ShouldRespondAsync(IReadOnlyList<ConversationTurn> conversation, CancellationToken cancellation)
     {
         var transcript = string.Join("\n", conversation.TakeLast(8).Select(turn => "- " + turn.Text.ReplaceLineEndings(" ")));
-        var options = CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 1024 });
+        var options = CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 1024 }, settings.ChatAuxiliaryReasoningEffort);
         using var call = LiveChatCall.Begin("classifier", ClassifierBudget, withinReply: true);
         var result = await openAI.GetChatClient(settings.ChatDeployment).CompleteChatAsync(
             [new SystemChatMessage(TurnPrompt), new UserChatMessage("Recent meeting speech (oldest first, speakers unknown):\n" + transcript)],
@@ -296,7 +301,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         {
             var result = await openAI.GetChatClient(settings.ChatDeployment).CompleteChatAsync(
                 [new SystemChatMessage(KoreanTranslation.LiveInstructions), new UserChatMessage(request)],
-                CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 1024 }), cancellation);
+                CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 1024 }, settings.ChatAuxiliaryReasoningEffort), cancellation);
             if (result.Value.FinishReason == ChatFinishReason.Stop &&
                 KoreanTranslation.Clean(string.Concat(result.Value.Content.Select(part => part.Text))) is { } korean)
                 return korean;
@@ -467,7 +472,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         // The request (and its single allowed retry) is sent within this scope, on the first step of the stream.
         using var call = LiveChatCall.Begin("answer", AnswerBudget, withinReply: true);
         await foreach (var update in openAI.GetChatClient(settings.ChatDeployment)
-            .CompleteChatStreamingAsync(messages, CreateChatOptions(settings), cancellation))
+            .CompleteChatStreamingAsync(messages, CreateChatOptions(settings, settings.ChatReasoningEffort), cancellation))
         {
             foreach (var part in update.ContentUpdate)
                 if (!string.IsNullOrEmpty(part.Text)) yield return part.Text;
@@ -475,10 +480,12 @@ public sealed class AzureMeetingProvider : IMeetingProvider
 
     }
 
-    internal static ChatCompletionOptions CreateChatOptions(ServiceSettings settings)
+    internal static ChatCompletionOptions CreateChatOptions(ServiceSettings settings, string? reasoningEffort = null)
     {
-        // The 2.1 extension requires the additional-property bag initialized by the SDK model reader.
-        var options = ModelReaderWriter.Read<ChatCompletionOptions>(BinaryData.FromString("{}"))
+        // The 2.1 extension requires the additional-property bag initialized by the SDK model reader. The pinned SDK has no
+        // reasoning-effort option, so a configured effort is read into that bag and sent as the wire property reasoning_effort.
+        var json = reasoningEffort is null ? "{}" : JsonSerializer.Serialize(new Dictionary<string, string> { ["reasoning_effort"] = reasoningEffort });
+        var options = ModelReaderWriter.Read<ChatCompletionOptions>(BinaryData.FromString(json))
             ?? throw new InvalidOperationException("Could not initialize chat options.");
         options.MaxOutputTokenCount = settings.ChatMaxOutputTokens;
         // Azure.AI.OpenAI 2.1 otherwise rewrites this option to legacy max_tokens, rejected by GPT-5.

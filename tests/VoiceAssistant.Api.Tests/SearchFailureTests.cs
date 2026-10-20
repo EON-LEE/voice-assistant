@@ -318,9 +318,9 @@ internal sealed class FaultTransport : HttpMessageHandler
     }
 
     /// <summary>The production setup: live chat with its own short retry; Search and embeddings without SDK retries.</summary>
-    internal static AzureMeetingProvider Provider(HttpClient http)
+    internal static AzureMeetingProvider Provider(HttpClient http, ServiceSettings? configured = null)
     {
-        var settings = new ServiceSettings { ChatDeployment = "chat", EmbeddingDeployment = "embedding" };
+        var settings = configured ?? new ServiceSettings { ChatDeployment = "chat", EmbeddingDeployment = "embedding" };
         var chatOptions = AzureMeetingProvider.LiveChatOptions();
         chatOptions.Transport = new HttpClientPipelineTransport(http);
         var chat = new AzureOpenAIClient(new Uri("https://example.openai.azure.com"), new ApiKeyCredential("test-only"), chatOptions);

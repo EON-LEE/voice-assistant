@@ -525,16 +525,19 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     /// <summary>A question or request that ends like a finished sentence is answered after this short pause, not the full settle window.</summary>
     private const int CompleteSettleMs = 300;
 
-    /// <summary>The turn signal is optional: a slow or failed classifier yields "no emphasis", never an error.</summary>
-    private static async Task<(bool RespondNow, string Outcome)> TurnSignalAsync(Task<bool> signal)
+    /// <summary>
+    /// The turn signal is optional: a slow or failed classifier yields "no emphasis", never an error. A failure is returned
+    /// so it can be logged, for example a request the deployment rejects.
+    /// </summary>
+    private static async Task<(bool RespondNow, string Outcome, Exception? Failure)> TurnSignalAsync(Task<bool> signal)
     {
         try
         {
             var respond = await signal.WaitAsync(TimeSpan.FromMilliseconds(800));
-            return (respond, respond ? "respond" : "listen");
+            return (respond, respond ? "respond" : "listen", null);
         }
-        catch (TimeoutException) { return (false, "timeout"); }
-        catch (Exception) { return (false, "failed"); }
+        catch (TimeoutException) { return (false, "timeout", null); }
+        catch (Exception exception) { return (false, "failed", exception); }
     }
 
     private void ScheduleSettle(CancellationTokenSource lifetime, bool afterFinal = false)
@@ -836,8 +839,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             for (var index = 0; index < suggestions.Length; index++)
                 StartKorean(scope, index, suggestions[index].Trim(), translation, lifetime);
             var classifierStarted = clock.GetTimestamp();
-            var (respondNow, signal) = await TurnSignalAsync(turnSignal);
+            var (respondNow, signal, classifierFailure) = await TurnSignalAsync(turnSignal);
             measurement.ClassifierWaited(clock.GetElapsedTime(classifierStarted), signal);
+            if (classifierFailure is not null)
+                logger.LogWarning("Turn classifier failed: {ExceptionType}, HTTP status {Status}; the reply is sent without emphasis.",
+                    classifierFailure.GetType().Name, HttpStatusText(classifierFailure));
             await events.Writer.WriteAsync(new("complete",
                 new Completion(text.ToString(), suggestions,
                     DistinctSources(grounding.Documents), grounding.Status, route, prefetched is not null, respondNow), number,

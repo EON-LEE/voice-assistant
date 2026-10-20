@@ -14,6 +14,12 @@ public sealed class ServiceSettings
     public string OpenAIEndpoint { get; init; } = "";
     public string ChatDeployment { get; init; } = "";
     public int ChatMaxOutputTokens { get; init; } = 2048;
+    /// <summary>Reasoning effort sent with the live answer request (minimal, low or medium); null sends none.</summary>
+    public string? ChatReasoningEffort { get; init; }
+    /// <summary>Reasoning effort sent with the turn classifier and Korean translation requests; null sends none.</summary>
+    public string? ChatAuxiliaryReasoningEffort { get; init; }
+    /// <summary>An api-version for the live chat requests instead of the pinned SDK's default; null keeps the SDK default.</summary>
+    public string? ChatApiVersion { get; init; }
     public string EmbeddingDeployment { get; init; } = "";
     public string SearchEndpoint { get; init; } = "";
     public string SearchIndex { get; init; } = "";
@@ -40,6 +46,9 @@ public sealed class ServiceSettings
             OpenAIEndpoint = Get("Azure:OpenAIEndpoint"),
             ChatDeployment = Get("Azure:ChatDeployment"),
             ChatMaxOutputTokens = ReadChatTokenLimit(config),
+            ChatReasoningEffort = ReadReasoningEffort(config, "Azure:ChatReasoningEffort"),
+            ChatAuxiliaryReasoningEffort = ReadReasoningEffort(config, "Azure:ChatAuxiliaryReasoningEffort"),
+            ChatApiVersion = ReadApiVersion(config),
             EmbeddingDeployment = Get("Azure:EmbeddingDeployment"),
             SearchEndpoint = Get("Azure:SearchEndpoint"),
             SearchIndex = Get("Azure:SearchIndex"),
@@ -81,6 +90,32 @@ public sealed class ServiceSettings
         if (value is null) return 2048;
         if (int.TryParse(value, out var limit) && limit is >= 64 and <= 4096) return limit;
         throw new InvalidOperationException("Azure:ChatMaxOutputTokens must be an integer from 64 to 4096.");
+    }
+
+    /// <summary>
+    /// An optional reasoning effort for chat requests. Unset or empty sends nothing (the deployment default); any value
+    /// other than minimal, low or medium prevents startup rather than being ignored.
+    /// </summary>
+    public static string? ReadReasoningEffort(IConfiguration config, string key)
+    {
+        var value = config[key];
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var effort = value.Trim().ToLowerInvariant();
+        return effort is "minimal" or "low" or "medium"
+            ? effort
+            : throw new InvalidOperationException($"{key} must be minimal, low or medium when set.");
+    }
+
+    /// <summary>An optional dated Azure OpenAI api-version (yyyy-MM-dd, optionally -preview) for the live chat requests.</summary>
+    public static string? ReadApiVersion(IConfiguration config)
+    {
+        var value = config["Azure:ChatApiVersion"];
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var version = value.Trim();
+        return System.Text.RegularExpressions.Regex.IsMatch(version, @"\A20\d\d-[01]\d-[0-3]\d(-preview)?\z",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+            ? version
+            : throw new InvalidOperationException("Azure:ChatApiVersion must be a dated api-version such as 2025-04-01-preview when set.");
     }
 
     public static int ReadMaxSessionMinutes(IConfiguration config)

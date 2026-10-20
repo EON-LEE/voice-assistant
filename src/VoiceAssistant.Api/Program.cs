@@ -95,6 +95,10 @@ namespace VoiceAssistant.Api
             }));
 
             var app = builder.Build();
+            // Content-free: which experiment switches this process runs with, so a rejected request can be traced to one.
+            app.Logger.LogInformation("Live reply switches: answer reasoning effort {AnswerEffort}, classifier/translation reasoning effort " +
+                "{AuxiliaryEffort}, chat api-version {ApiVersion}.", settings.ChatReasoningEffort ?? "unset",
+                settings.ChatAuxiliaryReasoningEffort ?? "unset", settings.ChatApiVersion ?? "sdk default");
             var strictTransport = !app.Environment.IsDevelopment();
             app.Use(async (context, next) =>
             {

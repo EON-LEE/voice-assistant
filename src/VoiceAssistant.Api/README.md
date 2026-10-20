@@ -57,6 +57,22 @@ Environment variables (`__` maps to `:`):
 
 Missing mandatory Azure configuration prevents startup. Search is intentionally optional: no endpoint/index means `disabled`, never a pretend grounded response. Partial Search configuration prevents startup. No API keys/secrets are accepted. `DefaultAzureCredential` uses managed identity in Azure and developer credentials locally; do not put client secrets in source or environment configuration examples.
 
+### Experiment switches
+
+Each switch changes one behavior so it can be A/B tested on staging with the quality evaluation, one variable at a time. All are **off or unset by default**, which keeps the behavior described elsewhere in this README. An invalid value prevents startup instead of being ignored. At startup the API logs one content-free line with the values in effect (`Live reply switches: ...`).
+
+| Key (environment variable) | Values (default) | Effect |
+| --- | --- | --- |
+| `Azure__ChatReasoningEffort` | unset \| `minimal` \| `low` \| `medium` (unset) | Sends `reasoning_effort` with the live answer request. Unset sends no `reasoning_effort` (the deployment default). |
+| `Azure__ChatAuxiliaryReasoningEffort` | unset \| `minimal` \| `low` \| `medium` (unset) | The same, for the turn classifier and the Korean translation requests. |
+| `Azure__ChatApiVersion` | unset \| a dated version such as `2025-04-01-preview` (unset) | The `api-version` of the live chat requests (answer, classifier, translation). Unset keeps the pinned SDK's default (`2024-10-21`). Set it only if the deployment rejects `reasoning_effort` under the default. |
+
+How the reasoning switches work:
+
+- The pinned SDK has no reasoning-effort option. A configured effort is read into the same SDK property bag that carries `max_completion_tokens` and is sent as the wire property `reasoning_effort`. Offline tests check the actual request JSON, with and without the switch.
+- If the deployment rejects a value (HTTP 400), nothing falls back silently. The reply fails with `response_unavailable` and the log line `Meeting response failed ... HTTP status 400`. A rejected classifier logs `Turn classifier failed: ..., HTTP status 400`, and a rejected Korean line logs `Reply translation failed: HTTP 400`.
+- Practice and materials calls never send a reasoning effort.
+
 Chat requests explicitly use `max_completion_tokens`, not legacy `max_tokens`, and omit custom temperature. The pinned Azure.AI.OpenAI2.1 requires its documented `SetNewMaxCompletionTokensPropertyEnabled` extension to prevent rewriting the token property. Options use the public SDK model reader to initialize the property bag required by that extension; an offline transport test verifies the actual request JSON. A bounded live GPT-5 diagnostic reproduced HTTP400 `unsupported_parameter` for `max_tokens` before this correction and streamed output afterward.
 
 Assign the runtime identity **Cognitive Services Speech User**, **Cognitive Services OpenAI User**, and (when Search/materials are enabled) **Search Index Data Contributor**, scoped to the respective resources. Configure a Speech custom subdomain for Entra authentication. The API refreshes Speech authorization every five minutes. Operator-managed ingestion remains separate and must enforce original document permissions. Personal materials use the authenticated API described below. The backend has no Blob permissions.
