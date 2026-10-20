@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from . import textnorm
-from .corpus import Item
+from .corpus import Item, canonical_sha256
 
 ABSTAIN_MARKERS = (
     "not sure", "need to check", "needs to be checked", "let me check", "i'll check", "check and get back",
@@ -153,3 +154,9 @@ def term_results(item: Item, segment_finals: list[list[str]]) -> list[tuple[str,
                                                  for text in segment_finals[index]))
         results.append((term.term, bool(spoken_in) and textnorm.contains_any(recognized, term.variants)))
     return results
+
+
+def scorer_sha256() -> str:
+    """Fingerprint of the deterministic checks: the source of this module and of textnorm, line endings ignored."""
+    return canonical_sha256({path.name: path.read_text(encoding="utf-8")
+                             for path in (Path(__file__), Path(textnorm.__file__))})

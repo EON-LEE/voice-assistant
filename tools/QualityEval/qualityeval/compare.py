@@ -3,8 +3,9 @@
 Latency regresses when a gated percentile grows by more than the allowed fraction AND by more than an absolute
 floor (so 30 ms of noise on a 200 ms stage does not fail a build). Quality regresses when the candidate's point
 estimate falls outside the baseline's question-level 95% interval in the bad direction. Judge scores are advisory
-and gate only with ``gate_judge``. Results built from different corpora, items, session options or accents are
-incompatible (exit 2) unless explicitly allowed.
+and gate only with ``gate_judge``. Results built from different corpora, items, scorers, session options or accents
+are incompatible (exit 2) unless explicitly allowed. Results written before the scorer fingerprint existed carry none
+and skip that check, except against a rescored result, which compares only with identically scored results.
 """
 
 from __future__ import annotations
@@ -45,6 +46,10 @@ def compatibility(baseline: dict, candidate: dict) -> list[str]:
                         ("schema", ("schemaVersion",))):
         if _get(baseline, *path) != _get(candidate, *path):
             problems.append(f"{label} differs")
+    scorers = (_get(baseline, "scorer", "sha256"), _get(candidate, "scorer", "sha256"))
+    rescored = _get(baseline, "rescore") is not None or _get(candidate, "rescore") is not None
+    if scorers[0] != scorers[1] and (all(scorers) or rescored):
+        problems.append("scorer differs")
     return problems
 
 

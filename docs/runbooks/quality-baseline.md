@@ -65,10 +65,13 @@ that you keep outside the repository.
 
 ```powershell
 # Baseline: the revision currently on staging (36 items x 3 repeats, three accents; about 20-30 minutes).
-python .\tools\QualityEval\quality_eval.py run --allow-remote --repeats 3 --output-dir C:\eval\baseline-2026-10-21
+# --write-details keeps the synthetic replies next to the results, so the run can be rescored later.
+python .\tools\QualityEval\quality_eval.py run --allow-remote --repeats 3 --write-details `
+  --output-dir C:\eval\baseline-2026-10-21
 
 # Deploy the candidate to staging (scripts/release/Release.ps1 -Apply), then measure it the same way.
-python .\tools\QualityEval\quality_eval.py run --allow-remote --repeats 3 --output-dir C:\eval\candidate-w2
+python .\tools\QualityEval\quality_eval.py run --allow-remote --repeats 3 --write-details `
+  --output-dir C:\eval\candidate-w2
 
 python .\tools\QualityEval\quality_eval.py compare C:\eval\baseline-2026-10-21\<run>\results.json `
   C:\eval\candidate-w2\<run>\results.json --report C:\eval\compare-w2.json
@@ -88,6 +91,20 @@ when `compare` passes, or when every regression is understood and recorded.
 
 Keep the baseline results outside the repository. Re-baseline after an intended behavior change, never to hide a
 regression.
+
+## After a scorer or items change
+
+Quality rates depend on the scorer and `items.json` of the moment, so `compare` exits 2 (`items differs`, `scorer
+differs`) for results scored differently. Older results carry no scorer fingerprint; rescore them as well. Rescoring
+works offline (no Azure calls) on runs made with `--write-details`, recomputes only the deterministic checks and keeps
+latency and statuses unchanged:
+
+```powershell
+python .\tools\QualityEval\quality_eval.py rescore C:\eval\baseline-2026-10-21\<run> --output-dir C:\eval\rescored
+python .\tools\QualityEval\quality_eval.py rescore C:\eval\candidate-w2\<run> --output-dir C:\eval\rescored
+python .\tools\QualityEval\quality_eval.py compare C:\eval\rescored\<baseline run>-rescored-<time>\results.json `
+  C:\eval\rescored\<candidate run>-rescored-<time>\results.json
+```
 
 ## Quick smoke test in a release
 
