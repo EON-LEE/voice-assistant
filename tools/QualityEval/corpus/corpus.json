@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "fictional": true,
+  "name": "Kestrova Analytics synthetic corpus",
+  "company": "Kestrova Analytics",
+  "marker": "Synthetic, fictional evaluation document. Kestrova Analytics is not a real company.",
+  "notice": "Kestrova Analytics and every person, product, price, date and place in this corpus are invented for evaluation. Any resemblance to real organizations or people is coincidental.",
+  "documents": [
+    { "id": "product", "title": "Kestrova Pulse product overview", "file": "docs/product-overview.md" },
+    { "id": "pricing", "title": "Kestrova Pulse pricing tiers", "file": "docs/pricing-tiers.md" },
+    { "id": "timeline", "title": "Kestrova timeline and milestones", "file": "docs/timeline-milestones.md" },
+    { "id": "team", "title": "Kestrova team and roles", "file": "docs/team-roles.md" },
+    { "id": "security", "title": "Kestrova security and compliance FAQ", "file": "docs/security-compliance-faq.md" },
+    { "id": "support", "title": "Kestrova support and service levels", "file": "docs/support-sla.md" },
+    { "id": "integrations", "title": "Kestrova integrations and API", "file": "docs/integrations-api.md" }
+  ]
+}

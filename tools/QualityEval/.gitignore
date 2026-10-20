@@ -1,0 +1,11 @@
+# Evaluation output, TTS audio and private material never enter Git.
+out/
+.tts-cache/
+__pycache__/
+.pytest_cache/
+private/
+local-private/
+*.private.json
+*.confidential.json
+*.wav
+*.pcm
