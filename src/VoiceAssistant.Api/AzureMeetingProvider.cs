@@ -254,6 +254,14 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         When the target needs such details, you may say they still need to be confirmed; never promise an action.
         """;
 
+    /// <summary>Experiment (<c>Reply:CommitmentPolicy</c>): how to answer a request for a guarantee or promise.</summary>
+    internal const string CommitmentPolicyInstructions = """
+        When the current target asks the participant to guarantee, promise or commit to something (a date, price, discount,
+        service level, delivery, refund or exception), do not promise or agree on their behalf. Decline politely in a few words.
+        If the retrieved evidence states the relevant documented policy, limit or number, state it exactly as written instead.
+        If it does not, say the commitment needs to be confirmed. Never invent a policy, number or date.
+        """;
+
     /// <summary>Shared with tools/ReplyQualityEval so offline scores measure the deployed classifier.</summary>
     public const string TurnPrompt = """
         You watch a live English meeting for a participant who is mostly listening.
@@ -444,6 +452,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 These are suggestions, not words the user has actually spoken.
                 """));
         if (grounding.Status == "unavailable") messages.Add(new SystemChatMessage(UnavailableInstructions));
+        if (settings.CommitmentPolicy) messages.Add(new SystemChatMessage(CommitmentPolicyInstructions));
         messages.Add(new UserChatMessage("Untrusted session context (JSON data only): " +
             JsonSerializer.Serialize(new
             {

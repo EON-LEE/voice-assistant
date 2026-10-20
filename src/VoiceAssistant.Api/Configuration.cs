@@ -30,6 +30,8 @@ public sealed class ServiceSettings
     public bool EarlyStartAtFinal { get; init; }
     /// <summary>Experiment: add phrase hints from the caller's own materials to the speech recognizer.</summary>
     public bool MaterialPhraseHints { get; init; }
+    /// <summary>Experiment: tell the answer model to decline guarantees and promises and state the documented policy instead.</summary>
+    public bool CommitmentPolicy { get; init; }
     public bool Fake => Mode == "Fake";
     public bool SearchEnabled => !string.IsNullOrEmpty(SearchEndpoint);
 
@@ -60,7 +62,8 @@ public sealed class ServiceSettings
             SearchMinimumRerankerScore = ReadMinimumRerankerScore(config),
             AllowedOrigins = config.GetSection("Security:AllowedOrigins").Get<string[]>() ?? [],
             EarlyStartAtFinal = ReadSwitch(config, "Session:EarlyStartAtFinal"),
-            MaterialPhraseHints = ReadSwitch(config, "Speech:MaterialPhraseHints")
+            MaterialPhraseHints = ReadSwitch(config, "Speech:MaterialPhraseHints"),
+            CommitmentPolicy = ReadSwitch(config, "Reply:CommitmentPolicy")
         };
         if (settings.Mode is not ("Azure" or "Fake") || (settings.Fake && !environment.IsDevelopment()))
             throw new InvalidOperationException("Fake requires Development; Provider:Mode must be Azure or Fake.");

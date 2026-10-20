@@ -68,6 +68,7 @@ Each switch changes one behavior so it can be A/B tested on staging with the qua
 | `Azure__ChatApiVersion` | unset \| a dated version such as `2025-04-01-preview` (unset) | The `api-version` of the live chat requests (answer, classifier, translation). Unset keeps the pinned SDK's default (`2024-10-21`). Set it only if the deployment rejects `reasoning_effort` under the default. |
 | `Session__EarlyStartAtFinal` | `true` \| `false` (`false`) | With `replySettleMs` > 0, a final that makes the gathered speech a complete question or request (the rule that picks the 300 ms settle) starts its reply at once instead of after the settle. |
 | `Speech__MaterialPhraseHints` | `true` \| `false` (`false`) | Adds phrase hints from the caller's own materials to the live speech recognizer's phrase list, after the client's phrases. |
+| `Reply__CommitmentPolicy` | `true` \| `false` (`false`) | Adds a short system instruction to the live answer: when asked to guarantee, promise or commit (date, price, discount, service level, delivery, refund, exception), decline politely; state the documented policy, limit or number exactly as written when the evidence has it, otherwise say it needs to be confirmed; never invent one. |
 
 How the reasoning switches work:
 

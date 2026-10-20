@@ -95,6 +95,28 @@ public sealed class ReasoningEffortTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TheCommitmentPolicyInstructionIsSentOnlyWhenSwitchedOn(bool switchedOn)
+    {
+        using var transport = new FaultTransport();
+        using var http = new HttpClient(transport);
+        var provider = FaultTransport.Provider(http, new ServiceSettings
+        {
+            ChatDeployment = "chat", EmbeddingDeployment = "embedding", CommitmentPolicy = switchedOn
+        });
+        var policy = new Grounding("grounded",
+            [new("Standard delivery takes ten business days.", new("Fictional delivery policy", "https://example.test/policy", null))]);
+
+        await foreach (var _ in provider.AnswerWithSuggestionsAsync([new("Can you guarantee delivery by Friday?")], policy,
+            SessionOptions.Legacy, "knowledge", CancellationToken.None)) { }
+
+        var answer = Assert.Single(transport.ChatBodies, body => body.Contains("\"stream\":true", StringComparison.Ordinal));
+        Assert.Equal(switchedOn, answer.Contains("do not promise or agree on their behalf", StringComparison.Ordinal));
+        Assert.Equal(switchedOn, answer.Contains("state it exactly as written instead", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("2025-04-01-preview")]
     public async Task AConfiguredApiVersionReplacesTheSdkDefaultOnLiveChatRequests(string? version)
@@ -142,6 +164,8 @@ public sealed partial class ApiTests
     [InlineData("Azure:ChatReasoningEffort", "high")]
     [InlineData("Azure:ChatAuxiliaryReasoningEffort", "fast")]
     [InlineData("Azure:ChatApiVersion", "latest")]
+    [InlineData("Speech:MaterialPhraseHints", "on")]
+    [InlineData("Reply:CommitmentPolicy", "maybe")]
     public async Task AnUnsupportedLiveChatSwitchValueStopsTheAppFromStarting(string key, string value) =>
         await Assert.ThrowsAsync<InvalidOperationException>(() => Host.StartAsync(azure: true, configuration: new() { [key] = value }));
 }
