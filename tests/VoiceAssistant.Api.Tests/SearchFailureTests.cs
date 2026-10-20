@@ -45,6 +45,23 @@ public sealed class SearchFailureTests
     }
 
     [Fact]
+    public async Task RepeatedEmbeddingFailuresStopAfterTheProviderRetry()
+    {
+        // Every embedding call fails. Exactly two calls prove the SDK's own retries are off and only the provider retries once.
+        using var transport = new FaultTransport().Embedding(HttpStatusCode.ServiceUnavailable);
+        using var http = new HttpClient(transport);
+        var failure = await Assert.ThrowsAsync<ProviderException>(() =>
+            FaultTransport.Provider(http).RetrieveAsync("What is the delivery plan?", Oid, CancellationToken.None));
+        Assert.Equal("grounding_unavailable", failure.Code);
+        Assert.NotNull(failure.Retrieval);
+        Assert.True(failure.Retrieval!.Retried);
+        Assert.True(failure.Retrieval.Transient);
+        Assert.Equal(503, failure.Retrieval.HttpStatus);
+        Assert.Equal(2, transport.EmbeddingCalls);
+        Assert.Equal(0, transport.SearchCalls);
+    }
+
+    [Fact]
     public async Task TwoServerErrorsFailAfterOneRetryWithAContentFreeCause()
     {
         using var transport = new FaultTransport().Search(HttpStatusCode.ServiceUnavailable);

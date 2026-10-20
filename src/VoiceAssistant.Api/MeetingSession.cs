@@ -661,8 +661,12 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
+            // A deadline after an announced search failure still ends with the fixed completion, never a second error.
+            // A user cancel bumps the generation number, so the event loop drops this stale event.
             if (!lifetime.IsCancellationRequested)
-                await events.Writer.WriteAsync(new("generation.error", new ProviderException("response_timeout", "Response timed out or was cancelled."), number), lifetime);
+                await events.Writer.WriteAsync(groundingUnavailable
+                    ? new("grounding.fallback", Generation: number)
+                    : new("generation.error", new ProviderException("response_timeout", "Response timed out or was cancelled."), number), lifetime);
         }
         catch (Exception exception)
         {
