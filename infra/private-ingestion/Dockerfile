@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/powershell:7.4-debian-12
+FROM mcr.microsoft.com/powershell:7.5-debian-12
 WORKDIR /work
 COPY scripts/infra/Knowledge.psm1 scripts/infra/KnowledgeSync.psm1 scripts/infra/ManagedIngestion.psm1 scripts/infra/Private-Ingestion.ps1 ./scripts/infra/
 COPY infra/knowledge/index.json ./infra/knowledge/index.json
