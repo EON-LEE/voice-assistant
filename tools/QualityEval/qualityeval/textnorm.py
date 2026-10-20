@@ -40,6 +40,8 @@ def normalize(text: str) -> str:
     value = re.sub(r"\b0(\d):(\d\d)\b", r"\1:\2", value)
     value = re.sub(r"\bper\s?cent\b", "%", value)
     value = re.sub(r"(?<=[a-z0-9])[-/](?=[a-z0-9])", " ", value)
+    # "30-minute" and "30 minutes" share one form, so unit wording never decides whether a fact was stated.
+    value = re.sub(r"\b(second|minute|hour|day|week|month|year)s\b", r"\1", value)
     value = re.sub(r"[^a-z0-9%.:' ]+", " ", value)
     value = re.sub(r"(?<!\d)[.:]|[.:](?!\d)", " ", value)
     value = re.sub(r"(?<![a-z0-9])'|'(?![a-z0-9])", " ", value)
