@@ -5,7 +5,7 @@ RUN npm ci
 COPY src/VoiceAssistant.Web/ ./
 RUN npm run build
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim AS build
+FROM mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim AS build
 WORKDIR /work
 ARG NUGET_SOURCE=https://api.nuget.org/v3/index.json
 COPY src/VoiceAssistant.Api/VoiceAssistant.Api.csproj src/VoiceAssistant.Api/
