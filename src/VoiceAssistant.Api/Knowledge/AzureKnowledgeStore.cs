@@ -4,8 +4,14 @@ using OpenAI.Embeddings;
 
 namespace VoiceAssistant.Api.Knowledge;
 
-public sealed class AzureKnowledgeStore(SearchClient? search, EmbeddingClient? embeddings, ILogger<AzureKnowledgeStore> logger) : IKnowledgeStore
+public sealed class AzureKnowledgeStore(SearchClient? search, EmbeddingClient? embeddings, ILogger<AzureKnowledgeStore> logger,
+    int listingLimit = AzureKnowledgeStore.ListingLimit) : IKnowledgeStore
 {
+    /// <summary>
+    /// Most rows one listing reads. Search returns at most 1000 rows per response and pages the rest with continuation
+    /// parameters up to its skip limit, so a larger requested size makes the SDK follow every page.
+    /// </summary>
+    internal const int ListingLimit = 100_000;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Owner, string Id), string[]> recentKeys = new();
     private sealed record OwnedChunk(string Key, KnowledgeDocument Document);
 
@@ -21,12 +27,16 @@ public sealed class AzureKnowledgeStore(SearchClient? search, EmbeddingClient? e
     private async Task<List<OwnedChunk>> ReadOwnedAsync(string owner, CancellationToken cancellation)
     {
         if (search is null) throw KnowledgeException.Unavailable();
-        var options = new SearchOptions { Filter = AzureMeetingProvider.AclFilter(KnowledgeIds.Owner(owner)), Size = 1000 };
+        var options = new SearchOptions { Filter = AzureMeetingProvider.AclFilter(KnowledgeIds.Owner(owner)), Size = listingLimit };
         foreach (var field in new[] { "id", "title", "url", "updatedAt" }) options.Select.Add(field);
         var results = await search.SearchAsync<SearchDocument>("*", options, cancellation);
         var chunks = new List<OwnedChunk>();
+        var rows = 0;
+        // Every page is read, so listing, quota counting and deletion also see chunks beyond the first 1000 rows.
         await foreach (var result in results.Value.GetResultsAsync().WithCancellation(cancellation))
         {
+            // Reaching the limit means rows may be missing; a partial list would undercount the quota or leave chunks behind.
+            if (++rows >= listingLimit) throw KnowledgeException.Unavailable();
             var value = result.Document;
             if (!value.TryGetValue("id", out var keyValue) || keyValue is not string key) throw KnowledgeException.Unavailable();
             var id = KnowledgeIds.DocumentOf(key);
