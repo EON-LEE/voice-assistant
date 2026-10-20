@@ -140,20 +140,45 @@ internal static partial class MaterialPhrases
 /// <summary>
 /// Speech phrase hints from the caller's own materials (experiment switch <c>Speech:MaterialPhraseHints</c>). Built from the
 /// ACL-filtered material text, cached per user, and dropped when that user uploads or deletes materials (or after
-/// <see cref="CacheLifetime"/>). Building never throws; only counts are logged, never the phrases.
+/// <see cref="CacheLifetime"/>). Search shows such a change only after a short delay, so a build applies the materials
+/// service's own record of it (documents written but not yet listed, documents deleted but maybe still listed), and a build
+/// that Search may not have caught up with is cached only for <see cref="ShortLifetime"/>. Building never throws; only counts
+/// are logged.
 /// </summary>
 public sealed class MaterialPhraseHints(IKnowledgeStore store, TimeProvider clock, ILogger<MaterialPhraseHints> logger)
 {
     internal const int MaxChunks = 1000;
     internal static readonly TimeSpan BuildTimeout = TimeSpan.FromSeconds(10);
     internal static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(30);
+    /// <summary>How long after an upload or delete Search may still show the old materials.</summary>
+    internal static readonly TimeSpan IndexLag = TimeSpan.FromSeconds(10);
+    /// <summary>
+    /// The lifetime of a build made within <see cref="IndexLag"/> of a change, or while Search did not show it yet, so it is
+    /// rebuilt once Search has caught up.
+    /// </summary>
+    internal static readonly TimeSpan ShortLifetime = TimeSpan.FromSeconds(15);
     private readonly ConcurrentDictionary<string, Entry> cache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Change> changes = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The materials service's record of this user's latest change: documents written that Search may not list yet, and
+    /// deleted documents it may still list. Like the service's own record, it keeps only what Search did not show yet.
+    /// </summary>
+    private sealed record Change(IReadOnlyList<KnowledgeDocument> Recent, IReadOnlySet<string> Deleted, long At);
 
     private sealed class Entry(Func<Entry, Task<IReadOnlyList<string>>> build, long created)
     {
         private readonly object gate = new();
         private Task<IReadOnlyList<string>>? phrases;
+        private long lifetime = CacheLifetime.Ticks;
         public long Created { get; } = created;
+
+        /// <summary>Set by the build: <see cref="ShortLifetime"/> while Search may not show the user's latest change yet.</summary>
+        public TimeSpan Lifetime
+        {
+            get => TimeSpan.FromTicks(Volatile.Read(ref lifetime));
+            set => Volatile.Write(ref lifetime, value.Ticks);
+        }
 
         /// <summary>Started on first use only, so an entry that lost a race for the cache slot never builds.</summary>
         public Task<IReadOnlyList<string>> Phrases
@@ -172,31 +197,58 @@ public sealed class MaterialPhraseHints(IKnowledgeStore store, TimeProvider cloc
         try { key = KnowledgeIds.Owner(owner); }
         catch (KnowledgeException) { return Task.FromResult<IReadOnlyList<string>>([]); }
         var now = clock.GetTimestamp();
-        var entry = cache.AddOrUpdate(key, _ => new Entry(BuildFor(key), now),
-            (_, existing) => clock.GetElapsedTime(existing.Created) > CacheLifetime ? new Entry(BuildFor(key), now) : existing);
+        var entry = cache.AddOrUpdate(key, _ => NewEntry(key, now),
+            (_, existing) => clock.GetElapsedTime(existing.Created) > existing.Lifetime ? NewEntry(key, now) : existing);
         return entry.Phrases;
     }
 
     /// <summary>Starts building in the background, so a session that starts soon finds the phrases ready.</summary>
     public void Warm(string owner) => _ = GetAsync(owner);
 
-    /// <summary>Drops the cached phrases after this user's materials changed.</summary>
-    public void Invalidate(string owner)
+    /// <summary>
+    /// Drops the cached phrases after this user's materials changed, keeping the materials service's record of the change
+    /// (<paramref name="recent"/> written but maybe not listed yet, <paramref name="deleted"/> maybe still listed) for builds.
+    /// </summary>
+    public void Invalidate(string owner, IReadOnlyCollection<KnowledgeDocument>? recent = null, IReadOnlyCollection<string>? deleted = null)
     {
-        try { cache.TryRemove(KnowledgeIds.Owner(owner), out _); }
-        catch (KnowledgeException) { }
+        string key;
+        try { key = KnowledgeIds.Owner(owner); }
+        catch (KnowledgeException) { return; }
+        // Recorded before the cache entry goes, so a build that starts right after the removal already sees it.
+        changes[key] = new([.. recent ?? []], (deleted ?? []).ToHashSet(StringComparer.Ordinal), clock.GetTimestamp());
+        cache.TryRemove(key, out _);
     }
 
-    private Func<Entry, Task<IReadOnlyList<string>>> BuildFor(string owner) => entry => BuildAsync(owner, entry);
+    private Entry NewEntry(string owner, long now) => new(entry => BuildAsync(owner, entry), now);
 
     private async Task<IReadOnlyList<string>> BuildAsync(string owner, Entry entry)
     {
         var started = clock.GetTimestamp();
+        // Taken before reading Search, so what Search shows below is at least as new as this record.
+        changes.TryGetValue(owner, out var change);
         try
         {
             using var timeout = new CancellationTokenSource(BuildTimeout);
             var documents = await store.ListAsync(owner, timeout.Token);
             var texts = await store.ReadTextAsync(owner, MaxChunks, timeout.Token);
+            if (change is not null)
+            {
+                var listed = documents;
+                // Search may still list a deleted document or miss a new one; the service's own record of the change wins.
+                var recent = change.Recent.Where(document => !change.Deleted.Contains(document.Id)).ToArray();
+                documents = listed.Where(document => !change.Deleted.Contains(document.Id) && recent.All(added => added.Id != document.Id))
+                    .Concat(recent).OrderByDescending(document => document.UpdatedAt).ToArray();
+                texts = texts.Where(text => KnowledgeIds.DocumentOf(text.Id) is not { } id || !change.Deleted.Contains(id)).ToArray();
+                var pending = change with
+                {
+                    Recent = recent.Where(document => !listed.Any(shown => shown.Id == document.Id && shown.Chunks == document.Chunks)).ToArray(),
+                    Deleted = change.Deleted.Where(id => listed.Any(shown => shown.Id == id)).ToHashSet(StringComparer.Ordinal),
+                };
+                // What Search shows now needs no record (as in the service), so the record cannot outlive the change; a newer one wins.
+                if (pending.Recent.Count < change.Recent.Count || pending.Deleted.Count < change.Deleted.Count) changes.TryUpdate(owner, pending, change);
+                if (pending.Recent.Count > 0 || pending.Deleted.Count > 0 || clock.GetElapsedTime(change.At, started) < IndexLag)
+                    entry.Lifetime = ShortLifetime;
+            }
             var phrases = MaterialPhrases.Extract(documents.Select(document => document.Title).ToArray(),
                 texts.Select(text => text.Content).ToArray());
             logger.LogInformation("Material phrase hints built: {Count} phrases from {Documents} documents and {Chunks} chunks in {ElapsedMs} ms.",

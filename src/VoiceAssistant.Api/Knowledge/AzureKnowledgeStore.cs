@@ -55,6 +55,7 @@ public sealed class AzureKnowledgeStore(SearchClient? search, EmbeddingClient? e
         if (search is null) throw KnowledgeException.Unavailable();
         // The same ACL filter as retrieval, so only material this user may read can become a phrase hint. One page at most.
         var options = new SearchOptions { Filter = AzureMeetingProvider.AclFilter(KnowledgeIds.Owner(owner)), Size = Math.Clamp(maxChunks, 1, 1000) };
+        options.Select.Add("id");
         options.Select.Add("title");
         options.Select.Add("content");
         var results = await search.SearchAsync<SearchDocument>("*", options, cancellation);
@@ -62,8 +63,10 @@ public sealed class AzureKnowledgeStore(SearchClient? search, EmbeddingClient? e
         await foreach (var result in results.Value.GetResultsAsync().WithCancellation(cancellation))
         {
             if (texts.Count >= maxChunks) break;
-            if (result.Document.TryGetValue("content", out var content) && content is string text)
-                texts.Add(new(result.Document.TryGetValue("title", out var title) && title is string name ? name : "", text));
+            var value = result.Document;
+            if (value.TryGetValue("content", out var content) && content is string text)
+                texts.Add(new(value.TryGetValue("id", out var key) && key is string id ? id : "",
+                    value.TryGetValue("title", out var title) && title is string name ? name : "", text));
         }
         return texts;
     }

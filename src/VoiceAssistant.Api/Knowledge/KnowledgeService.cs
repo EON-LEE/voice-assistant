@@ -72,8 +72,8 @@ public sealed class KnowledgeService(IKnowledgeStore store, TimeProvider clock, 
             var document = new KnowledgeDocument(id, title, chunks.Count, clock.GetUtcNow());
             await store.UploadAsync(owner, document, chunks, cancellation);
             state.Recent[id] = document;
-            // The user's speech phrase hints are rebuilt from the changed materials on the next session.
-            phraseHints?.Invalidate(owner);
+            // The user's speech phrase hints are rebuilt on the next session, with this record of what Search may not show yet.
+            phraseHints?.Invalidate(owner, state.Recent.Values.ToArray(), state.Deleted.ToArray());
             return new(id, title, chunks.Count, input.Text.Length, document.UpdatedAt);
         }
         finally { state.Mutation.Release(); }
@@ -90,7 +90,7 @@ public sealed class KnowledgeService(IKnowledgeStore store, TimeProvider clock, 
             await store.DeleteAsync(owner, id, cancellation);
             state.Recent.Remove(id);
             if (known) state.Deleted.Add(id);
-            phraseHints?.Invalidate(owner);
+            phraseHints?.Invalidate(owner, state.Recent.Values.ToArray(), state.Deleted.ToArray());
         }
         finally { state.Mutation.Release(); }
     }

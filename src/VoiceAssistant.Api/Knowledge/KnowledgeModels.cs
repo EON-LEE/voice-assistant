@@ -20,8 +20,8 @@ public sealed record KnowledgeDocument(string Id, string Title, int Chunks, Date
 public sealed record KnowledgeUpload(string Id, string Title, int Chunks, int Characters, DateTimeOffset UpdatedAt);
 public sealed record KnowledgeInput(string Title, string Text);
 public sealed record KnowledgeChunk(string Id, string Content);
-/// <summary>One stored chunk of an owner's material: its document title and text.</summary>
-public sealed record MaterialText(string Title, string Content);
+/// <summary>One stored chunk of an owner's material: its chunk key (see <see cref="KnowledgeIds.DocumentOf"/>), document title and text.</summary>
+public sealed record MaterialText(string Id, string Title, string Content);
 
 public sealed class KnowledgeException(int status, string code, string message) : Exception(message)
 {

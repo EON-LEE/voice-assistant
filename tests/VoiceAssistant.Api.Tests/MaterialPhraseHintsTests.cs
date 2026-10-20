@@ -122,11 +122,168 @@ public sealed class MaterialPhraseHintsTests
 
         var texts = await store.ReadTextAsync(OwnerA, 1000, CancellationToken.None);
 
-        Assert.Equal([new MaterialText("Rollout plan", "ORN-4 ships in Q3.")], texts);
+        Assert.Equal([new MaterialText($"kb-{new string('a', 32)}-0000", "Rollout plan", "ORN-4 ships in Q3.")], texts);
         using var body = JsonDocument.Parse(Assert.Single(handler.Bodies));
         Assert.Equal(AzureMeetingProvider.AclFilter(OwnerA), body.RootElement.GetProperty("filter").GetString());
-        Assert.Equal("title,content", body.RootElement.GetProperty("select").GetString());
+        Assert.Equal("id,title,content", body.RootElement.GetProperty("select").GetString());
         Assert.Equal(1000, body.RootElement.GetProperty("top").GetInt32());
+    }
+
+    [Fact]
+    public async Task ADeletedDocumentStopsBiasingSpeechAtOnceEvenWhileSearchStillListsIt()
+    {
+        var clock = new ManualClock();
+        var store = new LaggingStore();
+        var hints = new MaterialPhraseHints(store, clock, NullLogger<MaterialPhraseHints>.Instance);
+        var knowledge = new KnowledgeService(store, clock, hints);
+        var rollout = await knowledge.UploadAsync(OwnerA, new("Rollout.txt", "ORN-4 ships with JMAP."), CancellationToken.None);
+        await knowledge.UploadAsync(OwnerA, new("Codes.txt", "XR-77 is new."), CancellationToken.None);
+        store.CatchUp(OwnerA);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Contains("ORN-4", await hints.GetAsync(OwnerA));
+
+        // Search still lists the deleted document and its chunks; the service's record of the delete wins.
+        await knowledge.DeleteAsync(OwnerA, rollout.Id, CancellationToken.None);
+        var afterDelete = await hints.GetAsync(OwnerA);
+        Assert.DoesNotContain("ORN-4", afterDelete);
+        Assert.DoesNotContain("Rollout", afterDelete);
+        Assert.Contains("XR-77", afterDelete);
+
+        // Built so soon after the change, it is kept only briefly and rebuilt once Search has caught up.
+        store.CatchUp(OwnerA);
+        clock.Advance(MaterialPhraseHints.ShortLifetime + TimeSpan.FromSeconds(1));
+        var rebuilt = await hints.GetAsync(OwnerA);
+        Assert.NotSame(afterDelete, rebuilt);
+        Assert.DoesNotContain("ORN-4", rebuilt);
+        Assert.Contains("XR-77", rebuilt);
+        Assert.Equal(3, store.TextReads);
+    }
+
+    [Fact]
+    public async Task AJustUploadedDeckIsHintedByTitleAtOnceAndByContentOnceSearchCatchesUp()
+    {
+        var clock = new ManualClock();
+        var store = new LaggingStore();
+        var hints = new MaterialPhraseHints(store, clock, NullLogger<MaterialPhraseHints>.Instance);
+        var knowledge = new KnowledgeService(store, clock, hints);
+
+        await knowledge.UploadAsync(OwnerA, new("Contoso Rollout Deck.pptx", "ORN-4 ships in Q3."), CancellationToken.None);
+        var early = await hints.GetAsync(OwnerA);
+        // Search does not show the deck yet: its title comes from the service's record of the upload, its text not at all.
+        Assert.Contains("Contoso Rollout Deck", early);
+        Assert.DoesNotContain("ORN-4", early);
+
+        store.CatchUp(OwnerA);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.Same(early, await hints.GetAsync(OwnerA));
+        clock.Advance(MaterialPhraseHints.ShortLifetime - TimeSpan.FromSeconds(9));
+        var caughtUp = await hints.GetAsync(OwnerA);
+        Assert.Contains("ORN-4", caughtUp);
+        Assert.Contains("Contoso Rollout Deck", caughtUp);
+
+        // A build made well after the change keeps the normal lifetime.
+        clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.Same(caughtUp, await hints.GetAsync(OwnerA));
+        Assert.Equal(2, store.TextReads);
+    }
+
+    [Fact]
+    public async Task HintsStayShortLivedWhileSearchLagsLongerThanUsual()
+    {
+        var clock = new ManualClock();
+        var store = new LaggingStore();
+        var hints = new MaterialPhraseHints(store, clock, NullLogger<MaterialPhraseHints>.Instance);
+        var knowledge = new KnowledgeService(store, clock, hints);
+
+        await knowledge.UploadAsync(OwnerA, new("Contoso Rollout Deck.pptx", "ORN-4 ships in Q3."), CancellationToken.None);
+        clock.Advance(MaterialPhraseHints.IndexLag * 3);
+        var lagging = await hints.GetAsync(OwnerA);
+        Assert.Contains("Contoso Rollout Deck", lagging);
+        Assert.DoesNotContain("ORN-4", lagging);
+
+        // Search did not show the deck yet, so the build is kept only briefly however old the upload is.
+        store.CatchUp(OwnerA);
+        clock.Advance(MaterialPhraseHints.ShortLifetime + TimeSpan.FromSeconds(1));
+        var caughtUp = await hints.GetAsync(OwnerA);
+        Assert.Contains("ORN-4", caughtUp);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.Same(caughtUp, await hints.GetAsync(OwnerA));
+        Assert.Equal(2, store.TextReads);
+    }
+
+    [Fact]
+    public async Task HintsBuiltSoonAfterAChangeAreShortLivedEvenWhenSearchAlreadyListsIt()
+    {
+        var clock = new ManualClock();
+        var store = new LaggingStore();
+        var hints = new MaterialPhraseHints(store, clock, NullLogger<MaterialPhraseHints>.Instance);
+        var knowledge = new KnowledgeService(store, clock, hints);
+
+        await knowledge.UploadAsync(OwnerA, new("Contoso Rollout Deck.pptx", "ORN-4 ships in Q3."), CancellationToken.None);
+        // Search lists the deck already, but reading its text does not return it yet.
+        store.CatchUp(OwnerA, text: false);
+        var early = await hints.GetAsync(OwnerA);
+        Assert.Contains("Contoso Rollout Deck", early);
+        Assert.DoesNotContain("ORN-4", early);
+
+        store.CatchUp(OwnerA);
+        clock.Advance(MaterialPhraseHints.ShortLifetime + TimeSpan.FromSeconds(1));
+        Assert.Contains("ORN-4", await hints.GetAsync(OwnerA));
+        Assert.Equal(2, store.TextReads);
+    }
+
+    [Fact]
+    public async Task TheRecordOfAnUploadEndsOnceSearchShowsTheDocument()
+    {
+        var clock = new ManualClock();
+        var store = new LaggingStore();
+        var hints = new MaterialPhraseHints(store, clock, NullLogger<MaterialPhraseHints>.Instance);
+        var knowledge = new KnowledgeService(store, clock, hints);
+        var deck = await knowledge.UploadAsync(OwnerA, new("Contoso Rollout Deck.pptx", "ORN-4 ships in Q3."), CancellationToken.None);
+        store.CatchUp(OwnerA);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Contains("Contoso Rollout Deck", await hints.GetAsync(OwnerA));
+
+        // Deleted where this service does not see it (for example through another app instance): the old record of the
+        // upload must not bring the deck back.
+        await store.DeleteAsync(OwnerA, deck.Id, CancellationToken.None);
+        store.CatchUp(OwnerA);
+        clock.Advance(MaterialPhraseHints.CacheLifetime + TimeSpan.FromSeconds(1));
+        var rebuilt = await hints.GetAsync(OwnerA);
+        Assert.DoesNotContain("Contoso Rollout Deck", rebuilt);
+        Assert.DoesNotContain("ORN-4", rebuilt);
+        Assert.Equal(2, store.TextReads);
+    }
+
+    /// <summary>
+    /// Like Search after a write: listing and text show the state as of the last <see cref="CatchUp"/>, and the text may lag
+    /// behind the listing.
+    /// </summary>
+    private sealed class LaggingStore : IKnowledgeStore
+    {
+        private readonly InMemoryKnowledgeStore actual = new();
+        private readonly ConcurrentDictionary<string, (IReadOnlyList<KnowledgeDocument> Documents, IReadOnlyList<MaterialText> Texts)> visible = new();
+        private int textReads;
+        public int TextReads => Volatile.Read(ref textReads);
+
+        public void CatchUp(string owner, bool text = true) => visible[owner] = (actual.ListAsync(owner, CancellationToken.None).Result,
+            text ? actual.ReadTextAsync(owner, MaterialPhraseHints.MaxChunks, CancellationToken.None).Result
+                : visible.TryGetValue(owner, out var shown) ? shown.Texts : []);
+
+        public Task<IReadOnlyList<KnowledgeDocument>> ListAsync(string owner, CancellationToken cancellation) =>
+            Task.FromResult(visible.TryGetValue(owner, out var shown) ? shown.Documents : []);
+
+        public Task<IReadOnlyList<MaterialText>> ReadTextAsync(string owner, int maxChunks, CancellationToken cancellation)
+        {
+            Interlocked.Increment(ref textReads);
+            return Task.FromResult(visible.TryGetValue(owner, out var shown) ? shown.Texts : []);
+        }
+
+        public Task UploadAsync(string owner, KnowledgeDocument document, IReadOnlyList<KnowledgeChunk> chunks, CancellationToken cancellation) =>
+            actual.UploadAsync(owner, document, chunks, cancellation);
+
+        public Task DeleteAsync(string owner, string documentId, CancellationToken cancellation) =>
+            actual.DeleteAsync(owner, documentId, cancellation);
     }
 
     private sealed class CountingStore : IKnowledgeStore
@@ -155,7 +312,7 @@ public sealed class MaterialPhraseHintsTests
             Bodies.Enqueue(await request.Content!.ReadAsStringAsync(cancellationToken));
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("""{"value":[{"@search.score":1,"title":"Rollout plan","content":"ORN-4 ships in Q3."}]}""",
+                Content = new StringContent($$"""{"value":[{"@search.score":1,"id":"kb-{{new string('a', 32)}}-0000","title":"Rollout plan","content":"ORN-4 ships in Q3."}]}""",
                     Encoding.UTF8, "application/json")
             };
         }

@@ -37,7 +37,7 @@ public sealed class InMemoryKnowledgeStore : IKnowledgeStore
         owner = KnowledgeIds.Owner(owner);
         lock (gate)
             return Task.FromResult<IReadOnlyList<MaterialText>>(documents.Where(item => item.Key.Owner == owner)
-                .SelectMany(item => item.Value.Chunks.Select(chunk => new MaterialText(item.Value.Document.Title, chunk.Content)))
+                .SelectMany(item => item.Value.Chunks.Select(chunk => new MaterialText(chunk.Id, item.Value.Document.Title, chunk.Content)))
                 .Take(maxChunks).ToArray());
     }
 }
