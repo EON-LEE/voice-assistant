@@ -13,7 +13,11 @@ Run from a Windows checkout with the .NET 8 SDK:
 
 Use a new or empty folder outside the repository. The script does not remove
 existing files. It publishes a self-contained Windows x64 app, so the recipient
-does not need to install the .NET runtime. Copy the **whole output folder** and
+does not need to install the .NET runtime. The deployment values (endpoint,
+origin, tenant, client ID, scope) come from the git-ignored
+`src\VoiceAssistant.Desktop\appsettings.local.json`, copied from
+`appsettings.local.example.json`; the script warns when the published folder
+lacks it. Copy the **whole output folder** and
 double-click `Open-Meeting-Coach.cmd`. A single executable without its companion
 files is not a complete distribution.
 The app opens directly into the overlay, without starting audio capture.

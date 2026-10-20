@@ -25,7 +25,7 @@ public sealed class OverlayTranslationTests
         await OnUiThread(async () =>
         {
             var received = new List<string>();
-            var settings = new ClientSettings { Mode = ConnectionMode.Production };
+            var settings = TestSettings.Production;
             using var api = new AuthenticatedApiClient(settings, new TestIdentity(),
                 new TranslationHandler(chunk =>
                 {
@@ -49,11 +49,11 @@ public sealed class OverlayTranslationTests
         await OnUiThread(async () =>
         {
             var delayed = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-            using var api = new AuthenticatedApiClient(new ClientSettings { Mode = ConnectionMode.Production },
+            using var api = new AuthenticatedApiClient(TestSettings.Production,
                 new TestIdentity(), new TranslationHandler(async text =>
                     text == "Old answer." ? await delayed.Task : JsonResponse(new { korean = $"한국어: {text}" })));
-            var window = new MainWindow(new ClientSettings { Mode = ConnectionMode.Production },
-                new NativeIdentity(new ClientSettings { Mode = ConnectionMode.Production }), api);
+            var window = new MainWindow(TestSettings.Production,
+                new NativeIdentity(TestSettings.Production), api);
             try
             {
                 void Apply(ServerEvent message) => Invoke(window, "ApplyMeetingEvent", message);
@@ -88,7 +88,7 @@ public sealed class OverlayTranslationTests
     {
         await OnUiThread(async () =>
         {
-            var settings = new ClientSettings { Mode = ConnectionMode.Production };
+            var settings = TestSettings.Production;
             using var api = new AuthenticatedApiClient(settings, new TestIdentity(),
                 new TranslationHandler(_ => Task.FromResult(JsonResponse(new { korean = "" }))));
             var window = new MainWindow(settings, new NativeIdentity(settings), api);
@@ -117,7 +117,7 @@ public sealed class OverlayTranslationTests
     {
         await OnUiThread(async () =>
         {
-            var settings = new ClientSettings { Mode = ConnectionMode.Production };
+            var settings = TestSettings.Production;
             using var api = new AuthenticatedApiClient(settings, new TestIdentity(),
                 new TranslationHandler(_ => Task.FromResult(JsonResponse(new { korean = "출시 조건은 무엇인가요?" })), "question"));
             var window = new MainWindow(settings, new NativeIdentity(settings), api);
@@ -185,7 +185,7 @@ public sealed class OverlayTranslationTests
     {
         await OnUiThread(async () =>
         {
-            var settings = new ClientSettings { Mode = ConnectionMode.Production };
+            var settings = TestSettings.Production;
             using var api = new AuthenticatedApiClient(settings, new TestIdentity());
             var window = new MainWindow(settings, new NativeIdentity(settings), api);
             await window.CloseForOwnerAsync();

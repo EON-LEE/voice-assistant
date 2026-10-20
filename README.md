@@ -12,7 +12,9 @@ commitments on the user's behalf. Read-aloud playback is explicitly requested.
 `/live.html` UI in a transparent, always-on-top WebView2 window. The page supports
 an in-person microphone and browser tab/system-audio sharing; capture still requires
 explicit Start, browser/OS permission, and participant consent. Launching the host
-does not capture audio. See the [WebOverlay instructions](src/VoiceAssistant.WebOverlay/README.md).
+does not capture audio. The host can also capture only the Teams desktop app natively
+for the page (Windows 10 build 20348+; **Teams 앱 소리** in the `/live.html` audio source list).
+See the [WebOverlay instructions](src/VoiceAssistant.WebOverlay/README.md).
 
 Publish a self-contained folder:
 
@@ -65,7 +67,10 @@ prepared keeps its settings. With an older server the page says that document
 search changes apply from the next connection, and Stop then Start applies them.
 Korean meaning and captions work with any server.
 
-Deployed application: https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io
+The deployed application's URL is environment-specific. Operators find it with
+`az containerapp show --name <app> --resource-group <group>
+--query properties.configuration.ingress.fqdn`, using the names in their git-ignored
+`infra/release.local.json`.
 
 The deployed API uses the real Azure provider; the UI deliberately starts in a
 labeled **Audio demo** until **Live** is selected. **Start demo** plays an original
@@ -118,7 +123,8 @@ are possible later alternatives, not prerequisites for displaying text replies.
 | Component | Location | Responsibility |
 | --- | --- | --- |
 | Browser app | `src/VoiceAssistant.Web` | Audio-sharing consent, transcription, readable replies |
-| Transparent web host | `src/VoiceAssistant.WebOverlay` | Hosts `/live.html` in the current always-on-top Windows overlay |
+| Transparent web host | `src/VoiceAssistant.WebOverlay` | Hosts `/live.html` in the current always-on-top Windows overlay; native Teams/system audio for the page |
+| Shared audio conversion | `src/VoiceAssistant.Audio` | 16 kHz mono PCM16 conversion and 20 ms framing for the Windows clients |
 | ASP.NET Core API | `src/VoiceAssistant.Api` | Authentication, audio recognition, retrieval, streaming generation |
 | Wire contract | `contracts` | Versioned client/server message definitions |
 | Azure infrastructure | `infra` | Parameterized deployment and prerequisites |
@@ -368,7 +374,9 @@ and exercise guarded deployment switches and document ACL/version/deletion
 handling with mocked Azure calls. Real ARM validation and deployment still
 require authentication.
 
-The deployment target is the user's `ME-M365CPI74210306-eonlee-1` subscription.
+The deployment target (subscription, tenant, resource group and apps) is configured
+locally in the git-ignored `infra/release.local.json`; see the
+[infrastructure guide](infra/README.md#local-release-target-inforeleaselocaljson).
 Model availability, quotas, roles, pricing, and permitted regions must be checked
 before applying infrastructure. Infrastructure templates are not proof that
 resources have been created.
@@ -395,6 +403,21 @@ Cost drivers include speech time, model tokens, provisioned Search capacity, and
 the API's minimum replica count. Budget alerts are not spending limits. Keeping
 one API replica warm reduces cold starts but has a standing cost.
 
+## Releases and operations
+
+- `scripts/release/Release.ps1` builds the clean `origin/main` commit in ACR, deploys the
+  pinned digest to the staging app, checks `/health/ready` and the security headers, runs
+  an optional smoke test, and promotes the same digest to production only with
+  `-Production`. It is a dry run unless `-Apply` is given. See
+  [scripts/release/README.md](scripts/release/README.md).
+- Runbooks: [release and rollback](docs/runbooks/release-and-rollback.md),
+  [capture troubleshooting ("No shared audio")](docs/runbooks/capture-troubleshooting.md),
+  [Search semantic quota (HTTP 402)](docs/runbooks/search-semantic-quota.md) and
+  [quality baseline](docs/runbooks/quality-baseline.md).
+- A deployment can enable an optional shared demo login (`POST /api/demo/login`,
+  `DemoLogin__*` settings, tokens valid 7 days by default); see
+  [infra/README.md](infra/README.md#optional-demo-login-post-apidemologin).
+
 ## Performance acceptance
 
 Measure from the actual end of the speaker's utterance, not only from receipt of
@@ -415,16 +438,28 @@ results cannot establish these targets.
 
 ## Verification status
 
-As of September 23, 2026:
+### Automated tests: CI is the source of truth
+
+Every push to `main` and every pull request runs the **Build and test** workflow
+(`.github/workflows/ci.yml`). Read test counts from its latest run, not from documents:
+
+| CI artifact | Contents |
+| --- | --- |
+| `verification-evidence` | `release-verification.json` from `scripts/verify-release.ps1`: source revision and every stage (API, web, infrastructure, release script, evaluation tools) with PASS/FAIL and duration |
+| `test-results` | .NET TRX files with per-test outcomes |
+| `browser-test-report`, `linux-browser-test-report` | Playwright reports for the Windows run and the non-root Linux container |
+
+Snapshot at `main` 5c6e606 (2026-10-21): API 889 tests, web unit 160 core + 49 coach,
+browser 108, all passed. Newer CI runs supersede these numbers.
+
+### Live Azure checks (historical, September 23, 2026)
+
+These rows record live checks of the revision deployed then. They are not the
+current release approval.
 
 | Verification | Result |
 | --- | --- |
-| API Release build and automated tests | 373 passed; includes routing, exact prefetch reuse/retry, session context, semantic relevance and personal-fact safeguards |
-| Live-provider probe unit tests | 83 passed; service, bounded cleanup, transcript-reference and redaction checks |
-| Browser production build and unit tests | 61 passed, including confirmed session context and bounded coalesced rendering |
-| Chromium lifecycle and real local API transport | 27 Windows browser tests passed; final published Linux image: 25 passed, 2 explicitly Vite-only auth tests skipped |
-| Measurement tooling | 129 deterministic/boundary tests passed, including real FFmpeg padding verification; not 129 live meeting samples |
-| Infrastructure | Compiled and offline-tested, including semantic metadata migration; actual ARM deployment and ETag-guarded index readback succeeded |
+| Infrastructure | Actual ARM deployment and ETag-guarded index readback succeeded |
 | Real Azure Speech and OpenAI | Final managed-identity Linux run submitted all 219 frames / 140160 PCM bytes; 6 partial events, 1 final transcript and 34 streamed reply deltas |
 | Deployed HTTPS boundary | UI and health return 200, client configuration selects Azure, anonymous ticket creation returns 401 |
 | Browser sign-in | Entra account selection reached; Windows work account rejected by the separate subscription tenant; full owner-account sign-in not verified |

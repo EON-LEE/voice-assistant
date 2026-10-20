@@ -50,7 +50,7 @@ public sealed class ReconnectTests
             var dispatcher = Dispatcher.CurrentDispatcher;
             dispatcher.BeginInvoke(async () =>
             {
-                var settings = new ClientSettings { Mode = ConnectionMode.Production };
+                var settings = TestSettings.Production;
                 using var api = new AuthenticatedApiClient(settings, new NoNetworkIdentity(), new OfflineHandler());
                 var window = new MainWindow(settings, new NativeIdentity(settings), api);
                 try

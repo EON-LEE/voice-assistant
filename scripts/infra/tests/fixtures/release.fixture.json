@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "subscriptionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "tenantId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "projectId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "resourceGroup": "fixture-meeting-group",
+  "registryName": "fixturemeetingacr",
+  "imageRepository": "voice-assistant",
+  "productionApp": "fixture-web",
+  "stagingApp": "fixture-web-staging"
+}

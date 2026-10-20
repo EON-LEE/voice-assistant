@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$SubscriptionId = 'b0af194e-77a5-4471-bb43-67e78295b5c8',
-    [string]$TenantId = '2573db8c-dfe5-4805-9e28-a0859692e705'
+    [string]$SubscriptionId,
+    [string]$TenantId
 )
 $ErrorActionPreference = 'Stop'
 $WarningPreference = 'SilentlyContinue'
@@ -9,7 +9,15 @@ $ProgressPreference = 'SilentlyContinue'
 $result = [ordered]@{ contextAvailable = $false; tokenAcquired = $false; expiresOn = $null; armAuthorized = $false;
     subscriptionId = $null; tenantId = $null; code = 'NO_TARGET_CONTEXT' }
 try {
-    if ($SubscriptionId -ne 'b0af194e-77a5-4471-bb43-67e78295b5c8' -or $TenantId -ne '2573db8c-dfe5-4805-9e28-a0859692e705') {
+    Import-Module (Join-Path $PSScriptRoot 'ReleaseTarget.psm1') -Force
+    $approved = Find-ApprovedTarget
+    if ($approved.Status -eq 'Valid') {
+        if (-not $SubscriptionId) { $SubscriptionId = $approved.Target.SubscriptionId }
+        if (-not $TenantId) { $TenantId = $approved.Target.TenantId }
+    }
+    if ($approved.Status -ne 'Valid') {
+        $result.code = 'APPROVED_TARGET_REQUIRED'
+    } elseif (-not (Test-SameGuid $SubscriptionId $approved.Target.SubscriptionId) -or -not (Test-SameGuid $TenantId $approved.Target.TenantId)) {
         $result.code = 'UNAPPROVED_TARGET'
     } elseif (Get-Module -ListAvailable Az.Accounts) {
         Import-Module Az.Accounts -ErrorAction Stop

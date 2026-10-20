@@ -12,6 +12,17 @@ param imageDigest string
 @description('Use the private diagnostic environment only for synthetic, content-free acceptance evidence.')
 param environmentName string = 'voice-environment'
 
+@description('Existing Azure Container Registry name (without .azurecr.io) that holds the voice-live-acceptance image.')
+@minLength(5)
+@maxLength(50)
+param registryName string
+
+@description('Existing Speech account (custom subdomain) used by the web app in this resource group.')
+param speechName string
+
+@description('Existing Azure OpenAI account used by the web app in this resource group.')
+param openAIName string
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
   name: environmentName
 }
@@ -21,8 +32,14 @@ resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 }
 
 resource speech 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
-  name: 'voice-speech-2cmx22yjxadpg'
+  name: speechName
 }
+
+resource openAI 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+  name: openAIName
+}
+
+var registryServer = '${registryName}${az.environment().suffixes.acrLoginServer}'
 
 resource job 'Microsoft.App/jobs@2024-03-01' = {
   name: environmentName == 'voice-environment' ? 'voice-live-acceptance' : 'voice-live-acceptance-private'
@@ -46,7 +63,7 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
       }
       registries: [
         {
-          server: 'eonvoice20260920.azurecr.io'
+          server: registryServer
           identity: runtimeIdentity.id
         }
       ]
@@ -55,7 +72,7 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
       containers: [
         {
           name: 'live-probe'
-          image: 'eonvoice20260920.azurecr.io/voice-live-acceptance@sha256:${imageDigest}'
+          image: '${registryServer}/voice-live-acceptance@sha256:${imageDigest}'
           command: [
             'dotnet'
           ]
@@ -79,8 +96,8 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
             { name: 'AZURE_CLIENT_ID', value: runtimeIdentity.properties.clientId }
             { name: 'Azure__SpeechRegion', value: speech.location }
             { name: 'Azure__SpeechResourceId', value: speech.id }
-            { name: 'Azure__SpeechEndpoint', value: 'https://voice-speech-2cmx22yjxadpg.cognitiveservices.azure.com/' }
-            { name: 'Azure__OpenAIEndpoint', value: 'https://voice-ai-2cmx22yjxadpg.openai.azure.com/' }
+            { name: 'Azure__SpeechEndpoint', value: speech.properties.endpoint }
+            { name: 'Azure__OpenAIEndpoint', value: openAI.properties.endpoint }
             { name: 'Azure__ChatDeployment', value: 'meeting-chat' }
             { name: 'Azure__ChatMaxOutputTokens', value: '2048' }
           ]

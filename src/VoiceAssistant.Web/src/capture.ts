@@ -3,7 +3,13 @@ import { CodedError } from "./errors.js";
 
 /** Why capture failed or needs attention; the live page turns each kind into its own message and recovery step. */
 export type CaptureErrorKind = "cancelled" | "no-audio" | "ended" | "muted" | "silent" | "unsupported" | "permission";
-export type CaptureSourceKind = "display" | "microphone";
+/**
+ * Where the meeting audio comes from: a browser share ("display"), the microphone, or audio LiveCoach.exe captures
+ * natively without a picker ("teams": only the Teams app; "host-system": the default output device).
+ */
+export type CaptureSourceKind = "display" | "microphone" | "teams" | "host-system";
+export type HostSourceKind = Extract<CaptureSourceKind, "teams" | "host-system">;
+export function isHostSource(kind: CaptureSourceKind): kind is HostSourceKind { return kind === "teams" || kind === "host-system"; }
 
 /** A capture failure with its kind. The English message stays as the full meeting page has always shown it. */
 export class CaptureError extends CodedError {

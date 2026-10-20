@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 using NAudio.Wave;
-using VoiceAssistant.Desktop.Audio;
+using VoiceAssistant.Audio;
 
 namespace VoiceAssistant.Desktop.Tests;
 

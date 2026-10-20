@@ -51,12 +51,16 @@ $config = [ordered]@{
 }
 function Save-Config { $config | ConvertTo-Json -Compress | Set-Content -LiteralPath $temp -Encoding UTF8 }
 Save-Config
+$releaseFixture = Join-Path $PSScriptRoot 'fixtures\release.fixture.json'
+$approved = Get-Content -LiteralPath $releaseFixture -Raw | ConvertFrom-Json
+$previousReleaseConfig = $env:VOICE_ASSISTANT_RELEASE_CONFIG
 $scenario = @{
     account = 'target'; provider = 'Registered'; group = $false; registry = $false; owned = $true; nameAvailable = $true
     registrySku = 'Basic'; location = 'eastus'; adminEnabled = $false; registryMode = 'LegacyRegistryPermissions'; failCommand = ''
     failCode = 'COMMAND_FAILED'; nameTimeout = 0; previewFailure = ''; deployCalls = (New-Object 'Collections.Generic.List[object]')
     budgets = (New-Object 'Collections.Generic.List[object]')
     powershellAuth = $false; calls = (New-Object 'Collections.Generic.List[string]'); createdGroup = 0; createdRegistry = 0
+    approved = $approved
 }
 & $processModule {
     param($Scenario)
@@ -74,7 +78,7 @@ $scenario = @{
         if ($state.failCommand -and $line.StartsWith($state.failCommand)) {
             return [pscustomobject]@{ Succeeded = $false; Code = $state.failCode; Data = 'PRIVATE_DIAGNOSTIC_SENTINEL' }
         }
-        $tags = [pscustomobject]@{ managedBy = 'voice-assistant-bootstrap'; projectId = 'ff8f97b4-5db4-458e-99de-0d63cfc96a4a' }
+        $tags = [pscustomobject]@{ managedBy = 'voice-assistant-bootstrap'; projectId = $state.approved.projectId }
         if (-not $state.owned) { $tags.managedBy = 'unrelated-project' }
         $group = [pscustomobject]@{ name = 'fixture-meeting-group'; location = $state.location; tags = $tags }
         $registry = [pscustomobject]@{ name = 'fixturemeetingacr'; location = $state.location; tags = $tags;
@@ -82,7 +86,7 @@ $scenario = @{
         $data = $null
         if ($line.StartsWith('account list')) {
             if ($state.account -ne 'none') {
-                $data = @([pscustomobject]@{ id = 'b0af194e-77a5-4471-bb43-67e78295b5c8'; tenantId = '2573db8c-dfe5-4805-9e28-a0859692e705'; state = 'Enabled' })
+                $data = @([pscustomobject]@{ id = $state.approved.subscriptionId; tenantId = $state.approved.tenantId; state = 'Enabled' })
                 if ($state.account -eq 'wrong-subscription') { $data[0].id = '11111111-1111-4111-8111-111111111111' }
                 if ($state.account -eq 'wrong-tenant') { $data[0].tenantId = '11111111-1111-4111-8111-111111111111' }
                 if ($state.account -eq 'disabled') { $data[0].state = 'Disabled' }
@@ -111,6 +115,15 @@ $scenario = @{
 } $scenario
 try {
     $argsBase = @{ ConfigFile = $temp; AzPath = 'fixture az.exe'; AzPrefix = @('-m', 'azure.cli') }
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = Join-Path $PSScriptRoot 'fixtures\absent-release.local.json'
+    $report = Get-AzureReadiness @argsBase -Check
+    Assert-True ((Has-Check $report 'configuration.target' 'BLOCKED' 'APPROVED_TARGET_CONFIGURATION_REQUIRED') -and $report.overallStatus -eq 'BLOCKED' -and
+        $null -eq $report.target -and $scenario.calls.Count -eq 0) 'Missing local approved-target file blocks before any probe'
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = Join-Path $PSScriptRoot '..\..\..\infra\release.example.json'
+    $report = Get-AzureReadiness @argsBase -Check
+    Assert-True ((Has-Check $report 'configuration.target' 'FAIL' 'INVALID_APPROVED_TARGET_CONFIGURATION') -and
+        $scenario.calls.Count -eq 0) 'Placeholder approved target fails closed before any probe'
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = $releaseFixture
     $report = Get-AzureReadiness @argsBase
     Assert-True ($report.mode -eq 'Plan' -and $report.overallStatus -eq 'BLOCKED' -and $scenario.calls.Count -eq 0) 'Default plan is offline and does not claim authenticated readiness'
     $report = Get-AzureReadiness @argsBase -Plan -Apply
@@ -184,7 +197,7 @@ try {
     $report = Get-AzureReadiness @argsBase -Apply -CostApproved
     Assert-True ($report.overallStatus -eq 'PASS' -and $scenario.createdGroup -eq 1 -and $scenario.createdRegistry -eq 1) 'Repeated bootstrap reuses owned resources unchanged'
     Assert-True (@($scenario.calls | Where-Object { $_ -notmatch '^account list' -and
-        $_ -notmatch '--subscription b0af194e-77a5-4471-bb43-67e78295b5c8' }).Count -eq 0) 'Every resource command is explicitly subscription-scoped'
+        $_ -notmatch "--subscription $($approved.subscriptionId)" }).Count -eq 0) 'Every resource command is explicitly subscription-scoped'
     $scenario.owned = $false
     $report = Get-AzureReadiness @argsBase -Apply -CostApproved
     Assert-True ((Has-Check $report 'cloud.resourceGroup' 'FAIL' 'EXISTING_GROUP_NOT_OWNED_OR_LOCATION_MISMATCH') -and
@@ -244,7 +257,7 @@ try {
     Save-Config
     $scenario.registry = $true
     @{ parameters = @{
-        tenantId = @{ value = '2573db8c-dfe5-4805-9e28-a0859692e705' }
+        tenantId = @{ value = $approved.tenantId }
         registryName = @{ value = $config.registryName }; registryResourceGroup = @{ value = $config.resourceGroup }
         image = @{ value = $config.registryName + '.azurecr.io/fixture@sha256:' + ('a' * 64) }
     } } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $invalid
@@ -269,6 +282,7 @@ try {
     Assert-True ((Has-Check $report 'configuration.bootstrap' 'FAIL' 'INVALID_CONFIGURATION_JSON') -and
         ($report | ConvertTo-Json -Depth 12) -notmatch 'PRIVATE_DIAGNOSTIC_SENTINEL') 'Malformed input diagnostics never echo configuration text'
 } finally {
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = $previousReleaseConfig
     & $processModule { param($Original) Set-Item Function:script:Invoke-BoundedJsonCommand $Original } $originalProcess
     & $processModule { param($Original) Set-Item Function:script:Invoke-ReadinessDeployment $Original } $originalDeployment
     foreach ($file in @($temp, $invalid, $reportPath)) { Remove-Item -LiteralPath $file -Force }
@@ -281,18 +295,24 @@ $templateFile = [IO.Path]::GetTempFileName()
 $parameterFile = [IO.Path]::GetTempFileName()
 try {
     $env:VOICE_INFRA_FIXTURE_LOG = $log
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = $releaseFixture
     $env:PSModulePath = (Join-Path $PSScriptRoot 'fixtures') + [IO.Path]::PathSeparator + $modulePath
     $env:VOICE_INFRA_FIXTURE_MODE = ''
     '{}' | Set-Content -LiteralPath $templateFile
     '{"parameters":{}}' | Set-Content -LiteralPath $parameterFile
-    $sub = @('--subscription', 'b0af194e-77a5-4471-bb43-67e78295b5c8')
+    $sub = @('--subscription', $approved.subscriptionId)
     $r = Invoke-AzPowerShellCommand (@('account', 'show') + $sub) 15
     Assert-True ($r.Succeeded -and $r.Data.state -eq 'Enabled' -and (Get-Item $log).Length -gt 0) 'Az provider uses isolated module fixture and preserves target account'
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = Join-Path $PSScriptRoot 'fixtures\absent-release.local.json'
+    $before = (Get-Item $log).Length
+    $r = Invoke-AzPowerShellCommand (@('account', 'show') + $sub) 15
+    Assert-True (-not $r.Succeeded -and (Get-Item $log).Length -eq $before) 'Az provider fails closed without the local approved target, before any request'
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = $releaseFixture
     $r = Invoke-AzPowerShellCommand (@('group', 'exists', '--name', 'fixture-missing') + $sub) 15
     Assert-True ($r.Succeeded -and $r.Data -eq $false) 'Az provider distinguishes a real 404 from access errors'
     $r = Invoke-AzPowerShellCommand (@('provider', 'show', '--namespace', 'Microsoft.ContainerRegistry') + $sub) 15
     Assert-True ($r.Succeeded -and $r.Data -eq 'Registered') 'Az provider returns registration status without global context changes'
-    $tags = @('--tags', 'managedBy=voice-assistant-bootstrap', 'projectId=ff8f97b4-5db4-458e-99de-0d63cfc96a4a')
+    $tags = @('--tags', 'managedBy=voice-assistant-bootstrap', "projectId=$($approved.projectId)")
     $r = Invoke-AzPowerShellCommand (@('group', 'create', '--name', 'fixture-meeting-group', '--location', 'eastus') + $tags + $sub) 15
     Assert-True ($r.Succeeded -and $r.Data.tags.managedBy -eq 'voice-assistant-bootstrap') 'Az provider creates exact tagged group using fixture ARM PUT'
     $r = Invoke-AzPowerShellCommand (@('acr', 'create', '--name', 'fixturemeetingacr', '--resource-group', 'fixture-meeting-group',
@@ -347,11 +367,11 @@ try {
         Assert-True ($r.Succeeded -and $r.Data.name -eq $operation.expectedName -and
             $r.Data.PSObject.Properties['properties']) "Az ingestion metadata preserves ARM name/properties shape: $($operation.expectedName)"
     }
-    $tokenArguments = @('account', 'get-access-token', '--tenant', '2573db8c-dfe5-4805-9e28-a0859692e705', '--resource', 'https://storage.azure.com/') + $sub
+    $tokenArguments = @('account', 'get-access-token', '--tenant', $approved.tenantId, '--resource', 'https://storage.azure.com/') + $sub
     $r = Invoke-AzPowerShellCommand $tokenArguments 15
     Assert-True ($r.Succeeded -and $r.Data.accessToken -ceq 'PRIVATE_TOKEN_SENTINEL' -and
         [datetimeoffset]::Parse($r.Data.expiresOn) -gt [datetimeoffset]::UtcNow) 'Az secure token is captured privately in CLI-compatible in-memory shape with expiry'
-    $r = Invoke-AzPowerShellCommand (@('account', 'get-access-token', '--tenant', '2573db8c-dfe5-4805-9e28-a0859692e705',
+    $r = Invoke-AzPowerShellCommand (@('account', 'get-access-token', '--tenant', $approved.tenantId,
         '--resource', 'https://graph.microsoft.com/') + $sub) 15
     Assert-True (-not $r.Succeeded) 'Ingestion token adapter rejects an unrelated audience'
     $env:VOICE_INFRA_FIXTURE_MODE = 'token-failure'
@@ -369,7 +389,7 @@ try {
         try {
             $null = & (Join-Path $scriptsRoot 'Import-Knowledge.ps1') -ManifestPath (Join-Path $PSScriptRoot 'fixtures\manifest.json') `
                 -ContentRoot (Join-Path $PSScriptRoot 'fixtures') -AuthProvider AzPowerShell -Apply -ConfirmExclusiveMaintenance `
-                -TenantId '2573db8c-dfe5-4805-9e28-a0859692e705' -ResourceGroup 'fixture-meeting-group' `
+                -TenantId $approved.tenantId -ResourceGroup 'fixture-meeting-group' `
                 -SearchName 'fixture-search' -OpenAIName 'fixture-ai' -StorageAccountName 'fixturestorage' -CommandTimeoutSeconds 15
         } catch { $message = $_.Exception.Message }
         Assert-True ($global:FixturePrivateTokenUsed -and $message -match 'Azure storage request failed' -and
@@ -380,6 +400,7 @@ try {
     }
 } finally {
     $env:PSModulePath = $modulePath
+    $env:VOICE_ASSISTANT_RELEASE_CONFIG = $previousReleaseConfig
     $env:VOICE_INFRA_FIXTURE_LOG = $oldLog
     $env:VOICE_INFRA_FIXTURE_MODE = $oldMode
     foreach ($file in @($log, $templateFile, $parameterFile)) { Remove-Item -LiteralPath $file -Force }

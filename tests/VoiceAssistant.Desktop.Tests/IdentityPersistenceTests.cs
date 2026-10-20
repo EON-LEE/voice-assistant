@@ -11,11 +11,7 @@ public sealed class IdentityPersistenceTests
     [Fact]
     public async Task CacheSurvivesNewIdentityAndIsEncryptedOutsidePortableFolder()
     {
-        var settings = new ClientSettings
-        {
-            Mode = ConnectionMode.Production,
-            ClientId = Guid.NewGuid().ToString("D")
-        };
+        var settings = TestSettings.Production with { ClientId = Guid.NewGuid().ToString("D") };
         var directory = CacheDirectory(settings);
         Assert.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), directory);
         Assert.DoesNotContain(AppContext.BaseDirectory, directory);

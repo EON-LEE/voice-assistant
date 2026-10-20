@@ -152,11 +152,10 @@ public sealed class StateAndProtocolTests
     [Fact]
     public void ProductionSettingsRequireCanonicalAllowedOriginAndConfirmedProfile()
     {
-        var settings = new ClientSettings { Mode = ConnectionMode.Production };
-        Assert.Equal("https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io", settings.Origin);
-        Assert.Equal("https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io/", settings.ApiBase.AbsoluteUri);
+        var settings = TestSettings.Production;
+        Assert.Equal("https://coach.example.test/", settings.ApiBase.AbsoluteUri);
         Assert.Throws<InvalidOperationException>(() =>
-            (settings with { Origin = "https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io/" }).Validate());
+            (settings with { Origin = "https://coach.example.test/" }).Validate());
         Assert.Throws<InvalidOperationException>(() =>
             (settings with { ProfileName = "Ari", ProfileConfirmed = false }).Validate());
     }
@@ -179,7 +178,8 @@ public sealed class StateAndProtocolTests
     [InlineData("ws://user:pass@localhost/api/meeting", ConnectionMode.Development)]
     [InlineData("ws://localhost/other", ConnectionMode.Development)]
     public void RejectsUnsafeEndpoints(string endpoint, ConnectionMode mode) =>
-        Assert.Throws<InvalidOperationException>(() => (new ClientSettings { Mode = mode, Endpoint = endpoint }).Validate());
+        Assert.Throws<InvalidOperationException>(() =>
+            ((mode == ConnectionMode.Production ? TestSettings.Production : new ClientSettings { Mode = mode }) with { Endpoint = endpoint }).Validate());
 
     [Theory]
     [InlineData("ws://localhost:8080/api/meeting")]
