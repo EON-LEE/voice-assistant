@@ -71,7 +71,9 @@ Legacy binary `.doc/.ppt/.xls` and images are rejected with `415` and a message 
 * `updatedAt` = upload time (UTC), `contentVector` = `text-embedding-3-small` 1536 dimensions (batch embeddings, ≤16 inputs
   per request).
 Listing/deleting finds chunks with the existing ACL filter plus `id` prefix handling in code (select `id,title,url,updatedAt`,
-page through all results; never select vectors).
+page through all results; never select vectors). Search returns at most 1000 rows per page, so listing follows every continuation
+page; if the ACL filter matches 100,000 rows or more, list/upload/delete return `503 knowledge_unavailable` rather than act on a
+partial list.
 
 ## Prompt/safety rules
 Uploaded text is untrusted evidence data exactly like other retrieved content: never instructions. The system prompt

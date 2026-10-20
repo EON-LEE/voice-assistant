@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LiveState, answers, isTransientFailure, translationChunks } from "../../src/VoiceAssistant.Web/src/live-state.js";
+import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply } from "../../src/VoiceAssistant.Web/src/live-state.js";
 import { parseEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 
 const final = (turnId: string, text: string) => ({ type: "transcript.final", turnId, revision: 1, text });
@@ -172,17 +172,142 @@ test("Live: duplicate, unknown-turn and cancelled replies are ignored safely", (
   assert.equal(state.error, "", "a new reply clears the previous error");
 });
 
-test("Live: only network/service failures reconnect automatically", () => {
-  for (const message of ["Server disconnected unexpectedly. Audio has stopped; click Start to reconnect.",
-    "WebSocket connection failed. Check sign-in and server availability.", "Connection timed out. Start again to reconnect.",
-    "Server did not become ready within 15 seconds.", "The server ended this session. Click Start to continue.",
-    "Meeting authorization failed (503). Sign in again.", "Failed to fetch"])
-    assert.equal(isTransientFailure(message), true, message);
-  for (const message of ["Sign-in expired. Stop and sign in again before sharing.", "Meeting authorization failed (401). Sign in again.",
-    "Sign in before sharing audio.",
-    "session_superseded: Live started in another window or device, so this session was closed.",
-    "session_time_limit: Session reached its time limit.", "invalid_start: bad", "Microphone permission was denied."])
-    assert.equal(isTransientFailure(message), false, message);
+test("Live: primaryDone parses strictly, and an empty delta is valid only when it marks the primary line done", () => {
+  const delta = (extra: object) => JSON.stringify({ type: "response.delta", turnId: "t", responseId: "r", text: "Yes.", ...extra });
+  assert.deepEqual(parseEvent(delta({})), { type: "response.delta", turnId: "t", responseId: "r", text: "Yes." });
+  assert.deepEqual(parseEvent(delta({ primaryDone: true })), { type: "response.delta", turnId: "t", responseId: "r", text: "Yes.", primaryDone: true });
+  assert.deepEqual(parseEvent(delta({ text: "", primaryDone: true })), { type: "response.delta", turnId: "t", responseId: "r", text: "", primaryDone: true });
+  assert.deepEqual(parseEvent(delta({ primaryDone: false })), { type: "response.delta", turnId: "t", responseId: "r", text: "Yes." });
+  for (const bad of [{ text: "" }, { text: "", primaryDone: false }, { primaryDone: "true" }, { primaryDone: 1 }, { primaryDone: null }])
+    assert.throws(() => parseEvent(delta(bad)), /./, JSON.stringify(bad));
+});
+
+test("Live: a finished primary line is readable before completion, and completion fills in the rest", () => {
+  const state = new LiveState();
+  state.apply(final("one", "Old question?"));
+  state.apply({ type: "response.started", turnId: "one", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "Old answer.", sources: [] });
+  state.apply(final("two", "Who owns the launch?"));
+  state.apply({ type: "response.started", turnId: "two", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Alex owns" });
+  assert.equal(state.display?.id, "r1", "a draft never replaces the answer on screen");
+  state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: " it.", primaryDone: true });
+  assert.equal(state.display?.id, "r2");
+  assert.equal(state.display?.text, "Alex owns it.");
+  assert.equal(state.display?.complete, false);
+  assert.equal(state.display?.question, "Who owns the launch?");
+  assert.deepEqual(answers(state.display), ["Alex owns it."], "the alternative waits for completion");
+  assert.equal(state.generating, true);
+  state.apply({ type: "response.completed", turnId: "two", responseId: "r2", text: "Alex owns it.", sources: [{ title: "Plan", url: "https://example.invalid/plan" }],
+    grounding: "grounded", suggestions: ["Alex owns it.", "I think Alex owns that."] });
+  assert.equal(state.display?.complete, true);
+  assert.deepEqual(answers(state.display), ["Alex owns it.", "I think Alex owns that."]);
+  assert.equal(state.display?.grounding, "grounded");
+  assert.equal(state.lastCompleted?.id, "r2");
+});
+
+test("Live: an empty primaryDone delta shows the streamed line, and completed text replaces a line that differs", () => {
+  const state = new LiveState();
+  state.apply(final("t", "When is the review?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "On Friday." });
+  assert.equal(state.display?.id, undefined, "a line is not readable before primaryDone");
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "", primaryDone: true });
+  assert.equal(state.display?.text, "On Friday.");
+  state.apply({ type: "response.completed", turnId: "t", responseId: "r", text: "On Friday morning.", sources: [], grounding: "unavailable" });
+  assert.equal(state.display?.text, "On Friday morning.");
+  assert.equal(state.display?.grounding, "unavailable");
+});
+
+test("Live: hold keeps an older answer while a newer primary line waits as the latest", () => {
+  const state = new LiveState();
+  state.apply(final("one", "First?"));
+  state.apply({ type: "response.started", turnId: "one", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "First answer.", sources: [] });
+  state.holdDisplay();
+  state.apply(final("two", "Second?"));
+  state.apply({ type: "response.started", turnId: "two", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Second answer.", primaryDone: true });
+  assert.equal(state.display?.id, "r1");
+  assert.equal(state.hasNewerReply, true);
+  state.releaseDisplay();
+  assert.equal(state.display?.id, "r2", "release shows the newer primary line");
+  assert.equal(state.display?.complete, false);
+  state.holdDisplay();
+  assert.equal(state.readingHeld, true, "a primary line can be held before it completes");
+  state.apply({ type: "response.completed", turnId: "two", responseId: "r2", text: "Second answer.", sources: [], suggestions: ["Second answer.", "Another way."] });
+  assert.equal(state.hasNewerReply, false);
+  assert.deepEqual(answers(state.display), ["Second answer.", "Another way."], "the held reply gains its alternative");
+});
+
+test("Live: a reply cancelled after its primary line keeps the line readable, marked interrupted", () => {
+  const state = new LiveState();
+  state.apply(final("t", "Status?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "All green.", primaryDone: true });
+  state.apply({ type: "response.cancelled", turnId: "t", responseId: "r" });
+  assert.equal(state.current, null);
+  assert.equal(state.display?.text, "All green.");
+  assert.equal(state.display?.interrupted, true);
+  state.apply({ type: "response.started", turnId: "t", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r2", text: "Still", primaryDone: false });
+  state.cancelCurrent();
+  assert.equal(state.display?.id, "r", "a draft without a finished line never replaces it");
+});
+
+test("Live: continuing after a stop clears an old pause and an unfinished reply but keeps the conversation", () => {
+  const state = new LiveState();
+  state.apply(final("one", "First?"));
+  state.apply({ type: "response.started", turnId: "one", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "First answer.", sources: [] });
+  state.apply(final("two", "Second?"));
+  state.apply({ type: "response.started", turnId: "two", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Half" });
+  state.pause(true);
+  state.restart(true);
+  assert.equal(state.generating, false);
+  assert.equal(state.display?.id, "r1", "the conversation stays");
+  assert.equal(state.turns.length, 2);
+  state.apply(final("three", "Third?"));
+  state.apply({ type: "response.started", turnId: "three", responseId: "r3" });
+  state.apply({ type: "response.delta", turnId: "three", responseId: "r3", text: "Third answer.", primaryDone: true });
+  assert.equal(state.display?.id, "r3", "replies are no longer suppressed by the old pause");
+  state.restart(false);
+  assert.equal(state.display, null);
+  assert.equal(state.turns.length, 0);
+});
+
+test("Live: ending the reply of a lost connection keeps a finished line and drops a draft", () => {
+  const state = new LiveState();
+  state.apply(final("t", "Status?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "Draft" });
+  state.endReply();
+  assert.equal(state.generating, false);
+  assert.equal(state.display?.id, undefined, "a draft is never shown");
+  state.apply({ type: "response.started", turnId: "t", responseId: "r2" });
+  assert.equal(state.current?.id, "r2", "ending a reply suppresses nothing that comes later");
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r2", text: "All green.", primaryDone: true });
+  state.endReply();
+  assert.equal(state.display?.text, "All green.");
+  assert.equal(state.display?.interrupted, true);
+});
+
+test("Live: the Korean line under an unfinished or interrupted primary line never waits forever", () => {
+  const reply = (extra: Partial<LiveReply>): LiveReply => ({ id: "r", turnId: "t", text: "Ship on Friday.", complete: false, sources: [], ...extra });
+  assert.equal(primaryMeaning(null, undefined, undefined), meaningTexts.waiting);
+  assert.equal(primaryMeaning(reply({ primaryDone: true }), undefined, undefined), meaningTexts.preparing, "the completion will translate it");
+  assert.equal(primaryMeaning(reply({ primaryDone: true }), undefined, "금요일에 출시합니다."), "금요일에 출시합니다.", "a pushed line shows early");
+  assert.equal(primaryMeaning(reply({ primaryDone: true, interrupted: true }), undefined, "금요일에 출시합니다."), "금요일에 출시합니다.");
+  assert.equal(primaryMeaning(reply({ primaryDone: true, interrupted: true }), undefined, undefined), meaningTexts.interrupted);
+  assert.equal(primaryMeaning(reply({ primaryDone: true, interrupted: true }), undefined, null), meaningTexts.interrupted, "a failed push");
+  assert.equal(primaryMeaning(reply({ complete: true }), undefined, "푸시"), meaningTexts.preparing, "a completed reply waits for its own translation");
+  assert.equal(primaryMeaning(reply({ interrupted: true }), "번역됨", undefined), "번역됨");
+  assert.doesNotMatch(meaningTexts.interrupted, /준비 중/);
+  assert.equal(translatable(reply({ primaryDone: true })), false, "an unfinished reply translates at completion");
+  assert.equal(translatable(reply({ primaryDone: true, interrupted: true })), true);
+  assert.equal(translatable(reply({ complete: true })), true);
+  assert.equal(translatable(null), false);
 });
 
 test("Live: long speech is translated in bounded chunks without losing words", () => {

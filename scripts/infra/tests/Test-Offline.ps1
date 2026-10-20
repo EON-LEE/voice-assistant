@@ -122,19 +122,39 @@ try {
     Assert-True ($search.properties.disableLocalAuth -eq $true -and
         -not $search.properties.PSObject.Properties['authOptions']) 'Entra-only Search disables keys without conflicting aadOrApiKey authOptions'
     Assert-True ($search.properties.semanticSearch -eq "[parameters('searchSemanticSearch')]" -and
-        $template.parameters.searchSemanticSearch.defaultValue -eq 'free' -and
-        ($template.parameters.searchSemanticSearch.allowedValues -join ',') -eq 'free,standard') 'Semantic ranker capability is explicit free or standard, default free'
+        $template.parameters.searchSemanticSearch.defaultValue -eq 'standard' -and
+        ($template.parameters.searchSemanticSearch.allowedValues -join ',') -eq 'free,standard') 'Semantic ranker capability is explicit free or standard, default standard (free quota exhaustion fails grounded replies)'
     Assert-True ((@($env | Where-Object name -EQ 'Azure__SearchSemanticConfiguration')[0].value -eq 'meeting-semantic') -and
         (@($env | Where-Object name -EQ 'Azure__SearchMinimumRerankerScore')[0].value -eq '2.0')) 'Runtime semantic configuration and relevance threshold match API contract'
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
-    Assert-True (-not $environment.properties.appLogsConfiguration.PSObject.Properties['destination'] -and
-        -not $environment.properties.appLogsConfiguration.PSObject.Properties['logAnalyticsConfiguration']) 'Log destination/workspace are unset; never send the unsupported literal none'
+    Assert-True ($template.parameters.enableDiagnostics.defaultValue -eq $true -and
+        $environment.properties.appLogsConfiguration -match "if\(parameters\('enableDiagnostics'\)" -and
+        $environment.properties.appLogsConfiguration -match 'azure-monitor') 'Environment logs go to Azure Monitor only when diagnostics are enabled'
+    $workspace = @($template.resources | Where-Object type -EQ 'Microsoft.OperationalInsights/workspaces')[0]
+    Assert-True ($workspace.condition -eq "[parameters('enableDiagnostics')]" -and $workspace.properties.retentionInDays -eq 30 -and
+        $workspace.properties.features.disableLocalAuth -eq $true) 'Diagnostics workspace is conditional, 30-day retention and Entra-only'
+    $insights = @($template.resources | Where-Object type -EQ 'Microsoft.Insights/components')[0]
+    Assert-True ($insights.condition -eq "[parameters('enableDiagnostics')]" -and $insights.properties.DisableLocalAuth -eq $true -and
+        $insights.properties.RetentionInDays -eq 30) 'Application Insights is conditional, Entra-only ingestion and 30-day retention'
+    $diagnostic = @($template.resources | Where-Object type -EQ 'Microsoft.Insights/diagnosticSettings')[0]
+    Assert-True ($diagnostic.condition -eq "[parameters('enableDiagnostics')]" -and $diagnostic.scope -match 'managedEnvironments' -and
+        ($diagnostic.properties.logs.category -join ',') -ceq 'ContainerAppConsoleLogs,ContainerAppSystemLogs' -and
+        -not $diagnostic.properties.PSObject.Properties['metrics']) 'Only console/system log categories export; no request diagnostics'
+    Assert-True ((@($env | Where-Object name -EQ 'Logging__LogLevel__Microsoft.AspNetCore')[0].value -eq 'Warning')) 'Request logging stays at Warning so URLs with one-use tickets are never logged'
+    $publisher = @($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
+        $_.properties.roleDefinitionId -eq "[variables('metricsPublisherRole')]" })
+    Assert-True ($publisher.Count -eq 1 -and $publisher[0].condition -eq "[parameters('enableDiagnostics')]" -and
+        $template.variables.metricsPublisherRole -match '3913510d-42f4-4e42-8a64-420c390055eb') 'Runtime identity may only publish metrics to Application Insights'
+    $container = $app.properties.template.containers[0]
+    Assert-True ($template.parameters.containerCpu.defaultValue -eq '2' -and
+        $container.resources.cpu -eq "[json(parameters('containerCpu'))]" -and
+        $container.resources.memory -match "mul\(int\(parameters\('containerCpu'\)\), 2\)") 'Container defaults to 2 vCPU with memory twice the vCPU in GiB'
     $searchDataRoles = @($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
         $_.properties.roleDefinitionId -eq "[variables('searchDataRole')]" -and $_.properties.principalType -eq 'ServicePrincipal' })
     Assert-True ($searchDataRoles.Count -eq 1 -and $template.variables.searchDataRole -match '8ebe5a00-799e-43f5-93ac-243d3dce84a7' -and -not ($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
         $_.properties.roleDefinitionId -match '1407120a-92aa-4202-b7e9-c0e197c71c8f' })) 'Runtime identity has Search Index Data Contributor for per-user materials, no redundant Reader'
     Assert-True ((@($env | Where-Object name -EQ 'Session__MaxMinutes')[0].value -eq "[string(parameters('sessionMaxMinutes'))]" -and
-        $template.parameters.sessionMaxMinutes.defaultValue -eq 90 -and $template.parameters.sessionMaxMinutes.minValue -eq 5 -and
+        $template.parameters.sessionMaxMinutes.defaultValue -eq 180 -and $template.parameters.sessionMaxMinutes.minValue -eq 5 -and
         $template.parameters.sessionMaxMinutes.maxValue -eq 180)) 'Session maximum is an explicit bounded parameter'
     $blobRoles = @($template.resources | Where-Object { $_.type -eq 'Microsoft.Authorization/roleAssignments' -and
         $_.properties.roleDefinitionId -match 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' })

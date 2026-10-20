@@ -14,6 +14,7 @@
           <div class="live-status-row">
             <span id="capture-dot" class="live-dot" aria-hidden="true"></span>
             <span id="capture-status" class="live-capture">마이크 꺼짐 · 우클릭으로 설정 및 시작</span>
+            <meter id="live-level" class="live-level" min="0" max="1" value="0" aria-label="입력 음량" hidden></meter>
             <span class="live-version">WEB v2</span>
           </div>
           <div class="live-quick" role="group" aria-label="빠른 설정">
@@ -27,6 +28,7 @@
           </div>
           <p id="quick-note" class="live-note" role="status" hidden></p>
           <p id="session-error" class="live-error" role="alert" hidden></p>
+          <button id="live-action" class="live-action" type="button" hidden>다시 공유</button>
         </header>
         <section class="live-answers" aria-label="내가 말할 추천 답변">
           <div id="caption-block" hidden>
@@ -92,16 +94,18 @@
         <label>오디오 소스
           <select id="audio-source">
             <option value="microphone">마이크 (대면 회의실 등)</option>
-            <option value="display">탭/시스템 오디오 (Teams 등 · 헤드셋 사용 시 필수)</option>
+            <option value="display">탭/시스템 오디오 (Teams 등 · 헤드셋 사용 시)</option>
           </select>
         </label>
         <div id="microphone-settings">
           <label>마이크
             <select id="mic-device"><option value="">브라우저 기본 마이크</option></select>
           </label>
-          <meter id="input-level" min="0" max="1" value="0" aria-label="입력 음량"></meter>
         </div>
-        <p id="display-hint" class="live-hint" hidden>라이브 시작 시 뜨는 공유 선택창에서 <strong>Teams 탭(또는 화면)을 선택</strong>하고 <strong>"탭 오디오 공유"/"시스템 오디오 공유"를 반드시 체크</strong>하세요. 헤드셋을 써도 Teams 소리를 직접 가져옵니다.</p>
+        <p id="display-hint" class="live-hint" hidden>라이브 시작 시 뜨는 공유 선택창에서 <strong>Teams 웹 탭</strong>을 고르고 <strong>'탭 오디오도 공유'</strong>를 켜거나, Teams 데스크톱 앱이면 <strong>'전체 화면'</strong>을 고르고 <strong>'시스템 오디오 공유'</strong>를 체크하세요. 창(Window) 공유에는 소리가 없고, 시스템 오디오는 Windows 기본 출력 장치의 소리만 가져옵니다.</p>
+        <label>입력 음량
+          <meter id="input-level" min="0" max="1" value="0"></meter>
+        </label>
         <label>문서검색
           <select id="response-mode">
             <option value="grounded">사용 · 항상 내 문서 검색 (기본)</option>

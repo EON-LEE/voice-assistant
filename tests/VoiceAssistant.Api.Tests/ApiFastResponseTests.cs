@@ -159,8 +159,12 @@ public sealed partial class ApiTests
         Assert.True(completion.GetProperty("retrievalPrefetched").GetBoolean());
         Assert.Equal("knowledge", completion.GetProperty("responseRoute").GetString());
         Assert.Equal(fail ? "unavailable" : "no_matches", completion.GetProperty("grounding").GetString());
+        Assert.Empty(completion.GetProperty("sources").EnumerateArray());
         Assert.Equal(1, provider.Retrievals);
-        Assert.Equal(fail ? 0 : 1, provider.Answers);
+        // A failed search still gets a general model reply, asked for with the unavailable grounding.
+        Assert.Equal(1, provider.Answers);
+        Assert.Equal(fail ? "unavailable" : "no_matches", provider.LastGrounding?.Status);
+        Assert.Equal("Here is a concise response grounded only in the supplied context.", completion.GetProperty("text").GetString());
     }
 
     [Fact]
@@ -182,7 +186,7 @@ public sealed partial class ApiTests
         Assert.Equal("unavailable", failed.GetProperty("grounding").GetString());
         Assert.True(failed.GetProperty("retrievalPrefetched").GetBoolean());
         Assert.Equal(1, provider.Retrievals);
-        Assert.Equal(0, provider.Answers);
+        Assert.Equal(1, provider.Answers);
 
         provider.AutomaticRetrieval = true;
         await Send(socket, """{"type":"response.request"}""");
@@ -192,7 +196,7 @@ public sealed partial class ApiTests
         Assert.Equal("knowledge", recovered.GetProperty("responseRoute").GetString());
         Assert.NotEqual(failed.GetProperty("responseId").GetString(), recovered.GetProperty("responseId").GetString());
         Assert.Equal(2, provider.Retrievals);
-        Assert.Equal(1, provider.Answers);
+        Assert.Equal(2, provider.Answers);
     }
 
     [Fact]
@@ -594,6 +598,7 @@ public sealed partial class ApiTests
         public SessionOptions? SpeechOptions { get; private set; }
         public SessionOptions? AnswerOptions { get; private set; }
         public string? Route { get; private set; }
+        public Grounding? LastGrounding { get; private set; }
         public Action<Transcript> Emit { get; private set; } = _ => throw new InvalidOperationException();
         public int Retrievals;
         public int Answers;
@@ -629,6 +634,7 @@ public sealed partial class ApiTests
             LastHistory = conversation.ToArray();
             AnswerOptions = options;
             Route = route;
+            LastGrounding = grounding;
             if (FailFirstAnswer && answerNumber == 1)
             {
                 FirstAnswerStarted.TrySetResult();

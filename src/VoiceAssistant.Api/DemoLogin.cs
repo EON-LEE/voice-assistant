@@ -18,28 +18,35 @@ public sealed class DemoLoginSettings
 {
     public const string Scheme = "DemoLogin";
     public const string Issuer = "voice-assistant-demo";
+    /// <summary>A shared-password token cannot be revoked except by rotating the key, so it lives a week unless configured.</summary>
+    public const int DefaultTokenDays = 7;
+    public const int MaxTokenDays = 30;
     public string Username { get; init; } = "";
     public string Password { get; init; } = "";
     public string ObjectId { get; init; } = "";
     public string SigningKey { get; init; } = "";
-    public int TokenDays { get; init; } = 30;
+    public int TokenDays { get; init; } = DefaultTokenDays;
     public bool Enabled => Username.Length > 0;
 
     public static DemoLoginSettings Read(IConfiguration config)
     {
+        var days = config["DemoLogin:TokenDays"];
         var settings = new DemoLoginSettings
         {
             Username = config["DemoLogin:Username"] ?? "",
             Password = config["DemoLogin:Password"] ?? "",
             ObjectId = config["DemoLogin:ObjectId"] ?? "",
             SigningKey = config["DemoLogin:SigningKey"] ?? "",
-            TokenDays = int.TryParse(config["DemoLogin:TokenDays"], out var days) ? days : 30
+            // An unreadable value is rejected below rather than silently replaced by the default.
+            TokenDays = days is null ? DefaultTokenDays :
+                int.TryParse(days, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+                    ? parsed : 0
         };
         if (!settings.Enabled) return settings;
         if (settings.Password.Length == 0 || !Guid.TryParseExact(settings.ObjectId, "D", out _) ||
-            KeyBytes(settings.SigningKey) is not { Length: >= 32 } || settings.TokenDays is < 1 or > 90)
+            KeyBytes(settings.SigningKey) is not { Length: >= 32 } || settings.TokenDays is < 1 or > MaxTokenDays)
             throw new InvalidOperationException(
-                "DemoLogin requires Username, Password, a GUID ObjectId, a base64 SigningKey of at least 32 bytes and TokenDays 1..90.");
+                "DemoLogin requires Username, Password, a GUID ObjectId, a base64 SigningKey of at least 32 bytes and TokenDays 1..30.");
         return settings;
     }
 

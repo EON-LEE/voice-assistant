@@ -166,7 +166,10 @@ internal sealed class PartialRetrieval : IAsyncDisposable
                 }
                 catch (OperationCanceledException)
                 {
-                    current.Result.TrySetResult(new(null, new("grounding_unavailable", "Prefetched grounding was cancelled or timed out.")));
+                    current.Result.TrySetResult(new(null, new("grounding_unavailable", "Prefetched grounding was cancelled or timed out.")
+                    {
+                        Retrieval = new("timeout", true, nameof(OperationCanceledException), null, null, false)
+                    }));
                 }
                 finally
                 {
@@ -189,9 +192,13 @@ internal sealed class PartialRetrieval : IAsyncDisposable
             cancellation.ThrowIfCancellationRequested();
             return new(grounding, null);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            return new(null, new("grounding_unavailable", "Grounding is unavailable. Please retry."));
+            // Every failure becomes grounding_unavailable, keeping only the content-free cause for the reply's log line.
+            return new(null, new("grounding_unavailable", "Grounding is unavailable. Please retry.")
+            {
+                Retrieval = RetrievalFailure.From(exception)
+            });
         }
     }
 

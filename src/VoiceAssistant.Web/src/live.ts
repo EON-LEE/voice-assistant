@@ -1,16 +1,20 @@
 import "./live.css";
 import workletUrl from "./audio.worklet.ts?worker&url";
 import { BrowserAuth } from "./auth.js";
-import { DisplayAudioSource, MicrophoneAudioSource } from "./capture.js";
-import { MeetingSession } from "./session.js";
+import { CaptureError, DisplayAudioSource, MicrophoneAudioSource, type AudioSource, type CaptureErrorKind,
+  type CaptureSourceKind } from "./capture.js";
 import { SocketTransport, asError } from "./transport.js";
 import { defaultOptions, type SessionOptions } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
-import type { ServerEvent } from "./protocol.js";
-import { LiveState, answers, isTransientFailure, translationChunks, type LiveReply, type LiveTurn } from "./live-state.js";
+import type { Grounding, ServerEvent } from "./protocol.js";
+import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply,
+  type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
 import { parseSettings, pendingUpdate, settingsKey, withDocumentSearch, withResponseMode, documentSearchOn,
   type LiveSettings, type ResponseMode } from "./live-settings.js";
+import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
+import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, type RecoveryAction } from "./live-errors.js";
+import { LatencyMarks, debugEnabled } from "./live-latency.js";
 
 let liveDocument = document;
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -24,17 +28,20 @@ const micDevice = $<HTMLSelectElement>("mic-device"), responseMode = $<HTMLSelec
 const topic = $<HTMLInputElement>("topic");
 const audioSource = $<HTMLSelectElement>("audio-source");
 const microphoneSettings = $("microphone-settings"), displayHint = $("display-hint");
+/** LiveCoach.exe (WebView2) or a browser tab: the share picker offers different surfaces in each. */
+const host = liveHost(window);
 
 const auth = new BrowserAuth(undefined, { persistent: true });
 const coach = new CoachClient((path, init) => auth.coachRequest(path, init), () => auth.isFake);
 const state = new LiveState();
 
-const maxReconnects = 20;
-let session: MeetingSession | undefined;
-let active = false, ready = false, paused = false, reconnecting = false;
-let attempt = 0, readyAt = 0;
-let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-let connectionMessage = "", warning = "";
+let paused = false;
+/** One-off notes (sign-in results, another tab took over); cleared by the next start. */
+let infoMessage = "";
+/** Signed in first from a Start click: sharing needs a click of its own, offered inline. */
+let startOffered = false;
+/** Whether that offered start continues the conversation on screen. */
+let offeredResume = false;
 let translations = new AbortController();
 const meetingKo = new Map<string, string>();
 const failedTurns = new Map<string, string>();
@@ -52,11 +59,22 @@ let canUpdate = false, updating = false;
 let quickNote = "";
 const recentTranslatedTurns = 6;
 
+function storage(): Storage | undefined {
+  try { return localStorage; } catch { return undefined; }
+}
+const debug = debugEnabled(location.search, storage());
+const latency = new LatencyMarks(() => performance.now(), debug ? name => { performance.mark(name); } : undefined);
+
 function loadSettings(): LiveSettings {
   try { return parseSettings(localStorage.getItem(settingsKey)); } catch { return parseSettings(null); }
 }
 let settings = loadSettings();
 responseMode.value = settings.responseMode; topic.value = settings.topic; audioSource.value = settings.audioSource;
+if (host === "app") {
+  // WebView2 has no browser tabs to pick; only a whole screen carries (system) audio there.
+  displayHint.textContent = "라이브 시작 시 뜨는 공유 선택창에서 '전체 화면'을 고르고 '시스템 오디오 공유'를 체크하세요. "
+    + "창(Window) 공유에는 소리가 없습니다. 시스템 오디오는 Windows 기본 출력 장치의 소리만 가져옵니다.";
+}
 function renderAudioSource(): void {
   const display = audioSource.value === "display";
   microphoneSettings.hidden = display; displayHint.hidden = !display;
@@ -92,7 +110,7 @@ responseMode.addEventListener("change", () => changeSettings(withResponseMode(se
 
 /** Makes the connected session match the settings. A change reaches the next reply; a reply already under way keeps its own. */
 function syncSession(): void {
-  if (!ready || !session) return;
+  if (!controller.isReady) return;
   const update = pendingUpdate(applied, settings);
   if (!update) { quickNote = ""; return; }
   if (!canUpdate) {
@@ -102,7 +120,7 @@ function syncSession(): void {
   }
   quickNote = "";
   if (updating) return;
-  session.update(update);
+  controller.update(update);
   updating = true;
 }
 /** Forgets what the last connection accepted; the next `session.ready` says it again. */
@@ -110,115 +128,161 @@ function resetUpdate(): void { canUpdate = updating = false; quickNote = ""; }
 
 function sessionOptions(): SessionOptions {
   // endSilenceMs is required by the options validator but has no effect under semantic segmentation.
-  return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
+  const options: SessionOptions = { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
     endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 1000, replyKorean: settings.showKorean };
+  startedMode = options.responseMode;
+  return options;
 }
 
-// ---------- Live session lifecycle with automatic reconnect ----------
+// ---------- Capture: one source for the whole live session ----------
 
-async function startLive(): Promise<void> {
-  if (active) return;
-  try {
-    const config = await auth.initialize();
-    // Uses the cached account first; a popup appears only when Microsoft requires sign-in again.
-    if (config.mode === "Azure" && !(await auth.verify())) await auth.signIn();
-  } catch (error) {
-    connectionMessage = `${auth.isDemo ? "로그인" : "Microsoft 계정 연결"} 실패: ${asError(error).message}`;
-    render(); return;
-  }
-  if (settings.audioSource === "display" ? !navigator.mediaDevices?.getDisplayMedia : !navigator.mediaDevices?.getUserMedia) {
-    connectionMessage = settings.audioSource === "display"
-      ? "이 브라우저에서는 탭/시스템 오디오 공유를 사용할 수 없습니다. HTTPS의 최신 Edge/Chrome을 사용하세요."
-      : "이 브라우저에서는 마이크를 사용할 수 없습니다. HTTPS의 최신 Edge/Chrome을 사용하세요.";
-    render(); return;
-  }
-  translations.abort(); translations = new AbortController();
-  state.resetSession(); meetingKo.clear(); failedTurns.clear(); requestedTurns.clear(); replyKo.clear(); pushes.clear(); pushing = false;
-  pushedAtStart.clear(); resetUpdate();
-  active = true; paused = false; attempt = 0; readyAt = 0; connectionMessage = ""; warning = "";
-  liveChannel?.postMessage("started");
-  connect();
+/** Picker hints; a browser ignores what it does not know. The video track is only the carrier browsers require for audio. */
+interface DisplayCaptureOptions extends DisplayMediaStreamOptions {
+  systemAudio?: "include" | "exclude";
+  surfaceSwitching?: "include" | "exclude";
+  selfBrowserSurface?: "include" | "exclude";
+  monitorTypeSurfaces?: "include" | "exclude";
 }
-
-function connect(): void {
-  reconnectTimer = undefined;
+function displayOptions(): DisplayCaptureOptions {
+  return {
+    video: host === "app" ? { frameRate: { max: 5 }, displaySurface: "monitor" } : { frameRate: { max: 5 } },
+    audio: true, systemAudio: "include", surfaceSwitching: "include", selfBrowserSurface: "exclude", monitorTypeSurfaces: "include",
+  };
+}
+function showLevel(level: number): void {
+  for (const id of ["input-level", "live-level"]) {
+    const meter = liveDocument.getElementById(id) ?? document.getElementById(id);
+    if (meter instanceof HTMLMeterElement) meter.value = level;
+  }
+}
+function createSource(kind: CaptureSourceKind, hooks: SourceHooks): AudioSource {
+  const level = (value: number): void => { showLevel(value); hooks.level(value); };
+  const warning = (_message: string, warned?: CaptureErrorKind): void => hooks.warning(warned === "muted" ? "muted" : null);
   const shared = {
     context: () => new AudioContext(),
     node: (context: AudioContext) => new AudioWorkletNode(context, "meeting-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] }),
-    workletUrl,
+    workletUrl, onStall: hooks.stall, onLevel: level, onWarning: warning,
   };
-  const source = settings.audioSource === "display" ? new DisplayAudioSource({
+  if (kind === "display") return new DisplayAudioSource({
     ...shared,
     getDisplayMedia: () => {
-      if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("이 브라우저에서는 탭/시스템 오디오 공유를 사용할 수 없습니다. HTTPS의 최신 Edge/Chrome을 사용하세요.");
-      return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      if (!navigator.mediaDevices?.getDisplayMedia) throw new CaptureError("unsupported", "display", "Screen audio sharing is not available here.");
+      return navigator.mediaDevices.getDisplayMedia(displayOptions());
     },
-  }) : new MicrophoneAudioSource({
+  });
+  return new MicrophoneAudioSource({
     ...shared,
-    getUserMedia: constraints => navigator.mediaDevices.getUserMedia(constraints),
+    getUserMedia: constraints => {
+      if (!navigator.mediaDevices?.getUserMedia) throw new CaptureError("unsupported", "microphone", "Microphone capture is not available here.");
+      return navigator.mediaDevices.getUserMedia(constraints);
+    },
     devices: navigator.mediaDevices,
     deviceId: settings.deviceId || undefined,
     onDevices: fillDevices,
-    onWarning: message => { warning = message; render(); },
-    onLevel: level => { $<HTMLMeterElement>("input-level").value = level; },
   });
-  const transport = new SocketTransport(() => auth.endpoint(false));
-  const options = sessionOptions();
-  startedMode = options.responseMode;
-  const current: MeetingSession = new MeetingSession(source, transport,
-    event => { if (session === current) onEvent(event); },
-    () => { if (session === current) render(); },
-    error => { if (session === current) onFailure(error); },
-    options);
-  session = current;
-  render();
-  void current.start();
 }
 
-function onFailure(error: Error): void {
-  ready = false; pushing = false; pushes.expire(); resetUpdate();
-  const message = error.message;
-  if (!active) { render(); return; }
-  if (!isTransientFailure(message)) {
-    active = false; reconnecting = false;
-    connectionMessage = `세션 종료: ${message} 우클릭 → 라이브 시작으로 다시 연결하세요.`;
+const controller = new LiveController({
+  createSource,
+  createTransport: () => new SocketTransport(() => auth.endpoint(false)),
+  options: sessionOptions,
+  onEvent,
+  onDisconnect,
+  onChange: schedule,
+});
+
+// ---------- Live session lifecycle ----------
+
+function resetConversation(): void {
+  translations.abort(); translations = new AbortController();
+  state.resetSession(); meetingKo.clear(); failedTurns.clear(); requestedTurns.clear(); replyKo.clear(); pushes.clear();
+  pushedAtStart.clear();
+}
+
+/**
+ * Starts from a click, so the share picker (or microphone prompt) opens inside it. `resume` keeps the conversation on
+ * screen ("다시 공유" / "다시 시작"). Reconnects never come back here: they keep the source and only reconnect the server.
+ */
+function startLive(resume = false): void {
+  if (controller.active) return;
+  const kind = settings.audioSource;
+  infoMessage = ""; startOffered = false;
+  if (kind === "display" ? !navigator.mediaDevices?.getDisplayMedia : !navigator.mediaDevices?.getUserMedia) {
+    infoMessage = captureMessage("unsupported", kind, host);
     render(); return;
   }
-  // A session that stayed up resets the backoff; repeated quick failures back off up to 3 seconds.
-  attempt = readyAt && Date.now() - readyAt > 30000 ? 1 : attempt + 1;
-  readyAt = 0;
-  if (attempt > maxReconnects) {
-    active = false; reconnecting = false;
-    connectionMessage = `연결이 계속 끊깁니다 (${message}). 네트워크를 확인하고 다시 시작하세요.`;
-    render(); return;
-  }
-  reconnecting = true;
-  if (state.current && !state.current.complete) state.cancelCurrent();
-  state.clearError();
-  connectionMessage = `연결이 끊겨 자동 재연결 중 (${attempt}/${maxReconnects}) · 대화와 추천은 유지됩니다`;
+  // Without a signed-in account, sign in from this click first; a share picker then needs a click of its own.
+  if (auth.configured && !auth.isFake && !auth.signedIn) { void signInFirst(resume); return; }
+  // Continuing keeps the conversation, but an old pause or an unfinished reply would hide every new reply.
+  if (resume) state.restart(true); else resetConversation();
+  paused = false; pushing = false; resetUpdate();
+  liveChannel?.postMessage("started");
+  controller.start(kind);
   render();
-  reconnectTimer = setTimeout(() => { if (active) connect(); }, Math.min(3000, 300 * 2 ** Math.min(attempt - 1, 4)));
+}
+
+async function signInFirst(resume: boolean): Promise<void> {
+  try { await auth.signIn(); }
+  catch (error) {
+    infoMessage = `${auth.isDemo ? "로그인" : "Microsoft 계정 연결"} 실패: ${asError(error).message}`;
+    render(); return;
+  }
+  offerStart(resume, "로그인되었습니다. '라이브 시작'을 눌러 공유할 화면을 고르세요.");
+}
+
+/** After an await, only a microphone may start by itself; a share picker needs the user's next click. */
+function offerStart(resume: boolean, message: string): void {
+  if (settings.audioSource === "microphone") { startLive(resume); return; }
+  startOffered = true; offeredResume = resume;
+  infoMessage = message;
+  render();
+}
+
+async function signInAndResume(): Promise<void> {
+  try { await auth.signIn(); }
+  catch (error) { infoMessage = `로그인 실패: ${asError(error).message}`; render(); return; }
+  infoMessage = "";
+  if (controller.needsSignIn) controller.resume();
+  else if (!controller.active) { offerStart(true, "로그인되었습니다. '라이브 시작'을 눌러 다시 공유하세요."); return; }
+  render();
 }
 
 async function stopLive(message = ""): Promise<void> {
-  active = false; reconnecting = false; ready = false; pushing = false; pushes.expire(); resetUpdate();
-  clearTimeout(reconnectTimer); reconnectTimer = undefined;
-  const current = session; session = undefined;
-  connectionMessage = message;
+  pushing = false; pushes.expire(); resetUpdate();
+  infoMessage = message; startOffered = false;
+  const stopped = controller.stop();
   render();
-  await current?.stop();
+  await stopped;
   render();
+}
+
+/** The recovery step the inline button offers, if any. */
+function currentAction(): RecoveryAction | "start" | undefined {
+  if (startOffered && !controller.active) return "start";
+  return controller.failure?.action;
+}
+$("live-action").addEventListener("click", () => {
+  const action = currentAction();
+  if (action === "signin") void signInAndResume();
+  else if (action === "start") startLive(offeredResume);
+  else if (action === "reshare" || action === "restart") startLive(true);
+});
+
+/** A dropped or replaced connection: replies in flight end, the next `session.ready` restates the capabilities. */
+function onDisconnect(): void {
+  pushing = false; pushes.expire(); resetUpdate();
+  state.endReply();
+  state.clearError();
+  schedule();
 }
 
 function onEvent(e: ServerEvent): void {
   // With Korean off nothing is recorded, even while the server has not yet stopped sending it.
-  if (e.type === "response.korean") { if (settings.showKorean) pushes.record(e); return; }
+  if (e.type === "response.korean") { if (settings.showKorean) { pushes.record(e); schedule(); } return; }
   state.apply(e);
   if (e.type === "session.ready") {
-    ready = true; reconnecting = false; readyAt = Date.now(); connectionMessage = "";
     pushing = e.replyKorean === true; canUpdate = e.sessionUpdate === true; updating = false;
     applied = { responseMode: startedMode, replyKorean: pushing };
-    if (paused) session?.pause(true);
     // A setting may have changed between connecting and being ready.
     syncSession();
   }
@@ -228,10 +292,15 @@ function onEvent(e: ServerEvent): void {
     syncSession();
   }
   if (e.type === "response.started" && pushing && settings.showKorean) pushedAtStart.add(e.responseId!);
-  if (e.type === "transcript.final" && settings.showKorean && settings.showCaptions) void translateTurn(e.turnId!, e.text!);
-  const completed = state.current;
-  if (e.type === "response.completed" && settings.showKorean && completed && completed.id === e.responseId && completed.complete)
-    void translateReply(completed);
+  if (e.type === "transcript.final") {
+    latency.final(e.turnId!);
+    if (settings.showKorean && settings.showCaptions) void translateTurn(e.turnId!, e.text!);
+  }
+  if (e.type === "response.completed") {
+    latency.completed(e.responseId!, e.turnId!);
+    const completed = state.current;
+    if (settings.showKorean && completed && completed.id === e.responseId && completed.complete) void translateReply(completed);
+  }
   schedule();
 }
 
@@ -280,7 +349,7 @@ async function translateReply(reply: LiveReply, retry = false): Promise<void> {
     catch (error) { if (!signal.aborted) result[index] = `${failureLabel(error)} · 우클릭으로 재시도`; }
     if (!signal.aborted) schedule();
   }));
-  const keep = new Set([state.current?.id, state.lastCompleted?.id, state.display?.id]);
+  const keep = new Set([state.current?.id, state.lastCompleted?.id, state.shown?.id, state.display?.id]);
   for (const id of replyKo.keys()) if (!keep.has(id)) replyKo.delete(id);
   for (const id of pushedAtStart) if (!keep.has(id)) pushedAtStart.delete(id);
   pushes.prune(keep);
@@ -294,7 +363,7 @@ async function replyLine(responseId: string, index: number, english: string, ret
 function retryTranslations(): void {
   if (!settings.showKorean) return;
   const display = state.display;
-  if (display?.complete) void translateReply(display, true);
+  if (translatable(display)) void translateReply(display, true);
   if (settings.showCaptions) for (const [turnId, text] of failedTurns) void translateTurn(turnId, text);
 }
 
@@ -307,7 +376,7 @@ function dropKorean(): void {
 /** Turning Korean (or captions) on translates what is already on screen, so the meanings do not wait for the next reply. */
 function translateOnScreen(): void {
   const display = state.display;
-  if (display?.complete && !replyKo.has(display.id)) void translateReply(display, true);
+  if (translatable(display) && !replyKo.has(display.id)) void translateReply(display, true);
   if (!settings.showCaptions) return;
   for (const turn of state.turns.filter(value => value.final).slice(-recentTranslatedTurns))
     if (!requestedTurns.has(turn.id)) void translateTurn(turn.id, turn.text);
@@ -321,26 +390,54 @@ function turnKorean(turn: LiveTurn): string | undefined {
 
 // ---------- Focused reading view ----------
 
-let frame = 0;
-function schedule(): void { if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); }); }
+let pending = false;
+/** One render per frame of the window that shows the panel; a timer covers a window that does not paint (hidden opener). */
+function schedule(): void {
+  if (pending) return;
+  pending = true;
+  const view = liveDocument.defaultView && !liveDocument.defaultView.closed ? liveDocument.defaultView : window;
+  const run = (): void => { if (!pending) return; pending = false; render(); };
+  view.requestAnimationFrame(run);
+  view.setTimeout(run, 100);
+}
 let renderedConversation = "";
 
-function setText(id: string, text: string): void {
-  const element = $(id);
+function write(element: HTMLElement, text: string): void {
   if (element.textContent !== text) element.textContent = text;
+}
+function setText(id: string, text: string): void { write($(id), text); }
+
+/** What the error line says, most important first. */
+function statusMessage(): string {
+  const failure = controller.failure;
+  if (failure) return liveMessage(failure, host);
+  if (controller.phase === "reconnecting" && !controller.rollingOver)
+    return reconnectText(controller.attempt, liveLimits.maxReconnects, controller.offline);
+  if (infoMessage) return infoMessage;
+  if (controller.warning) return captureMessage(controller.warning, controller.source, host);
+  return controller.notice ? liveMessage(controller.notice, host) : "";
 }
 
 function render(): void {
-  const capture = reconnecting ? "reconnecting" : ready ? paused ? "paused" : "on" : "off";
-  const sourceLabel = settings.audioSource === "display" ? "탭/시스템 오디오" : "마이크";
-  panel.dataset.capture = capture;
-  $("capture-status").textContent = reconnecting ? `재연결 중 · ${sourceLabel} 자동 재개`
-    : ready && paused ? `${sourceLabel} 일시정지 · 오디오 전송 중지`
-    : ready ? "듣는 중 · 영어 · 이전 대화 맥락 연결"
-    : active ? "연결 중…" : `${sourceLabel} 꺼짐 · 우클릭으로 설정 및 시작`;
-  const error = connectionMessage || state.error || warning;
-  const errorLine = $("session-error");
-  errorLine.textContent = error; errorLine.hidden = !error;
+  pending = false;
+  const phase = controller.phase, live = phase === "live", reconnecting = phase === "reconnecting";
+  const source = controller.active ? controller.source : settings.audioSource;
+  const sourceLabel = source === "display" ? "탭/시스템 오디오" : "마이크";
+  panel.dataset.capture = reconnecting ? "reconnecting" : live ? paused ? "paused" : "on" : "off";
+  setText("capture-status", reconnecting
+    ? controller.rollingOver ? `새 세션으로 이어서 듣는 중 · ${sourceLabel} 계속 켜짐`
+      : controller.needsSignIn ? `로그인 필요 · ${sourceLabel} 계속 켜짐`
+      : controller.offline ? `네트워크 대기 중 · ${sourceLabel} 계속 켜짐` : `재연결 중 · ${sourceLabel} 계속 켜짐`
+    : live && paused ? `${sourceLabel} 일시정지 · 오디오 전송 중지`
+    : live ? "듣는 중 · 영어 · 이전 대화 맥락 연결"
+    : phase === "starting" ? source === "display" ? "공유할 화면 선택 중…" : "마이크 준비 중…"
+    : phase === "connecting" ? "연결 중…" : `${sourceLabel} 꺼짐 · 우클릭으로 설정 및 시작`);
+  setHidden("live-level", !controller.isCapturing);
+  const message = statusMessage();
+  setText("session-error", message); setHidden("session-error", !message);
+  const action = currentAction();
+  setHidden("live-action", !action);
+  if (action) setText("live-action", actionLabels[action]);
   renderQuick();
   renderConversation();
   renderSuggestions();
@@ -369,17 +466,19 @@ function renderQuick(): void {
 }
 
 function renderConversation(): void {
+  // Hidden captions are not rebuilt; switching them on renders the latest turns at once.
+  if (!settings.showCaptions) return;
   const recent = state.turns.slice(-12);
   const signature = JSON.stringify(recent.map(turn => [turn.id, turn.revision, turn.final, turnKorean(turn) ?? null]));
   if (signature === renderedConversation) return;
   renderedConversation = signature;
-  const host = $("conversation");
+  const conversation = $("conversation");
   if (!recent.length) {
     const waiting = document.createElement("p"); waiting.className = "live-waiting";
     waiting.textContent = "영어 대화를 기다리고 있어요.";
-    host.replaceChildren(waiting); return;
+    conversation.replaceChildren(waiting); return;
   }
-  host.replaceChildren(...recent.map((turn, index) => {
+  conversation.replaceChildren(...recent.map((turn, index) => {
     const line = document.createElement("div");
     line.className = index === recent.length - 1 ? "live-line current" : "live-line";
     const en = document.createElement("p");
@@ -393,50 +492,62 @@ function renderConversation(): void {
     }
     return line;
   }));
-  host.scrollTop = host.scrollHeight;
+  conversation.scrollTop = conversation.scrollHeight;
 }
+
+const groundingBadges: Readonly<Record<Grounding, string>> = {
+  grounded: "문서 인용 있음 · 내용 확인 필요", no_matches: "문서 근거 없음 · 사실 확인 필요",
+  unavailable: "자료 확인 불가 · 사실 답변에 의존하지 마세요", disabled: "문서 검색 미사용 · 대화 맥락만 사용",
+};
+const groundingDetails: Readonly<Record<Grounding, string>> = {
+  grounded: "근거 있음 · 내 업로드 문서", no_matches: "문서 근거 없음 · 사실 확인 필요",
+  unavailable: "자료 확인 불가 · 문서 검색이 실패해 일반적인 답변만 보여 줍니다", disabled: "이번 답변은 문서 검색을 사용하지 않음",
+};
 
 function renderSuggestions(): void {
   const display = state.display, values = answers(display);
+  const shown = state.shown;
+  if (shown) latency.shownReply(shown.id, shown.turnId, shown.complete);
   const ko = display ? replyKo.get(display.id) ?? [] : [];
   setText("answer-text", values[0] ?? "답변이 완성되면 여기에 표시됩니다.");
   if (settings.showKorean) {
-    setText("answer-korean", ko[0] ?? (display ? "한국어 번역 준비 중…" : "영어 추천 답변의 한국어 뜻이 함께 표시됩니다."));
-    setText("alternative-korean", ko[1] ?? "한국어 번역 준비 중…");
+    setText("answer-korean", primaryMeaning(display, ko[0], display ? pushes.peek(display.id, 0) : undefined));
+    setText("alternative-korean", ko[1] ?? meaningTexts.preparing);
   }
-  $("alternative-card").hidden = values.length < 2;
+  setHidden("alternative-card", values.length < 2);
   setText("alternative-text", values[1] ?? "");
-  const generating = ready && state.generating;
+  const generating = controller.isReady && state.generating;
+  const finishing = !!display && generating && state.current?.id === display.id;
   const previous = !!display && (state.hasNewerReply || generating && state.current?.id !== display.id);
   const myTurn = !previous && !!display?.respondNow;
-  $("primary-label").textContent = previous ? "이전 질문용 답변" : myTurn ? "지금 말할 추천" : "추천 영어 답변";
+  setText("primary-label", previous ? "이전 질문용 답변" : myTurn ? "지금 말할 추천" : "추천 영어 답변");
   panel.querySelector(".live-card.primary")!.classList.toggle("my-turn", myTurn);
-  panel.querySelector<HTMLElement>(".live-answers")!.dataset.previous = String(previous);
+  const answersSection = panel.querySelector<HTMLElement>(".live-answers")!;
+  if (answersSection.dataset.previous !== String(previous)) answersSection.dataset.previous = String(previous);
   setText("question-text", display?.question ?? state.turns.find(turn => turn.id === display?.turnId)?.text
     ?? (display ? "이전 대화" : state.latest?.text ?? "영어 대화를 기다리고 있어요."));
-  $("reading-status").textContent = state.readingHeld
+  setText("reading-status", state.readingHeld
     ? state.hasNewerReply ? "새 답변 도착 · 고정을 해제하면 표시합니다"
       : generating ? "화면 고정됨 · 새 답변 준비 중"
         : "화면 고정됨 · 오디오 전송 상태는 위에서 확인하세요"
-    : generating ? display ? "새 답변 준비 중 · 아래는 이전 질문용 답변" : "답변 준비 중 · 완성되면 표시합니다"
-      : display ? "추천 문장입니다 · 내용 확인 후 사용하세요"
-        : active ? "듣는 중 · 답변이 완성되면 표시합니다" : "우클릭으로 설정 / 라이브 시작";
+    : finishing ? "추천 문장입니다 · 대안과 근거를 확인하는 중"
+      : generating ? display ? "새 답변 준비 중 · 아래는 이전 질문용 답변" : "답변 준비 중 · 완성되면 표시합니다"
+        : display?.interrupted ? "답변 생성이 중단되었습니다 · 근거를 확인하지 못했습니다"
+          : display ? "추천 문장입니다 · 내용 확인 후 사용하세요"
+            : controller.active ? "듣는 중 · 답변이 완성되면 표시합니다" : "우클릭으로 설정 / 라이브 시작");
   const hold = $<HTMLButtonElement>("hold-answer");
   hold.disabled = !display;
-  hold.setAttribute("aria-pressed", String(state.readingHeld));
-  hold.textContent = state.readingHeld ? state.hasNewerReply ? "새 답변 보기" : "고정 해제" : "답변 고정";
-  $("continuity").textContent = "추천은 실제로 말한 내용이 아닙니다. 화면 고정은 오디오 전송을 중지하지 않습니다.";
+  setPressed("hold-answer", state.readingHeld);
+  write(hold, state.readingHeld ? state.hasNewerReply ? "새 답변 보기" : "고정 해제" : "답변 고정");
+  setText("continuity", "추천은 실제로 말한 내용이 아닙니다. 화면 고정은 오디오 전송을 중지하지 않습니다.");
   const badge = $("grounding-badge");
-  badge.dataset.grounding = display?.grounding ?? "";
-  badge.textContent = ({ grounded: "문서 인용 있음 · 내용 확인 필요", no_matches: "문서 근거 없음 · 사실 확인 필요",
-    unavailable: "문서 검색 실패 · 사실 답변에 의존하지 마세요", disabled: "문서 검색 미사용 · 대화 맥락만 사용" } as Record<string, string>)[display?.grounding ?? ""]
-    ?? (generating ? "근거 확인 중" : "근거 상태 대기");
-  $("grounding-text").textContent = ({ grounded: "근거 있음 · 내 업로드 문서", no_matches: "문서 근거 없음 · 사실 확인 필요",
-    unavailable: "문서 검색 실패 · 사실 답변에 의존하지 마세요", disabled: "이번 답변은 문서 검색을 사용하지 않음" } as Record<string, string>)
-    [display?.grounding ?? ""] ?? "문서 근거 상태는 답변 완료 후 표시됩니다";
+  if (badge.dataset.grounding !== (display?.grounding ?? "")) badge.dataset.grounding = display?.grounding ?? "";
+  write(badge, display?.grounding ? groundingBadges[display.grounding]
+    : display?.interrupted ? "답변 중단 · 근거 확인 안 됨" : generating ? "근거 확인 중" : "근거 상태 대기");
+  setText("grounding-text", display?.grounding ? groundingDetails[display.grounding] : "문서 근거 상태는 답변 완료 후 표시됩니다");
   const sources = display?.sources ?? [];
-  $("sources-text").textContent = sources.slice(0, 3).map(source => source.title).join(" · ") +
-    (sources.length > 3 ? ` · 외 ${sources.length - 3}개` : "");
+  setText("sources-text", sources.slice(0, 3).map(source => source.title).join(" · ") +
+    (sources.length > 3 ? ` · 외 ${sources.length - 3}개` : ""));
 }
 
 function toggleReadingHold(): void {
@@ -449,17 +560,17 @@ $("hold-answer").addEventListener("click", toggleReadingHold);
 
 const item = (action: string): HTMLButtonElement => menu.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!;
 function renderMenu(): void {
-  item("start").disabled = active;
-  item("stop").disabled = !active;
-  item("pause").disabled = item("retry").disabled = !ready;
-  item("pause").textContent = paused ? "다시 듣기" : "내가 말할 동안 일시정지";
+  item("start").disabled = controller.active;
+  item("stop").disabled = !controller.active;
+  item("pause").disabled = item("retry").disabled = !controller.isReady;
+  write(item("pause"), paused ? "다시 듣기" : "내가 말할 동안 일시정지");
   item("hold").disabled = !state.display;
-  item("hold").textContent = state.readingHeld
+  write(item("hold"), state.readingHeld
     ? state.hasNewerReply ? "새 답변 보기 / 화면 고정 해제" : "화면 고정 해제"
-    : "읽는 동안 답변 고정 (오디오는 계속 듣기)";
-  item("translate").disabled = !settings.showKorean || !state.display?.complete && failedTurns.size === 0;
+    : "읽는 동안 답변 고정 (오디오는 계속 듣기)");
+  item("translate").disabled = !settings.showKorean || !translatable(state.display) && failedTurns.size === 0;
   item("float").hidden = !("documentPictureInPicture" in window);
-  item("float").textContent = pipWindow ? "작은 창 닫고 페이지로 돌아가기" : "항상 위 작은 창으로 띄우기";
+  write(item("float"), pipWindow ? "작은 창 닫고 페이지로 돌아가기" : "항상 위 작은 창으로 띄우기");
 }
 function positionMenu(x: number, y: number): void {
   const bounds = panel.getBoundingClientRect();
@@ -485,7 +596,12 @@ function openMenu(x: number, y: number): void {
   };
   owner.addEventListener("pointerdown", close, true); owner.addEventListener("keydown", close, true);
 }
-function closeMenu(): void { menu.hidden = true; }
+/** Keyboard focus returns to the panel, so the next Shift+F10 or Tab starts from there. */
+function closeMenu(): void {
+  const hadFocus = menu.contains(panel.ownerDocument.activeElement);
+  menu.hidden = true;
+  if (hadFocus) panel.focus({ preventScroll: true });
+}
 panel.addEventListener("contextmenu", event => { event.preventDefault(); openMenu(event.clientX, event.clientY); });
 menu.addEventListener("keydown", event => {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -499,11 +615,11 @@ menu.addEventListener("click", event => {
   if (!action) return;
   closeMenu();
   if (action === "settings") openSettings();
-  if (action === "start") void startLive();
+  if (action === "start") startLive();
   if (action === "stop") void stopLive();
-  if (action === "pause") { paused = !paused; state.pause(paused); session?.pause(paused); render(); }
+  if (action === "pause") { paused = !paused; state.pause(paused); controller.pause(paused); render(); }
   if (action === "hold") toggleReadingHold();
-  if (action === "retry") { state.beginRequest(); session?.request(); render(); }
+  if (action === "retry") { state.beginRequest(); controller.request(); render(); }
   if (action === "translate") retryTranslations();
   if (action === "float") void toggleFloat();
 });
@@ -567,7 +683,7 @@ async function toggleFloat(): Promise<void> {
   liveDocument = floating.document;
   pipWindow = floating;
   floating.addEventListener("pagehide", () => {
-    stage.append(panel); liveDocument = document; pipWindow = undefined; closeMenu(); render();
+    stage.append(panel); liveDocument = document; pipWindow = undefined; closeMenu(); pending = false; render();
   });
   render();
 }
@@ -576,11 +692,14 @@ async function toggleFloat(): Promise<void> {
 
 const liveChannel = "BroadcastChannel" in window ? new BroadcastChannel("live-coach") : undefined;
 liveChannel?.addEventListener("message", event => {
-  if (event.data === "started" && active) void stopLive("다른 탭에서 라이브를 시작해 이 탭은 중지되었습니다.");
+  if (event.data === "started" && controller.active) void stopLive("다른 탭에서 라이브를 시작해 이 탭은 멈췄습니다.");
 });
-window.addEventListener("pagehide", () => { void session?.stop(); });
+window.addEventListener("pagehide", () => { void controller.stop(); });
 
+if (debug) Object.assign(window, { __liveCoachDebug: { latency: latency.records, stats: controller.stats } });
+
+// Tests and hosts wait for this flag: after it, the page only changes in response to events.
 void auth.initialize().then(() => render(), error => {
-  connectionMessage = `서비스 설정을 불러오지 못했습니다: ${asError(error).message}`; render();
-});
+  infoMessage = `서비스 설정을 불러오지 못했습니다: ${asError(error).message}`; render();
+}).finally(() => { document.documentElement.dataset.liveReady = "1"; });
 render();

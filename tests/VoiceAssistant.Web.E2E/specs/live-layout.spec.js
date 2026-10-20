@@ -21,6 +21,10 @@ async function seedSettings(page, settings) {
     if (localStorage.getItem('live-coach-settings') === null) localStorage.setItem('live-coach-settings', JSON.stringify(value));
   }, settings);
 }
+/** The page sets this flag once its configuration has loaded and rendered; after it, only events change the screen. */
+async function ready(page) {
+  await expect(page.locator('html')).toHaveAttribute('data-live-ready', '1');
+}
 
 async function fixture(page, native, expanded = true, settings = everything) {
   await page.route('**/api/client-config', route => route.fulfill({
@@ -33,6 +37,8 @@ async function fixture(page, native, expanded = true, settings = everything) {
     (0, eval)(script);
   }, shellFor(new URL(test.info().project.use.baseURL).origin));
   await page.goto('/live.html');
+  // Writing the long content before the page's own first render could be overwritten by it.
+  await ready(page);
   await expect(page.locator('#capture-status')).toContainText('꺼짐');
   await page.evaluate(({ english, korean, token, expanded }) => {
     document.querySelector('#live-details').open = expanded;
@@ -66,6 +72,17 @@ async function meetingFixture(page, { replyKorean = false, sessionUpdate = false
     translations.push({ kind, text });
     return route.fulfill({ json: { korean: `뜻: ${text}`, pronunciation: null } });
   });
+  // Counts translation requests in the page, at the moment the page makes them. A reply's own requests start in the same task
+  // that handles the reply, so once the reply is on screen this count is final: no sleep is needed to prove "none".
+  await page.addInitScript(() => {
+    window.__enrichRequests = [];
+    const original = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (String(input instanceof Request ? input.url : input).includes('/api/assist/enrich'))
+        window.__enrichRequests.push(JSON.parse(String(init?.body ?? '{}')).kind);
+      return original(input, init);
+    };
+  });
   await seedSettings(page, settings);
   let socket, effective = { responseMode: 'grounded', replyKorean: false };
   await page.routeWebSocket('**/api/meeting*', ws => {
@@ -85,11 +102,12 @@ async function meetingFixture(page, { replyKorean = false, sessionUpdate = false
     });
   });
   await page.goto('/live.html');
-  await expect(page.locator('#capture-status')).toContainText('꺼짐');
+  await ready(page);
   await page.locator('#live-panel').dispatchEvent('contextmenu', { clientX: 10, clientY: 10 });
   await page.locator('[data-action="start"]').click();
   await expect(page.locator('#capture-status')).toContainText('듣는 중');
-  return { commands, translations, send: event => socket.send(JSON.stringify(event)) };
+  return { commands, translations, send: event => socket.send(JSON.stringify(event)),
+    requests: () => page.evaluate(() => window.__enrichRequests) };
 }
 
 function reply(ws, id, question, text, grounding = 'disabled') {
@@ -176,8 +194,11 @@ test('a server that does not announce the push gets no waiting: the client trans
   const ws = await meetingFixture(page);
   expect(ws.commands.find(command => command.type === 'session.start').options.replyKorean).toBe(true);
   reply(ws, 1, 'What comes first?', 'We should check the plan.');
-  await expect(page.locator('#answer-korean')).toHaveText('뜻: We should check the plan.', { timeout: 2000 });
-  await expect(page.locator('#alternative-korean')).toHaveText('뜻: Could we check that together?', { timeout: 2000 });
+  await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
+  // Both lines were requested while the reply was handled, not after a 4 s wait for a push that is never announced.
+  expect((await ws.requests()).filter(kind => kind === 'reply')).toHaveLength(2);
+  await expect(page.locator('#answer-korean')).toHaveText('뜻: We should check the plan.');
+  await expect(page.locator('#alternative-korean')).toHaveText('뜻: Could we check that together?');
 });
 
 test('drafts do not replace complete answers and hold keeps its exact question without pausing capture', async ({ page }) => {
@@ -273,7 +294,8 @@ test('by default only the English answer shows: no captions, no Korean meaning, 
   await expect(page.locator('#conversation-section')).toBeHidden();
   await expect(page.locator('#details-summary')).toHaveText('대안 · 상세 근거');
   expect(await page.locator('.live-card:visible').count()).toBe(1);
-  await page.waitForTimeout(250);
+  // The reply is on screen, so any request it would have caused has already been made.
+  expect(await ws.requests()).toEqual([]);
   expect(ws.translations).toEqual([]);
 });
 
@@ -288,8 +310,10 @@ test('each quick setting reaches a connected session that supports changes, and 
     await expect.poll(() => updates(ws)).toEqual(sent);
   }
   await page.locator('#toggle-captions').click();
-  await page.waitForTimeout(250);
-  expect(updates(ws)).toEqual(sent);
+  // A change that is sent works as a barrier: an update caused by the captions click would arrive before it.
+  await page.locator('#doc-off').click();
+  sent.push({ type: 'session.update', options: { responseMode: 'conversation' } });
+  await expect.poll(() => updates(ws)).toEqual(sent);
   await expect(page.locator('#quick-note')).toBeHidden();
   await expect(page.locator('#session-error')).toBeHidden();
 });
@@ -319,7 +343,7 @@ test('Korean meaning stays off without any request, turns on for what is on scre
   reply(ws, 1, 'What comes first?', 'We should check the plan.');
   await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
   await expect(page.locator('#answer-meaning')).toBeHidden();
-  await page.waitForTimeout(250);
+  expect(await ws.requests()).toEqual([]);
   expect(ws.translations).toEqual([]);
   await page.locator('#toggle-korean').click();
   await expect(page.locator('#answer-meaning')).toBeVisible();
@@ -330,11 +354,10 @@ test('Korean meaning stays off without any request, turns on for what is on scre
   await expect(page.locator('#answer-korean')).toHaveText('뜻: Then we can confirm.');
   await page.locator('#toggle-korean').click();
   await expect(page.locator('#answer-meaning')).toBeHidden();
-  const requested = ws.translations.length;
+  const requested = (await ws.requests()).length;
   reply(ws, 3, 'Anything else?', 'No, that is all.');
   await expect(page.locator('#answer-text')).toHaveText('No, that is all.');
-  await page.waitForTimeout(250);
-  expect(ws.translations).toHaveLength(requested);
+  expect(await ws.requests()).toHaveLength(requested);
   await page.locator('#toggle-korean').click();
   await expect(page.locator('#answer-korean')).toHaveText('뜻: No, that is all.');
 });
@@ -363,12 +386,14 @@ test('captions show what was heard, and translate it only while Korean meaning i
 test('the quick settings are remembered, and settings saved by an older version load with both switches off', async ({ page }) => {
   await page.route('**/api/client-config', route => route.fulfill({ json: { mode: 'Fake', webSocketPath: '/api/meeting' } }));
   await page.goto('/live.html');
+  await ready(page);
   await page.locator('#doc-off').click();
   await page.locator('#toggle-captions').click();
   await page.locator('#toggle-korean').click();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings'))))
     .toMatchObject({ responseMode: 'conversation', documentMode: 'grounded', showCaptions: true, showKorean: true });
   await page.reload();
+  await ready(page);
   expect(await pressed(page, 'doc-off')).toBe('true');
   expect(await pressed(page, 'toggle-captions')).toBe('true');
   expect(await pressed(page, 'toggle-korean')).toBe('true');
@@ -377,6 +402,7 @@ test('the quick settings are remembered, and settings saved by an older version 
   await page.evaluate(() => localStorage.setItem('live-coach-settings',
     JSON.stringify({ deviceId: '', responseMode: 'balanced', topic: 'Azure sync', audioSource: 'display' })));
   await page.reload();
+  await ready(page);
   expect(await pressed(page, 'doc-on')).toBe('true');
   expect(await pressed(page, 'toggle-captions')).toBe('false');
   expect(await pressed(page, 'toggle-korean')).toBe('false');
@@ -390,6 +416,7 @@ test('the quick settings are remembered, and settings saved by an older version 
 test('the document search choice in the settings dialog and the quick buttons are one setting', async ({ page }) => {
   await page.route('**/api/client-config', route => route.fulfill({ json: { mode: 'Fake', webSocketPath: '/api/meeting' } }));
   await page.goto('/live.html');
+  await ready(page);
   await menuAction(page, 'settings');
   await expect(page.locator('#response-mode')).toHaveValue('grounded');
   await page.locator('#response-mode').selectOption('conversation');

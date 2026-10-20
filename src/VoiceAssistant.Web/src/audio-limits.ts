@@ -1,3 +1,3 @@
 export const audioFrameBytes = 640;
-// A bounded one-second pool tolerates short main-thread stalls without losing captured samples.
-export const audioBufferCount = 50;
+// A bounded three-second pool rides out main-thread stalls; a longer stall drops (and reports) audio instead of growing memory.
+export const audioBufferCount = 150;

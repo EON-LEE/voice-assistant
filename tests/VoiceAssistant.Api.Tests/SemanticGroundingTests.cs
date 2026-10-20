@@ -26,7 +26,7 @@ public sealed class SemanticGroundingTests
     [InlineData(3.5, true)]
     [InlineData(4, true)]
     public void GateUsesSemanticScoreNotCandidateRank(double score, bool accepted) =>
-        Assert.Equal(accepted, AzureMeetingProvider.IsRelevantSemanticScore(score, 2));
+        Assert.Equal(accepted, AzureMeetingProvider.SemanticRelevance(score, 2));
 
     [Theory]
     [InlineData(null)]
@@ -35,11 +35,8 @@ public sealed class SemanticGroundingTests
     [InlineData(double.NegativeInfinity)]
     [InlineData(-1d)]
     [InlineData(4.1)]
-    public void InvalidOrMissingScoreFailsClosed(double? score)
-    {
-        var error = Assert.Throws<ProviderException>(() => AzureMeetingProvider.IsRelevantSemanticScore(score, 2));
-        Assert.Equal("grounding_unavailable", error.Code);
-    }
+    public void InvalidOrMissingScoreIsNeverRelevant(double? score) =>
+        Assert.Null(AzureMeetingProvider.SemanticRelevance(score, 2));
 
     [Theory]
     [InlineData("NaN")]
@@ -133,15 +130,20 @@ public sealed class SemanticGroundingTests
     }
 
     [Fact]
-    public async Task CapsAcceptedSourcesAtFiveButRejectsMissingScoresEvenBeyondCap()
+    public async Task CapsAcceptedSourcesAtFiveAndSkipsUnscoredCandidatesButNotAnAllUnscoredResult()
     {
         using var handler = new FixtureTransport(SearchResponse(3, count: 8));
         using var http = new HttpClient(handler);
         Assert.Equal(5, (await Provider(http).RetrieveAsync("Lighthouse plan", Oid, CancellationToken.None)).Documents.Count);
+        // One candidate without a reranker score is skipped instead of failing the whole query.
         handler.ResponseJson = SearchResponse(3, count: 8, lastScoreMissing: true);
+        Assert.Equal(5, (await Provider(http).RetrieveAsync("Lighthouse plan", Oid, CancellationToken.None)).Documents.Count);
+        handler.ResponseJson = SearchResponse(3, count: 1, lastScoreMissing: true);
         var failure = await Assert.ThrowsAsync<ProviderException>(() =>
             Provider(http).RetrieveAsync("Lighthouse plan", Oid, CancellationToken.None));
         Assert.Equal("grounding_unavailable", failure.Code);
+        Assert.Equal("unscored", failure.Retrieval?.Kind);
+        Assert.False(failure.Retrieval?.Transient);
     }
 
     [Theory]
@@ -171,7 +173,7 @@ public sealed class SemanticGroundingTests
     }
 
     [Fact]
-    public async Task NoMatchesDiscardsUnexpectedDocumentsAndUnavailableNeverInvokesModel()
+    public async Task NoMatchesAndUnavailableNeverPassDocumentsAndUnavailableAsksForAGeneralReply()
     {
         using var handler = new FixtureTransport("""{"value":[]}""");
         using var http = new HttpClient(handler);
@@ -179,11 +181,19 @@ public sealed class SemanticGroundingTests
         var unexpected = new Evidence(Lighthouse, new("Lighthouse", "https://example.test", null));
         await foreach (var _ in provider.AnswerAsync([new("NASA spacecraft")], new("no_matches", [unexpected]), CancellationToken.None)) { }
         Assert.DoesNotContain(Lighthouse, handler.ChatBody!);
+        Assert.DoesNotContain("Document search failed for this reply", handler.ChatBody!);
+        // A failed search still gets a model reply, but only a general one and never with documents.
+        await foreach (var _ in provider.AnswerAsync([new("NASA")], new("unavailable", [unexpected]), CancellationToken.None)) { }
+        Assert.DoesNotContain(Lighthouse, handler.ChatBody!);
+        Assert.Contains("Document search failed for this reply", handler.ChatBody!);
+        Assert.Contains("non-committal", handler.ChatBody!);
+        Assert.Contains("still need to be confirmed", handler.ChatBody!);
+        Assert.Equal(2, handler.ChatCalls);
         await Assert.ThrowsAsync<ProviderException>(async () =>
         {
-            await foreach (var _ in provider.AnswerAsync([new("NASA")], new("unavailable", []), CancellationToken.None)) { }
+            await foreach (var _ in provider.AnswerAsync([new("NASA")], new("unknown", []), CancellationToken.None)) { }
         });
-        Assert.Equal(1, handler.ChatCalls);
+        Assert.Equal(2, handler.ChatCalls);
     }
 
     [Fact]

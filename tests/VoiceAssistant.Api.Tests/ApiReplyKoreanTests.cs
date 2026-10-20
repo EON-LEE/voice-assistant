@@ -193,7 +193,7 @@ public sealed partial class ApiTests
     }
 
     [Fact]
-    public async Task UnavailableGroundingTellsTheOptedInClientThereIsNothingToWaitFor()
+    public async Task UnavailableGroundingStillTranslatesTheGeneralReply()
     {
         var provider = new ControlledProvider { Translate = Prefixed };
         await using var host = await Host.StartAsync(provider: provider);
@@ -208,6 +208,35 @@ public sealed partial class ApiTests
         provider.Release.SetException(new InvalidOperationException("private provider detail"));
 
         var messages = await ReceiveUntilAsync(socket, found => Completed(found) && found.Any(message => IsKorean(message, 0)));
+        var completed = messages.Single(message => TypeOf(message) == "response.completed");
+        Assert.Equal("unavailable", completed.GetProperty("grounding").GetString());
+        Assert.Equal(KoreanPrimaryReply, completed.GetProperty("text").GetString());
+        var line = messages.Single(message => IsKorean(message, 0));
+        Assert.Equal("한국어: " + KoreanPrimaryReply, line.GetProperty("korean").GetString());
+        Assert.Equal(completed.GetProperty("responseId").GetString(), line.GetProperty("responseId").GetString());
+        await Send(socket, """{"type":"session.stop"}""");
+    }
+
+    [Fact]
+    public async Task UnavailableFallbackTellsTheOptedInClientThereIsNothingToWaitFor()
+    {
+        var provider = new ControlledProvider { Translate = Prefixed, FailFirstAnswer = true };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "balanced", replyKorean = true }));
+        await Receive(socket);
+
+        provider.Emit(new("turn", 1, "What is our customer delivery plan?", false));
+        await provider.RetrievalStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        provider.Emit(new("turn", 2, "What is our customer delivery plan?", true));
+        await Until(socket, "response.started");
+        provider.Release.SetException(new InvalidOperationException("private provider detail"));
+        // The general reply fails as well, so the fixed notice follows the search error.
+        await provider.FirstAnswerStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        provider.FirstAnswerRelease.SetResult();
+
+        var messages = await ReceiveUntilAsync(socket, found => Completed(found) && found.Any(message => IsKorean(message, 0)));
+        Assert.Equal("grounding_unavailable", Assert.Single(messages, message => TypeOf(message) == "error").GetProperty("code").GetString());
         var completed = messages.Single(message => TypeOf(message) == "response.completed");
         Assert.Equal("unavailable", completed.GetProperty("grounding").GetString());
         var line = messages.Single(message => IsKorean(message, 0));

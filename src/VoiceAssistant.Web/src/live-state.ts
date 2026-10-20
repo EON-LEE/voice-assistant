@@ -4,10 +4,34 @@ export interface LiveTurn { id: string; revision: number; text: string; final: b
 export interface LiveReply {
   id: string; turnId: string; text: string; complete: boolean; sources: Source[];
   question?: string; grounding?: Grounding; suggestions?: string[]; respondNow?: boolean;
+  /** The primary line is final (`primaryDone`), so it can be read before the reply completes. */
+  primaryDone?: boolean;
+  /** The reply stopped after its primary line was shown: the line stays, without alternative or grounding. */
+  interrupted?: boolean;
 }
 export function answers(reply: LiveReply | null): string[] {
   if (!reply) return [];
   return reply.suggestions ?? (reply.text.trim() ? [reply.text] : []);
+}
+
+export const meaningTexts = {
+  waiting: "영어 추천 답변의 한국어 뜻이 함께 표시됩니다.",
+  preparing: "한국어 번역 준비 중…",
+  interrupted: "답변이 중단되어 한국어 뜻이 없습니다 · 우클릭 → 한국어 번역 재시도",
+} as const;
+/**
+ * The Korean meaning under the primary line: the translation when there is one, else a line the server already pushed
+ * for a reply that has not completed. An interrupted reply never completes, so it gets a final label instead of "preparing".
+ */
+export function primaryMeaning(display: LiveReply | null, translated: string | undefined, pushed: string | null | undefined): string {
+  if (!display) return meaningTexts.waiting;
+  if (translated !== undefined) return translated;
+  if (!display.complete && typeof pushed === "string") return pushed;
+  return display.interrupted ? meaningTexts.interrupted : meaningTexts.preparing;
+}
+/** A reply line the user can ask to translate: a completed reply, or a primary line that stayed after an interruption. */
+export function translatable(reply: LiveReply | null): reply is LiveReply {
+  return !!reply && (reply.complete || !!reply.interrupted);
 }
 
 const maxText = 32768;
@@ -17,8 +41,9 @@ function bounded(text: string): string {
 }
 
 /**
- * Only completed replies are presented for reading. Drafts never replace the last complete answer,
- * and an explicit reading hold preserves its question and reply while capture continues.
+ * A reply becomes readable once its primary line is final (`primaryDone`) or it completes; drafts never replace
+ * the answer on screen. An explicit reading hold preserves its question and reply while capture continues, and
+ * the held reply still gains its alternative and grounding when it completes.
  */
 export class LiveState {
   turns: LiveTurn[] = [];
@@ -31,10 +56,13 @@ export class LiveState {
   private suppressedTurn: string | undefined;
   private suppressAll = false;
   private heldReply: LiveReply | null = null;
+  private shownReply: LiveReply | null = null;
 
-  get display(): LiveReply | null { return this.heldReply ?? this.lastCompleted; }
+  /** The newest readable reply: a finished primary line or a completed reply. */
+  get shown(): LiveReply | null { return this.shownReply; }
+  get display(): LiveReply | null { return this.heldReply ?? this.shownReply; }
   get readingHeld(): boolean { return this.heldReply !== null; }
-  get hasNewerReply(): boolean { return !!this.heldReply && !!this.lastCompleted && this.heldReply.id !== this.lastCompleted.id; }
+  get hasNewerReply(): boolean { return !!this.heldReply && !!this.shownReply && this.heldReply.id !== this.shownReply.id; }
   get latest(): LiveTurn | undefined { return this.turns.at(-1); }
   /** A newer reply is being produced. With gathered replies, not every final gets its own reply. */
   get generating(): boolean { return !!this.current && !this.current.complete; }
@@ -43,9 +71,12 @@ export class LiveState {
     this.turns = []; this.current = null; this.lastCompleted = null; this.error = "";
     this.seen.clear(); this.order = []; this.latestTurn = undefined;
     this.suppressedTurn = undefined; this.suppressAll = false;
-    this.heldReply = null;
+    this.heldReply = null; this.shownReply = null;
   }
-  holdDisplay(): void { if (this.display?.complete) this.heldReply = this.display; }
+  holdDisplay(): void {
+    const display = this.display;
+    if (display && (display.complete || display.primaryDone)) this.heldReply = display;
+  }
   releaseDisplay(): void { this.heldReply = null; }
   pause(value: boolean): void {
     this.suppressAll = value;
@@ -53,10 +84,37 @@ export class LiveState {
   }
   cancelCurrent(): void {
     this.suppressedTurn = this.current?.turnId ?? this.latestTurn;
-    this.current = null;
+    this.retire();
   }
   beginRequest(): void { this.suppressedTurn = undefined; this.error = ""; }
   clearError(): void { this.error = ""; }
+  /** The connection producing the current reply is gone: a shown primary line stays (interrupted), a draft is dropped. */
+  endReply(): void {
+    if (this.current && !this.current.complete) this.retire();
+  }
+  /**
+   * A new live session starts. Starting fresh clears everything. Continuing (다시 공유 / 다시 시작) keeps the conversation,
+   * but never an old pause or a reply the previous session was still producing, either of which would hide new replies.
+   */
+  restart(keepConversation: boolean): void {
+    if (!keepConversation) { this.resetSession(); return; }
+    this.suppressAll = false;
+    this.suppressedTurn = undefined;
+    this.error = "";
+    this.endReply();
+  }
+
+  /** A reply that ends after its primary line was shown keeps that line readable, marked as interrupted. */
+  private retire(): void {
+    const current = this.current;
+    if (current && !current.complete && current.primaryDone) this.show({ ...current, interrupted: true });
+    this.current = null;
+  }
+  private show(reply: LiveReply): void {
+    this.shownReply = reply;
+    // A held reply keeps its text on screen and only gains what arrives later (alternative, grounding, sources).
+    if (this.heldReply?.id === reply.id) this.heldReply = reply;
+  }
 
   apply(e: ServerEvent): void {
     switch (e.type) {
@@ -83,6 +141,7 @@ export class LiveState {
         this.seen.add(e.responseId!); this.order.push(e.responseId!);
         if (this.order.length > 256) this.seen.delete(this.order.shift()!);
         this.error = "";
+        this.retire();
         this.current = { id: e.responseId!, turnId: e.turnId!, question: target.text, text: "", complete: false, sources: [] };
         return;
       case "response.delta":
@@ -91,22 +150,22 @@ export class LiveState {
         const current = this.current;
         if (!current || current.complete || this.suppressAll || this.suppressedTurn === e.turnId ||
           e.responseId !== current.id || e.turnId !== current.turnId) return;
-        if (e.type === "response.cancelled") { this.current = null; return; }
-        if (e.type === "response.delta") { this.current = { ...current, text: bounded(current.text + e.text) }; return; }
+        if (e.type === "response.cancelled") { this.retire(); return; }
+        if (e.type === "response.delta") {
+          const primaryDone = current.primaryDone || e.primaryDone === true;
+          this.current = { ...current, text: bounded(current.text + (e.text ?? "")), ...(primaryDone ? { primaryDone: true } : {}) };
+          if (primaryDone) this.show(this.current);
+          return;
+        }
+        // The completed text is authoritative: it replaces a shown primary line that differs from it.
         this.current = { ...current, text: bounded(e.text!), complete: true, sources: structuredClone(e.sources ?? []),
           ...(e.grounding ? { grounding: e.grounding } : {}), ...(e.suggestions ? { suggestions: [...e.suggestions] } : {}), ...(e.respondNow ? { respondNow: true } : {}) };
         this.lastCompleted = this.current;
+        this.show(this.current);
         return;
       }
     }
   }
-}
-
-/** Network/service interruptions are retried automatically; sign-in, permission and protocol failures are not. */
-export function isTransientFailure(message: string): boolean {
-  if (/superseded|expired|permission|not allowed|denied|microphone|HTTPS|invalid_|time limit|unsupported|forbidden|\(40[13]\)|sign in before/i.test(message))
-    return false;
-  return /disconnect|WebSocket|timed out|connection|network|ready within|cannot keep up|ended this session|session_ended|stream_ended|Failed to fetch|\(5\d\d\)|\(429\)|busy|unavailable/i.test(message);
 }
 
 /** Splits long recognized speech at word boundaries into the enrichment API's 600-character limit. */

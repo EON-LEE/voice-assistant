@@ -110,7 +110,7 @@ public sealed class KnowledgeStoreTests
     }
 
     [Fact]
-    public async Task ListingAndDeletionPageWithAclAndNeverSelectVectorsOrOperatorIds()
+    public async Task ListingAndDeletionReadEveryPageBeyondTheFirstThousandRowsWithAclAndNoVectors()
     {
         using var handler = new Transport { Listing = true };
         using var http = new HttpClient(handler);
@@ -118,8 +118,12 @@ public sealed class KnowledgeStoreTests
         var listed = await store.ListAsync(OwnerA, CancellationToken.None);
         Assert.Single(listed);
         Assert.Equal(DocumentId, listed[0].Id);
-        Assert.Equal(2, listed[0].Chunks);
+        Assert.Equal(Transport.PersonalChunks, listed[0].Chunks);
+        // One request asks for every row; Search answers with 1000 rows plus the parameters of the next page.
         Assert.Equal(2, handler.SearchBodies.Count);
+        Assert.Equal(AzureKnowledgeStore.ListingLimit, handler.SearchBodies[0].GetProperty("top").GetInt32());
+        Assert.False(handler.SearchBodies[0].TryGetProperty("skip", out _));
+        Assert.Equal(1000, handler.SearchBodies[1].GetProperty("skip").GetInt32());
         foreach (var body in handler.SearchBodies)
         {
             Assert.Equal(AzureMeetingProvider.AclFilter(OwnerA), body.GetProperty("filter").GetString());
@@ -131,10 +135,23 @@ public sealed class KnowledgeStoreTests
         await store.DeleteAsync(OwnerA, new string('b', 32), CancellationToken.None);
         Assert.Empty(handler.DeletedKeys);
         await store.DeleteAsync(OwnerA, DocumentId, CancellationToken.None);
-        Assert.Equal(2, handler.DeletedKeys.Distinct().Count());
+        Assert.Equal(Transport.PersonalChunks, handler.DeletedKeys.Distinct().Count());
+        Assert.Contains($"kb-{DocumentId}-{Transport.PersonalChunks - 1:D4}", handler.DeletedKeys);
         Assert.DoesNotContain("operator-doc", handler.DeletedKeys);
         Assert.DoesNotContain("kb-" + DocumentId + "-0000-extra", handler.DeletedKeys);
         Assert.Equal(400, (await Assert.ThrowsAsync<KnowledgeException>(() => store.DeleteAsync(OwnerA, "operator-doc", CancellationToken.None))).Status);
+    }
+
+    [Fact]
+    public async Task ListingThatReachesItsRowLimitFailsInsteadOfUndercounting()
+    {
+        using var handler = new Transport { Listing = true };
+        using var http = new HttpClient(handler);
+        var store = Store(http, listingLimit: 1000);
+        Assert.Equal(503, (await Assert.ThrowsAsync<KnowledgeException>(() => store.ListAsync(OwnerA, CancellationToken.None))).Status);
+        Assert.Equal(503, (await Assert.ThrowsAsync<KnowledgeException>(() =>
+            store.DeleteAsync(OwnerA, DocumentId, CancellationToken.None))).Status);
+        Assert.Empty(handler.DeletedKeys);
     }
 
     [Fact]
@@ -199,14 +216,14 @@ public sealed class KnowledgeStoreTests
 
     private static KnowledgeDocument Document(int chunks) => new(DocumentId, "original.txt", chunks, DateTimeOffset.Parse("2026-10-01T00:00:00Z"));
     private static KnowledgeChunk[] Chunks(int count) => Enumerable.Range(0, count).Select(i => new KnowledgeChunk($"kb-{DocumentId}-{i:D4}", "original.txt\nOriginal chunk " + i)).ToArray();
-    private static AzureKnowledgeStore Store(HttpClient http)
+    private static AzureKnowledgeStore Store(HttpClient http, int listingLimit = AzureKnowledgeStore.ListingLimit)
     {
         var openAI = new AzureOpenAIClient(new Uri("https://example.openai.azure.com"), new ApiKeyCredential("test-only"),
             new AzureOpenAIClientOptions { Transport = new HttpClientPipelineTransport(http) });
         var options = new SearchClientOptions { Transport = new HttpClientTransport(http) };
         options.Retry.MaxRetries = 0;
         var search = new SearchClient(new Uri("https://example.search.windows.net"), "meeting", new AzureKeyCredential("test-only"), options);
-        return new(search, openAI.GetEmbeddingClient("embedding"), NullLogger<AzureKnowledgeStore>.Instance);
+        return new(search, openAI.GetEmbeddingClient("embedding"), NullLogger<AzureKnowledgeStore>.Instance, listingLimit);
     }
 
     private sealed class QuotaStore(int documents, int chunks) : IKnowledgeStore
@@ -222,6 +239,11 @@ public sealed class KnowledgeStoreTests
 
     private sealed class Transport : HttpMessageHandler
     {
+        /// <summary>Personal chunks of one document in the listing fixture: more than one Search page holds.</summary>
+        internal const int PersonalChunks = 1002;
+        // Operator rows and a malformed id come first, so the personal chunks span both pages.
+        private static readonly string[] OwnedIds =
+            [.. new[] { "operator-doc", "kb-" + DocumentId + "-0000-extra" }, .. Enumerable.Range(0, PersonalChunks).Select(i => $"kb-{DocumentId}-{i:D4}")];
         public int FailEmbeddingBatch { get; init; }
         public int PartialUploadBatch { get; init; }
         public int VectorDimensions { get; init; } = 1536;
@@ -261,14 +283,21 @@ public sealed class KnowledgeStoreTests
                 SearchBodies.Add(root.Clone());
                 var owned = root.GetProperty("filter").GetString()!.Contains(OwnerA);
                 if (!Listing || !owned) return Response("""{"value":[]}""");
-                if (root.TryGetProperty("skip", out _))
-                    return Response(JsonSerializer.Serialize(new { value = new[] { Row("kb-" + DocumentId + "-0001") } }));
-                return Response(JsonSerializer.Serialize(new Dictionary<string, object>
+                // Like Search: at most 1000 rows per response, and next-page parameters only while a larger top asks for more.
+                var top = root.TryGetProperty("top", out var requested) ? requested.GetInt32() : 50;
+                var skip = root.TryGetProperty("skip", out var skipped) ? skipped.GetInt32() : 0;
+                var page = OwnedIds.Skip(skip).Take(Math.Min(top, 1000)).ToArray();
+                var response = new Dictionary<string, object> { ["value"] = page.Select(Row).ToArray() };
+                if (top > page.Length && skip + page.Length < OwnedIds.Length)
                 {
-                    ["value"] = new[] { Row("kb-" + DocumentId + "-0000"), Row("operator-doc"), Row("kb-" + DocumentId + "-0000-extra") },
-                    ["@odata.nextLink"] = "https://example.search.windows.net/indexes/meeting/docs/search?api-version=2024-07-01",
-                    ["@search.nextPageParameters"] = new { search = "*", filter = AzureMeetingProvider.AclFilter(OwnerA), select = "id,title,url,updatedAt", skip = 1000, top = 1000 }
-                }));
+                    response["@odata.nextLink"] = "https://example.search.windows.net/indexes/meeting/docs/search.post.search?api-version=2024-07-01";
+                    response["@search.nextPageParameters"] = new
+                    {
+                        search = "*", filter = AzureMeetingProvider.AclFilter(OwnerA), select = "id,title,url,updatedAt",
+                        skip = skip + page.Length, top = top - page.Length
+                    };
+                }
+                return Response(JsonSerializer.Serialize(response));
             }
             var values = root.GetProperty("value").EnumerateArray().ToArray();
             var delete = values[0].GetProperty("@search.action").GetString() == "delete";

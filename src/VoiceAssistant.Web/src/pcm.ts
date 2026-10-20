@@ -1,4 +1,4 @@
-/** Fixed-memory streaming downmix, low-pass FIR and fractional-phase resampler. */
+/** Fixed-memory streaming downmix, low-pass FIR and fractional-phase resampler to 16 kHz (from 3 kHz hands-free up to 192 kHz). */
 export class PcmConverter {
   private readonly taps = 127;
   private readonly kernel = new Float64Array(this.taps);
@@ -7,7 +7,7 @@ export class PcmConverter {
   private phase = 0;
   private previous = 0;
   constructor(private readonly rate: number) {
-    if (!Number.isInteger(rate) || rate < 16000 || rate > 192000) throw new Error("Unsupported audio sample rate.");
+    if (!Number.isInteger(rate) || rate < 3000 || rate > 192000) throw new Error("Unsupported audio sample rate.");
     const cutoff = Math.min(7200 / rate, .45);
     let sum = 0;
     for (let i = 0; i < this.taps; i++) {
@@ -35,7 +35,8 @@ export class PcmConverter {
       for (let i = 0; i < this.taps; i++) filtered += this.kernel[i]! * this.history[(this.position - i + this.taps) % this.taps]!;
       this.position = (this.position + 1) % this.taps;
       this.phase += 16000;
-      if (this.phase >= this.rate) {
+      // Downsampling emits at most one sample per input; an output device slower than 16 kHz (8 kHz hands-free) emits several.
+      while (this.phase >= this.rate) {
         this.phase -= this.rate;
         const value = this.previous + (1 - this.phase / 16000) * (filtered - this.previous);
         emit(Math.max(-32768, Math.min(32767, Math.round(value * 32768))));

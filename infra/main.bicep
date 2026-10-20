@@ -50,8 +50,8 @@ param searchIndexName string = 'meeting-knowledge'
 ])
 param searchSku string = 'basic'
 @allowed(['free', 'standard'])
-@description('Semantic ranker billing mode. Availability, limits, costs and latency must be verified for the deployed service.')
-param searchSemanticSearch string = 'free'
+@description('Semantic ranker billing mode. The free plan has a monthly query quota; when it runs out every grounded reply fails, so production uses standard.')
+param searchSemanticSearch string = 'standard'
 
 @description('Optional separate ingestion operator object ID. Empty creates no operator role assignments.')
 param ingestionPrincipalId string = ''
@@ -61,12 +61,17 @@ param ingestionPrincipalId string = ''
   'Group'
 ])
 param ingestionPrincipalType string = 'User'
-@description('Maximum minutes one meeting session may stay open (API Session__MaxMinutes).')
+@description('Maximum minutes one meeting session may stay open (API Session__MaxMinutes). The live page starts a new session automatically at the limit.')
 @minValue(5)
 @maxValue(180)
-param sessionMaxMinutes int = 90
+param sessionMaxMinutes int = 180
 @description('Optional pre-existing Azure Monitor action group ARM ID. No email/webhook content is configured here.')
 param alertActionGroupId string = ''
+@description('Send container console/system logs to a 30-day Entra-only Log Analytics workspace and create Entra-only Application Insights for content-free metrics.')
+param enableDiagnostics bool = true
+@allowed(['1', '2', '4'])
+@description('Container vCPU. Memory is twice this value in GiB, as the Consumption profile requires. Speech streaming, document extraction and TLS share this single replica.')
+param containerCpu string = '2'
 
 var suffix = uniqueString(resourceGroup().id, namePrefix)
 var appName = '${namePrefix}-web'
@@ -74,6 +79,8 @@ var speechUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinit
 var openAIUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
 // Search Index Data Contributor: the runtime stores each user's own uploaded meeting materials (ACL = caller oid).
 var searchDataRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')
+// Monitoring Metrics Publisher: Entra-authenticated telemetry ingestion into Application Insights (local auth is disabled).
+var metricsPublisherRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-runtime'
@@ -231,13 +238,58 @@ resource ingestionBlob 'Microsoft.Authorization/roleAssignments@2022-04-01' = if
   }
 }
 
+resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enableDiagnostics) {
+  name: '${namePrefix}-logs'
+  location: location
+  properties: {
+    sku: { name: 'PerGB2018' }
+    retentionInDays: 30
+    features: { disableLocalAuth: true }
+  }
+}
+
+resource insights 'Microsoft.Insights/components@2020-02-02' = if (enableDiagnostics) {
+  name: '${namePrefix}-insights'
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logs!.id
+    DisableLocalAuth: true
+    RetentionInDays: 30
+  }
+}
+
+resource insightsPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableDiagnostics) {
+  name: guid(insights!.id, identity.id, metricsPublisherRole)
+  scope: insights
+  properties: {
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: metricsPublisherRole
+  }
+}
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: '${namePrefix}-environment'
   location: location
   properties: {
-    // No console/access/request diagnostics: WebSocket URLs contain one-use tickets.
-    appLogsConfiguration: {}
+    // Console and system logs only. The API logs no transcript, answer, query or request URL
+    // (Microsoft.AspNetCore stays at Warning), and WebSocket tickets are single-use and expire within a minute.
+    appLogsConfiguration: enableDiagnostics ? { destination: 'azure-monitor' } : {}
     workloadProfiles: [{ name: 'Consumption', workloadProfileType: 'Consumption' }]
+  }
+}
+
+resource environmentDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagnostics) {
+  name: 'console-and-system-logs'
+  scope: environment
+  properties: {
+    workspaceId: logs!.id
+    logs: [
+      { category: 'ContainerAppConsoleLogs', enabled: true }
+      { category: 'ContainerAppSystemLogs', enabled: true }
+    ]
   }
 }
 
@@ -265,7 +317,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [{
         name: 'web-api'
         image: image
-        resources: { cpu: json('0.5'), memory: '1Gi' }
+        resources: { cpu: json(containerCpu), memory: '${int(containerCpu) * 2}Gi' }
         env: [
           { name: 'ASPNETCORE_HTTP_PORTS', value: '8080' }
           { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
@@ -287,6 +339,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'Azure__SearchSemanticConfiguration', value: 'meeting-semantic' }
           { name: 'Azure__SearchMinimumRerankerScore', value: '2.0' }
           { name: 'Session__MaxMinutes', value: string(sessionMaxMinutes) }
+          { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: enableDiagnostics ? insights!.properties.ConnectionString : '' }
           { name: 'Logging__LogLevel__Microsoft.AspNetCore', value: 'Warning' }
           { name: 'Logging__LogLevel__Azure', value: 'Warning' }
         ]

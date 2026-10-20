@@ -62,6 +62,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     int maxSessionMinutes = 30, TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // Session duration, settle timers and reply timing all use this clock, so tests can drive them without sleeping.
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly Channel<SessionEvent> events = Channel.CreateBounded<SessionEvent>(
         new BoundedChannelOptions(64) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
     private readonly List<ConversationTurn> conversation = [];
@@ -78,6 +80,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private bool responsePending;
     private ConversationTurn[]? pendingResponseHistory;
     private string? pendingResponseTurn;
+    private long pendingResponseTimestamp;
     private readonly List<string> pendingSpeech = [];
     private long pendingSince;
     private int settleNumber;
@@ -89,7 +92,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private readonly List<Task> retired = [];
     private readonly List<Task> translations = [];
     private KoreanScope? koreanScope;
-    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false);
+    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false,
+        bool PrimaryDone = false);
     private sealed record AudioMessage(byte[] Bytes);
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
     private sealed record Completion(string Text, string[] Suggestions, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched, bool RespondNow = false);
@@ -109,7 +113,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     public async Task RunAsync(CancellationToken requestAborted, CancellationToken superseded = default)
     {
-        using var duration = new CancellationTokenSource(TimeSpan.FromMinutes(maxSessionMinutes), timeProvider ?? TimeProvider.System);
+        using var duration = new CancellationTokenSource(TimeSpan.FromMinutes(maxSessionMinutes), clock);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, duration.Token, superseded);
         using var receiving = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
         ISpeechStream? speech = null;
@@ -126,7 +130,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             if (!options.TranscribeOnly) prefetch = new(provider, objectId, options, lifetime.Token);
             speech = await provider.StartSpeechAsync(
                 options,
-                transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
+                transcript => EnqueueCallback(new("transcript", transcript, Timestamp: clock.GetTimestamp()), lifetime),
                 error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
             // The client learns which optional features this socket has: pushed Korean lines, and settings changes while running.
             var ready = new Dictionary<string, object> { ["type"] = "session.ready", ["protocolVersion"] = 1 };
@@ -168,6 +172,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             {
                                 if (pendingSpeech.Count == 0) pendingSince = message.Timestamp;
                                 pendingSpeech.Add(transcript.Text);
+                                // Gathered speech that already left the bounded history can no longer be a reply target.
+                                if (pendingSpeech.Count > conversation.Count)
+                                    pendingSpeech.RemoveRange(0, pendingSpeech.Count - conversation.Count);
                                 // The reply waits out the settle window anyway, so retrieve for this final in the meantime.
                                 prefetch!.Update(transcript, earlierTranscripts.With(conversation.GetRange(0, conversation.Count - 1)));
                                 ScheduleSettle(lifetime, afterFinal: true);
@@ -183,7 +190,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             prefetch!.Update(transcript, earlierTranscripts.With(conversation));
                             // Ongoing speech postpones the reply, except a question or request already waiting too long.
                             if (options.ReplySettleMs > 0 && pendingSpeech.Count > 0 &&
-                                !(TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.InvitesReply(pendingSpeech)))
+                                !(clock.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.InvitesReply(pendingSpeech)))
                                 ScheduleSettle(lifetime);
                         }
                         break;
@@ -239,8 +246,12 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         await SendAsync(koreanMessage, lifetime.Token);
                         break;
                     case "delta" when message.Generation == generationNumber && responseActive:
-                        await SendAsync(new { type = "response.delta", responseId, turnId = responseTurn, text = (string)message.Value! }, lifetime.Token);
-                        if (message.ModelResponse) responseMeasurement?.FirstDeltaSent();
+                        var deltaText = (string)message.Value!;
+                        // primaryDone marks, once per response, that the first line is complete; only that delta may be empty.
+                        await SendAsync(message.PrimaryDone
+                            ? new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText, primaryDone = true }
+                            : (object)new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText }, lifetime.Token);
+                        if (message.ModelResponse && deltaText.Length > 0) responseMeasurement?.FirstDeltaSent();
                         break;
                     case "complete" when message.Generation == generationNumber && responseActive:
                         var completion = (Completion)message.Value!;
@@ -259,36 +270,21 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }, lifetime.Token);
                         if (message.ModelResponse) responseMeasurement?.CompletedSent();
                         responseActive = false;
-                        if (responsePending)
-                        {
-                            var completedQueueHistory = pendingResponseHistory;
-                            var completedQueueTurn = pendingResponseTurn;
-                            await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 0,
-                                preparedHistory: completedQueueHistory, preparedTurn: completedQueueTurn);
-                        }
+                        await StartPendingResponseAsync(lifetime.Token);
+                        break;
+                    case "grounding.unavailable" when message.Generation == generationNumber && responseActive:
+                        // Non-fatal and sent before the general reply, so older clients still learn why it is not document-based.
+                        await ErrorAsync("grounding_unavailable", GroundingUnavailableMessage, true, lifetime.Token);
+                        break;
+                    case "grounding.fallback" when message.Generation == generationNumber && responseActive:
+                        await CompleteWithoutGroundingAsync(lifetime.Token);
+                        await StartPendingResponseAsync(lifetime.Token);
                         break;
                     case "generation.error" when message.Generation == generationNumber && responseActive:
                         var failure = (ProviderException)message.Value!;
                         await ErrorAsync(failure.Code, failure.Message, true, lifetime.Token);
                         if (failure.Code == "grounding_unavailable")
-                        {
-                            await SendAsync(new
-                            {
-                                type = "response.completed",
-                                responseId,
-                                turnId = responseTurn,
-                                text = "Grounding is unavailable. Please try again before relying on a factual answer.",
-                                suggestions = new[] { "Grounding is unavailable. Please try again before relying on a factual answer." },
-                                sources = Array.Empty<Source>(),
-                                grounding = "unavailable",
-                                responseRoute,
-                                retrievalPrefetched
-                            }, lifetime.Token);
-                            // This fixed notice is not translated server-side; tell the client so it does not wait for it.
-                            if (koreanScope is not null)
-                                await SendAsync(new { type = "response.korean", responseId, turnId = responseTurn, index = 0, failed = true }, lifetime.Token);
-                            responseActive = false;
-                        }
+                            await CompleteWithoutGroundingAsync(lifetime.Token);
                         else
                         {
                             var pending = responsePending;
@@ -299,13 +295,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             pendingResponseHistory = pendingHistory;
                             pendingResponseTurn = pendingTurn;
                         }
-                        if (responsePending)
-                        {
-                            var recoveryQueueHistory = pendingResponseHistory;
-                            var recoveryQueueTurn = pendingResponseTurn;
-                            await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 0,
-                                preparedHistory: recoveryQueueHistory, preparedTurn: recoveryQueueTurn);
-                        }
+                        await StartPendingResponseAsync(lifetime.Token);
                         break;
                 }
             }
@@ -385,16 +375,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     {
         var number = ++settleNumber;
         var delay = TimeSpan.FromMilliseconds(options.ReplySettleMs);
-        if (pendingSpeech.Count > 0 && TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime)
+        if (pendingSpeech.Count > 0 && clock.GetElapsedTime(pendingSince) > MaxGatherTime)
             // A long-running gathered statement is answered as soon as the speaker pauses briefly.
             delay = TimeSpan.FromMilliseconds(CompleteSettleMs);
         else if (afterFinal && ReplyTrigger.InvitesReply(pendingSpeech) && ReplyTrigger.LooksComplete(pendingSpeech))
             // New speech re-arms the full window, so a continuation still merges into one reply.
             delay = TimeSpan.FromMilliseconds(Math.Min(options.ReplySettleMs, CompleteSettleMs));
-        _ = Task.Delay(delay, lifetime.Token).ContinueWith(task =>
+        // Enqueued inline when the timer fires (a non-blocking TryWrite), so the settle is ordered before any later speech.
+        _ = Task.Delay(delay, clock, lifetime.Token).ContinueWith(task =>
         {
             if (task.IsCompletedSuccessfully) EnqueueCallback(new("settle", Generation: number), lifetime);
-        }, TaskScheduler.Default);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private void EnqueueCallback(SessionEvent message, CancellationTokenSource lifetime)
@@ -501,21 +492,55 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     {
         pendingResponseHistory = CreateFocusedHistory(currentSegments);
         pendingResponseTurn = lastTurn;
+        // Timed from its own final, not from whatever later final arrives while it waits.
+        pendingResponseTimestamp = lastFinalTimestamp;
         responsePending = true;
+    }
+
+    private const string GroundingUnavailableMessage =
+        "Document search is unavailable, so this reply is general and not based on your materials.";
+    private const string UnavailableNotice = "Grounding is unavailable. Please try again before relying on a factual answer.";
+
+    /// <summary>Starts the queued reply, if any, after the active one completed or failed.</summary>
+    private Task StartPendingResponseAsync(CancellationToken lifetime) => responsePending
+        ? StartResponseAsync(lifetime, manual: false, currentSegments: 0,
+            preparedHistory: pendingResponseHistory, preparedTurn: pendingResponseTurn, preparedTimestamp: pendingResponseTimestamp)
+        : Task.CompletedTask;
+
+    /// <summary>The fixed completion used when neither the materials nor a general model reply are available.</summary>
+    private async Task CompleteWithoutGroundingAsync(CancellationToken cancellation)
+    {
+        // Korean started for a reply that failed mid-stream must not arrive for text the client no longer shows.
+        if (koreanScope is not null) koreanScope.Abandoned = true;
+        await SendAsync(new
+        {
+            type = "response.completed",
+            responseId,
+            turnId = responseTurn,
+            text = UnavailableNotice,
+            suggestions = new[] { UnavailableNotice },
+            sources = Array.Empty<Source>(),
+            grounding = "unavailable",
+            responseRoute,
+            retrievalPrefetched
+        }, cancellation);
+        // This fixed notice is not translated server-side; tell the client so it does not wait for it.
+        if (koreanScope is not null)
+            await SendAsync(new { type = "response.korean", responseId, turnId = responseTurn, index = 0, failed = true }, cancellation);
+        responseActive = false;
     }
 
     private ConversationTurn[] CreateFocusedHistory(int currentSegments)
     {
-        if (currentSegments < 1 || currentSegments > conversation.Count)
-            throw new InvalidOperationException("Current response segments must identify recent conversation turns.");
-        var focusStart = conversation.Count - currentSegments;
+        // Only segments still in the bounded history can be targeted; older gathered speech is dropped, never an error.
+        var focusStart = conversation.Count - Math.Clamp(currentSegments, 1, Math.Max(1, conversation.Count));
         var focusedConversation = conversation.Select((turn, index) =>
             turn with { CurrentResponseTarget = index >= focusStart }).ToArray();
         return earlierTranscripts.With(focusedConversation);
     }
 
     private async Task StartResponseAsync(CancellationToken lifetime, bool manual, int currentSegments,
-        ConversationTurn[]? preparedHistory = null, string? preparedTurn = null)
+        ConversationTurn[]? preparedHistory = null, string? preparedTurn = null, long? preparedTimestamp = null)
     {
         var history = preparedHistory ?? CreateFocusedHistory(currentSegments);
         if (history.Length == 0) throw new InvalidOperationException("Response history cannot be empty.");
@@ -535,7 +560,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         var prefetched = prefetch?.Take(responseTurn!, targetText, responseRoute, prior);
         retrievalPrefetched = prefetched is not null;
         responseActive = true;
-        responseMeasurement = new(lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual);
+        responseMeasurement = new(preparedTimestamp ?? lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual, clock);
         var number = ++generationNumber;
         await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
         if (!generationTask.IsCompleted) retired.Add(generationTask);
@@ -564,6 +589,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private async Task GenerateAsync(int number, ConversationTurn[] history, string route,
         Task<RetrievalOutcome>? prefetched, KoreanScope? scope, SessionOptions settings, CancellationToken cancellation, CancellationToken lifetime)
     {
+        var groundingUnavailable = false;
         try
         {
             if (route == "profile")
@@ -571,7 +597,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 cancellation.ThrowIfCancellationRequested();
                 var introduction = ProfileIntroduction.Compose(settings);
                 StartKorean(scope, 0, introduction, new TranslationContext(settings.Topic, settings.Phrases), lifetime);
-                await events.Writer.WriteAsync(new("delta", introduction, number), cancellation);
+                await events.Writer.WriteAsync(new("delta", introduction, number, PrimaryDone: true), cancellation);
                 await events.Writer.WriteAsync(new("complete",
                     new Completion(introduction, [introduction], [], "disabled", "profile", false), number), cancellation);
                 return;
@@ -580,15 +606,30 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             // and never delays or blocks the suggestion. Its failure is observed here so it can never go unhandled.
             var turnSignal = provider.ShouldRespondAsync(history, cancellation);
             _ = turnSignal.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
-            var grounding = route != "knowledge" ? new Grounding("disabled", []) :
-                prefetched is not null ? (await prefetched.WaitAsync(cancellation)).RequireGrounding() :
-                await MeetingMetrics.MeasureRetrievalAsync(provider,
-                    RetrievalQuery.Build(history[^1].Text, history.Take(history.Length - 1).ToArray()), objectId, cancellation);
-            var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches";
+            var grounding = new Grounding("disabled", []);
+            if (route == "knowledge")
+            {
+                try
+                {
+                    grounding = prefetched is not null ? (await prefetched.WaitAsync(cancellation)).RequireGrounding() :
+                        await MeetingMetrics.MeasureRetrievalAsync(provider,
+                            RetrievalQuery.Build(history[^1].Text, history.Take(history.Length - 1).ToArray()), objectId, cancellation);
+                }
+                catch (ProviderException failure) when (failure.Code == "grounding_unavailable")
+                {
+                    LogRetrievalFailure(logger, failure);
+                    // Announced before the reply, as before, so the client knows this reply is not based on its materials.
+                    await events.Writer.WriteAsync(new("grounding.unavailable", Generation: number), cancellation);
+                    groundingUnavailable = true;
+                    grounding = new("unavailable", []);
+                }
+            }
+            var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches" or "unavailable";
             var translation = scope is null ? TranslationContext.Empty
                 : new TranslationContext(settings.Topic, KoreanTranslation.Terms(settings, grounding));
             var text = new StringBuilder();
             string? alternative = null;
+            var primaryDoneSent = false;
             await foreach (var update in provider.AnswerWithSuggestionsAsync(history, grounding, settings, route, cancellation).WithCancellation(cancellation))
             {
                 cancellation.ThrowIfCancellationRequested();
@@ -596,26 +637,36 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 if (text.Length + delta.Length > 8000) throw new ProviderException("response_limit", "Response exceeded its size limit.");
                 text.Append(delta);
                 if (update.Alternative is not null) alternative = update.Alternative;
-                if (delta.Length > 0)
-                    await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse), cancellation);
+                // The delta that ends the first line carries primaryDone; an end found after that text was sent is an empty delta.
+                var primaryDone = update.PrimaryDone && !primaryDoneSent && text.Length > 0;
+                primaryDoneSent |= primaryDone;
+                if (delta.Length > 0 || primaryDone)
+                    await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse, PrimaryDone: primaryDone), cancellation);
                 // The first line is final as soon as the second begins, so its translation overlaps the alternative.
                 if (update.PrimaryDone) StartKorean(scope, 0, text.ToString().Trim(), translation, lifetime);
             }
             cancellation.ThrowIfCancellationRequested();
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
+            // A single-line reply is known to be complete only when the stream ends.
+            if (!primaryDoneSent)
+                await events.Writer.WriteAsync(new("delta", "", number, ModelResponse: modelResponse, PrimaryDone: true), cancellation);
             var suggestions = ReplySuggestions.Complete(text.ToString(), alternative);
             for (var index = 0; index < suggestions.Length; index++)
                 StartKorean(scope, index, suggestions[index].Trim(), translation, lifetime);
             await events.Writer.WriteAsync(new("complete",
                 new Completion(text.ToString(), suggestions,
-                    grounding.Documents.Select(item => item.Source).ToArray(), grounding.Status, route, prefetched is not null,
+                    DistinctSources(grounding.Documents), grounding.Status, route, prefetched is not null,
                     await TurnSignalAsync(turnSignal)), number,
                 ModelResponse: modelResponse), cancellation);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
+            // A deadline after an announced search failure still ends with the fixed completion, never a second error.
+            // A user cancel bumps the generation number, so the event loop drops this stale event.
             if (!lifetime.IsCancellationRequested)
-                await events.Writer.WriteAsync(new("generation.error", new ProviderException("response_timeout", "Response timed out or was cancelled."), number), lifetime);
+                await events.Writer.WriteAsync(groundingUnavailable
+                    ? new("grounding.fallback", Generation: number)
+                    : new("generation.error", new ProviderException("response_timeout", "Response timed out or was cancelled."), number), lifetime);
         }
         catch (Exception exception)
         {
@@ -628,12 +679,46 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         new ProviderException("model_busy", "Azure model request limit reached. Wait briefly, then retry."),
                     _ => new ProviderException("response_unavailable", "Response service is unavailable. Please retry.")
                 };
-                logger.LogWarning("Meeting response failed with code {Code}, HTTP status {Status}.", error.Code,
-                    exception is System.ClientModel.ClientResultException client ? client.Status : 0);
-                await events.Writer.WriteAsync(new("generation.error", error, number), lifetime);
+                logger.LogWarning("Meeting response failed with code {Code}: {ExceptionType}, HTTP status {Status}, after search failure {AfterSearchFailure}.",
+                    error.Code, exception.GetType().Name, HttpStatusText(exception), groundingUnavailable);
+                // The search failure was already announced; when the general reply fails too, only the fixed notice follows.
+                await events.Writer.WriteAsync(groundingUnavailable
+                    ? new("grounding.fallback", Generation: number)
+                    : new("generation.error", error, number), lifetime);
             }
         }
     }
+
+    /// <summary>Content-free log line for a search failure: the cause's category, exception type, HTTP status, Search code and retry.</summary>
+    internal static void LogRetrievalFailure(ILogger logger, ProviderException failure)
+    {
+        var cause = failure.Retrieval;
+        logger.LogWarning("Meeting retrieval unavailable: {Kind}, transient {Transient}, {ExceptionType}, HTTP status {Status}, search code {SearchCode}, retried {Retried}.",
+            cause?.Kind ?? "unknown", cause?.Transient ?? false, cause?.ExceptionType ?? nameof(ProviderException),
+            cause?.HttpStatus?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none", cause?.ErrorCode ?? "none",
+            cause?.Retried ?? false);
+    }
+
+    /// <summary>
+    /// One source per document, in evidence order: chunks of the same document share its URL (or, without one, its title),
+    /// so they appear once. The model still receives every accepted chunk as evidence.
+    /// </summary>
+    internal static Source[] DistinctSources(IEnumerable<Evidence> documents)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return documents.Select(document => document.Source)
+            .Where(source => seen.Add(string.IsNullOrWhiteSpace(source.Url)
+                ? "title:" + source.Title.Trim().ToUpperInvariant() : "url:" + source.Url))
+            .ToArray();
+    }
+
+    /// <summary>The HTTP status an Azure SDK exception carries, or "none" when no HTTP answer was received.</summary>
+    internal static string HttpStatusText(Exception exception) => exception switch
+    {
+        System.ClientModel.ClientResultException { Status: > 0 } client => client.Status.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Azure.RequestFailedException { Status: > 0 } failed => failed.Status.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        _ => "none"
+    };
 
     /// <summary>
     /// Translates one reply line for a client that opted in. It runs beside the answer, publishes through the event loop and

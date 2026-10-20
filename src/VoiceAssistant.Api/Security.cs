@@ -5,6 +5,19 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace VoiceAssistant.Api;
 
+public static class SecurityHeaders
+{
+    public const string StrictTransportSecurity = "max-age=31536000; includeSubDomains";
+
+    /// <summary>
+    /// Whether the browser used HTTPS. TLS ends at the Azure Container Apps ingress, which forwards plain HTTP and states the
+    /// original scheme in X-Forwarded-Proto (the first value when proxies are chained).
+    /// </summary>
+    public static bool IsHttps(HttpRequest request) =>
+        request.IsHttps || string.Equals(request.Headers["X-Forwarded-Proto"].ToString().Split(',')[0].Trim(), "https",
+            StringComparison.OrdinalIgnoreCase);
+}
+
 public static class OriginPolicy
 {
     public static bool IsCanonicalHttpsOrigin(string value) =>

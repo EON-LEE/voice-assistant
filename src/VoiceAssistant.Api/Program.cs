@@ -86,11 +86,17 @@ namespace VoiceAssistant.Api
             }));
 
             var app = builder.Build();
+            var strictTransport = !app.Environment.IsDevelopment();
             app.Use(async (context, next) =>
             {
-                context.Response.Headers.CacheControl = "no-store";
-                context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-                context.Response.Headers["Referrer-Policy"] = "no-referrer";
+                var headers = context.Response.Headers;
+                headers.CacheControl = "no-store";
+                headers.XContentTypeOptions = "nosniff";
+                headers["Referrer-Policy"] = "no-referrer";
+                headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=(self), display-capture=(self)";
+                headers.ContentSecurityPolicy = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
+                if (strictTransport && SecurityHeaders.IsHttps(context.Request))
+                    headers.StrictTransportSecurity = SecurityHeaders.StrictTransportSecurity;
                 await next(context);
             });
             app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });

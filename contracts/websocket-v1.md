@@ -70,6 +70,8 @@ speech, and new speech re-arms the wait, so a question split across several fina
 and a statement is answered once it reaches 12 words; a shorter statement keeps waiting for more context. The wait shortens to
 `min(replySettleMs, 300)` ms when the gathered speech is a question or request that ends like a finished sentence (it does not
 end on a preposition, auxiliary, article or conjunction), and to 300 ms once speech has been gathered for more than 12 seconds.
+Gathered speech is bounded by the same 12-turn history the model sees: a waiting segment that leaves that history is dropped
+from the reply target (and a remainder of only backchannels is discarded), never an error.
 While the server waits it already retrieves for the latest final. `response.request` replies at once. `0` keeps one reply per
 final utterance.
 
@@ -106,13 +108,15 @@ For a clear individual/group introduction request with any confirmed profile fie
 | `session.updated` | `responseMode`, `replyKorean`: the effective values after a `session.update`. Sent in order with the other events, so it is known which reply started before or after it |
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
 | `response.started` | `responseId: string`, `turnId: string` |
-| `response.delta` | `responseId`, `turnId`, `text: string` (append) |
+| `response.delta` | `responseId`, `turnId`, `text: string` (append); `primaryDone: true` once per streamed reply when the primary line is complete (see below) |
 | `response.completed` | `responseId`, `turnId`, `text: string` (complete replacement), `suggestions: string[]` (1–2 English replies, primary first), `sources: [{title,url,updatedAt}]`, `grounding`, `responseRoute: transcript\|profile\|knowledge`, `retrievalPrefetched: boolean` |
 | `response.korean` | `responseId`, `turnId`, `index: 0\|1` (0 = primary reply, 1 = alternative), and either `korean: string` (1–400 characters, mainly Hangul) or `failed: true` with no `korean` property. Sent only to clients that opted in with `replyKorean` |
 | `response.cancelled` | `responseId`, `turnId` |
 | `error` | `code: string`, `message: string` (safe user-facing detail), `retryable: boolean` |
 
-`updatedAt` is an ISO timestamp or null if source metadata does not provide it. `grounding` is `disabled`, `grounded`, `no_matches`, or `unavailable`. Sources are relevance-filtered reference candidates, not verified citations or a guarantee that every generated statement is supported. Render as text, validate http(s) URLs, and show grounding status. Search failure emits `error` with `grounding_unavailable` followed by a deterministic refusal-like completion (`unavailable`, empty sources); the language model is **not** called. When a successful search yields no authorized relevant results, the real model can provide general conversational phrasing from the transcript alone (`no_matches`, empty sources), but must not invent company-specific knowledge or claim to have consulted supporting documents.
+`updatedAt` is an ISO timestamp or null if source metadata does not provide it. `grounding` is `disabled`, `grounded`, `no_matches`, or `unavailable`. Sources are relevance-filtered reference candidates, not verified citations or a guarantee that every generated statement is supported. Each document appears once in `sources`, in relevance order (de-duplicated by `url`, or by title when a source has no URL), even when several of its chunks were given to the model as evidence. Render as text, validate http(s) URLs, and show grounding status. When a successful search yields no authorized relevant results, the real model can provide general conversational phrasing from the transcript alone (`no_matches`, empty sources), but must not invent company-specific knowledge or claim to have consulted supporting documents.
+
+Search failure: a transient failure (HTTP 429, any 5xx, a time-out or a network error) gets one fast retry that adds at most about 800 ms inside the existing 10-second retrieval cap; a permanent failure (HTTP 400, 401, 402, 403, 404 or a configuration/credential problem) is not retried. A candidate without a reranker score is skipped as long as other candidates were scored; when no candidate was scored, ranking was partial or the service failed, retrieval has failed. A failed retrieval for a knowledge reply first emits the non-fatal `error` `grounding_unavailable` (`retryable: true`), and then the language model **is** called without documents for a brief, general and non-committal reply that states no company-specific facts, numbers, names, dates or commitments and may say that the details still need to be confirmed; its `response.completed` has `grounding: "unavailable"` and empty `sources`. If that model call fails as well, the deterministic completion follows instead (`text` and the single suggestion `Grounding is unavailable. Please try again before relying on a factual answer.`, `grounding: "unavailable"`, empty sources) without a second `error`, and a client that opted in with `replyKorean` gets `response.korean` `index: 0` `failed: true` for it.
 
 `suggestions` is additive: older clients may ignore it and continue reading `text`.
 The first suggestion equals `text`; `response.delta` still appends only primary plain text.
@@ -123,12 +127,23 @@ short sentences / 18 words per option, with an A2-B1 Korean-speaking IT-engineer
 The persona sets vocabulary difficulty, not evidence of employment or personal history. The second
 reply uses a distinct conversational move rather than synonym-only paraphrasing.
 A missing, duplicate, multiline, oversized or over-25-word
-alternative is discarded; deterministic profile replies and grounding failures have only one suggestion.
+alternative is discarded; deterministic profile replies and the fixed grounding-failure notice have only one suggestion.
 Suggestions share completion-level grounding/sources; they are not individually verified citations.
 Korean translations are client enrichment, not part of this English API field; a client that opted in with `replyKorean`
 receives them as separate `response.korean` events (below). Neither primary nor
 alternative is inserted into conversation history: only actual finalized recognition segments are context.
 No suggestion implies the participant spoke it or committed to an action.
+
+`primaryDone: true` on `response.delta` marks that the primary line (the first suggestion) is complete, so a client can show
+it before `response.completed`. It is sent exactly once per streamed reply: on the delta whose `text` ends the primary line,
+or, when the end is only known after the last primary text was sent (for example a single-line reply, which ends with the
+stream), on one extra delta with empty `text`. Empty `text` occurs only together with `primaryDone: true`, no further delta
+of that reply follows it, and deltas without the marker omit the property. The concatenated `text` of a reply's deltas equals
+`response.completed.text` and `suggestions[0]`; the server does not post-process the primary line. Profile replies carry the
+marker on their single delta. One exception: when a reply that was asked for without documents after a Search failure fails
+after it started streaming, the deterministic completion above replaces it, so clients must always replace the streamed text
+with `response.completed.text` when it arrives. `response.completed` timing is unchanged, and clients that ignore the
+property keep working.
 
 `response.korean` (only for clients that set `replyKorean`) delivers exactly one Korean line per suggestion line of every
 completed reply: `index` 0 for the primary, 1 for the alternative. Each is either a translation or `failed:true` when none could
@@ -146,7 +161,7 @@ Fake: >=640 nonzero audio bytes emit deterministic partial+final once per uttera
 
 The additive `responseRoute` describes the selected context path, not answer correctness: `transcript` and `profile` skip Search and use `grounding:disabled` with empty sources; `knowledge` may result in any existing grounding state. `retrievalPrefetched:true` means a retrieval that had already started for this utterance, from a stable partial or from its final transcript (including an in-flight or failed one), was selected for the final text, not a latency or relevance guarantee. It remains false for transcript/profile routes and when the reply has to start its own retrieval.
 
-For knowledge routes only, partial text with at least20 characters and4 whitespace-separated words is eligible after250ms without a changed normalized partial. At most 3 speculative retrievals start per utterance. A **final** transcript that is worth a reply is retrieved at once, with no debounce, and does not count toward that limit; it also promotes an identical candidate that is still waiting out the debounce. There is one active speculative worker/candidate per socket/identity; revisions and speech of a later turn cancel obsolete speculative work, but never a retrieval that a reply is already waiting for: that one finishes on its own and cannot be reused afterwards. A noncooperative provider occupies that worker rather than spawning unbounded replacements, and a retrieval that has not started yet is never handed to a reply. Reuse requires the **same turn and the same text after folding case, whitespace and punctuation at the edges of words** (a speech partial and its final differ in exactly these). Apostrophes, decimals, minus signs, dates, numbers and negations inside words are preserved, so `can` / `cannot` / `can't` and `10` / `100` never match. No cross-user or cross-session cache exists; ACL uses the ticket-bound identity. Explicit cancel/stop invalidates speculative work. Matched retrieval failure remains visible as `grounding_unavailable`, never a success-shaped fallback. Unmatched speculative results are discarded and final retrieval runs normally.
+For knowledge routes only, partial text with at least20 characters and4 whitespace-separated words is eligible after250ms without a changed normalized partial. At most 3 speculative retrievals start per utterance. A **final** transcript that is worth a reply is retrieved at once, with no debounce, and does not count toward that limit; it also promotes an identical candidate that is still waiting out the debounce. There is one active speculative worker/candidate per socket/identity; revisions and speech of a later turn cancel obsolete speculative work, but never a retrieval that a reply is already waiting for: that one finishes on its own and cannot be reused afterwards. A noncooperative provider occupies that worker rather than spawning unbounded replacements, and a retrieval that has not started yet is never handed to a reply. Reuse requires the **same turn and the same text after folding case, whitespace and punctuation at the edges of words** (a speech partial and its final differ in exactly these). Apostrophes, decimals, minus signs, dates, numbers and negations inside words are preserved, so `can` / `cannot` / `can't` and `10` / `100` never match. No cross-user or cross-session cache exists; ACL uses the ticket-bound identity. Explicit cancel/stop invalidates speculative work. Matched retrieval failure remains visible as `grounding_unavailable` followed by a general reply labeled `grounding: "unavailable"`, never a document-grounded-looking success. Unmatched speculative results are discarded and final retrieval runs normally.
 
 Retrieval is context-aware by default for knowledge routes. Without another model call, one shared
 query builder combines up to four preceding actual recognition segments plus up to three older
@@ -168,7 +183,7 @@ These precede recent segments for routing, retrieval and model context, yielding
 middle details or later topic changes; there is no full-meeting memory, persistence or summary LLM call.
 Only newly recognized speech can enter either window. Starting a new session clears both.
 
-`search-index.json` is the minimum index schema, including the `meeting-semantic` title/content configuration. Optional additional fields are allowed. Populate `contentVector` with the same deployment/model as query embeddings: `text-embedding-3-small`, 1536 dimensions. The API performs hybrid text + vector retrieval over up to 50 candidates, semantically reranks them, and passes at most 5 accepted results to the model. The configurable minimum reranker score defaults to 2.0 on the service's 0-4 scale; it needs corpus-specific evaluation and is not a correctness guarantee. Missing/invalid scores, partial semantic results, or ranker failures produce `grounding_unavailable`, never an unfiltered fallback. Candidates remain prefiltered by:
+`search-index.json` is the minimum index schema, including the `meeting-semantic` title/content configuration. Optional additional fields are allowed. Populate `contentVector` with the same deployment/model as query embeddings: `text-embedding-3-small`, 1536 dimensions. The API performs hybrid text + vector retrieval over up to 50 candidates, semantically reranks them, and passes at most 5 accepted results to the model. The configurable minimum reranker score defaults to 2.0 on the service's 0-4 scale; it needs corpus-specific evaluation and is not a correctness guarantee. A candidate without a valid reranker score is skipped while others were scored; no scored candidate, partial semantic results or ranker failures produce `grounding_unavailable`, never an unfiltered fallback. Candidates remain prefiltered by:
 
 ```text
 allowedPrincipalIds/any(p: p eq '<validated-oid-GUID>')

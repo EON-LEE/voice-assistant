@@ -13,3 +13,14 @@ TestResults/
 **/playwright-report/
 **/test-results/
 .playwright-mcp/
+
+# Private meeting output must never enter this public repository.
+# real-meeting-audio.mjs writes transcripts, answers and screenshots next to where it runs.
+**/*-report.json
+**/*-final.png
+# Local-only evaluation output, audio caches and private notes.
+**/eval-output/
+**/.eval-cache/
+**/private/
+*.private.*
+*.local.json

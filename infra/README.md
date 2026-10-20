@@ -386,9 +386,10 @@ The coordinated API uses semantic reranking with explicit
 `Azure__SearchMinimumRerankerScore=2.0`; ACL prefiltering remains mandatory.
 The index's `meeting-semantic` configuration prioritizes `title` as title and
 `content` as content. The Bicep parameter `searchSemanticSearch` allows `free`
-or `standard`, default `free`. Confirm regional/service support and the selected
-billing mode before deployment. Free-mode capacity/quotas are not promised here;
-standard mode may charge for semantic requests. Measure end-to-end latency and
+or `standard`, default `standard`. The free plan has a monthly query quota; once it
+is exhausted every grounded reply fails (HTTP 402), so production uses `standard`,
+which charges per semantic request. Confirm regional/service support before deployment.
+Measure end-to-end latency and
 representative relevant/irrelevant queries against the live service. A reranker
 threshold is not a calibrated probability or a guarantee of relevance.
 Semantic service errors, quota exhaustion, partial responses or missing scores
@@ -448,12 +449,17 @@ and requires semantic parity with the coordinated `contracts/search-index.json`
 when `-BackendSchemaPath` is supplied. An old API contract intentionally fails
 that release check until the matching API change is integrated.
 
-Container environment log destination and workspace are **unset** (an empty
-`appLogsConfiguration`); the ARM API rejects the literal string `"none"`.
-There is no Application
-Insights request/body capture or diagnostic log export. ASP.NET request logs are
-suppressed. Do not later enable full URL/query logging at ingress, proxies or
-telemetry: WebSocket upgrade URLs carry one-use tickets. The metric alert checks
+With `enableDiagnostics=true` (the default) the container environment sends
+**console and system logs only** to a dedicated 30-day, Entra-only Log Analytics
+workspace (`${namePrefix}-logs`), and an Entra-only Application Insights resource
+(`${namePrefix}-insights`) receives content-free metrics through the runtime identity's
+Monitoring Metrics Publisher role. There is no request/body capture and no request
+diagnostic category. The API logs no transcript, answer, query text or request URL:
+ASP.NET request logs stay at `Warning`. Do not later enable full URL/query logging at
+ingress, proxies or telemetry: WebSocket upgrade URLs carry one-use tickets (single use,
+valid for under a minute). Set `enableDiagnostics=false` to compile without any log
+destination (an empty `appLogsConfiguration`; the ARM API rejects the literal `"none"`).
+The metric alert checks
 `Replicas < 1`; an optional pre-existing `alertActionGroupId` routes notifications,
 otherwise alerts are portal-only. Missing metric series are not a reliable
 outage signal. `/health/live` and `/health/ready` are process/configuration checks,
@@ -462,7 +468,7 @@ separately with approved synthetic data and inspect platform metrics. Provider
 content-processing/abuse-monitoring policies still apply; this template does not
 override service retention policy or disable model content filtering.
 
-Cost drivers are the always-on Container App (0.5 vCPU/1 GiB), Search
+Cost drivers are the always-on Container App (2 vCPU/4 GiB by default, `containerCpu`), Search
 replicas/partitions, Speech audio duration, chat input/output tokens, ingestion/
 retrieval embeddings, Blob capacity/operations, the existing registry and Azure
 Monitor alert evaluations/notifications. Region, model SKU and quota allocation
