@@ -45,9 +45,12 @@ export const liveLimits = {
   handshakeMs: 15000,
   /** Audio kept while the connection is restored: the newest four seconds of 16 kHz PCM16. */
   backlogBytes: 4 * 32000,
-  /** Client-side token bucket, a margin under the server's 128 KB burst and 64 KB/s refill. */
-  burstBytes: 120000,
-  refillBytesPerSecond: 60000,
+  /**
+   * Client-side token bucket. The server's bucket (128 KB burst, 64 KB/s) counts on arrival, so the network can bunch up
+   * what was sent spread out; half the server's burst and three quarters of its rate leave room for that.
+   */
+  burstBytes: 64000,
+  refillBytesPerSecond: 48000,
   /** Socket room kept free so that commands never wait behind audio. */
   commandHeadroom: 4096,
   /** One silent frame this often keeps the server's 90 s receive-idle timer from firing while nothing else is sent. */
@@ -126,7 +129,10 @@ export class LiveController {
   private generation = 0;
   private ready = false;
   private readyAt: number | undefined;
-  private closingCode: string | undefined;
+  /** Why the server is about to close this connection, from the `error` that came before the close. */
+  private closing: Classified | undefined;
+  /** This connection started by sending a backlog, so an audio-rate rejection is retried rather than fatal. */
+  private flushedConnection = false;
   private waitingForSignIn = false;
   private readonly timers: Partial<Record<TimerName, unknown>> = {};
   private stopWatchingNetwork: (() => void) | undefined;
@@ -185,11 +191,13 @@ export class LiveController {
   /** Ends the live session at the user's request. */
   async stop(): Promise<void> {
     if (this.phase === "idle") return;
+    const connected = this.transport !== undefined;
     this.failure = this.notice = null;
     this.rollingOver = this.offline = false;
     this.attempt = 0;
     const stopped = this.shutdown();
     this.setPhase("idle");
+    if (connected) this.deps.onDisconnect({ code: "user_stop", disposition: "fatal" });
     await stopped;
   }
 
@@ -280,7 +288,7 @@ export class LiveController {
     const transport = this.transport = this.deps.createTransport();
     const connection = this.connection = new AbortController();
     this.ready = false;
-    this.closingCode = undefined;
+    this.closing = undefined;
     if (this.phase !== "reconnecting") this.setPhase("connecting");
     transport.connect(event => this.receive(generation, event), error => this.lost(generation, error), connection.signal).then(() => {
       if (generation !== this.generation) return;
@@ -303,7 +311,7 @@ export class LiveController {
       this.readyAt = this.refilledAt = this.lastSentAt = this.clock.now();
       this.tokens = liveLimits.burstBytes;
       this.offline = this.rollingOver = false;
-      this.flushing = this.backlog.length > 0;
+      this.flushing = this.flushedConnection = this.backlog.length > 0;
       this.stalled = false;
       this.setPhase("live");
       this.deps.onEvent(event);
@@ -322,11 +330,16 @@ export class LiveController {
 
   private serverError(generation: number, event: ServerEvent): void {
     const reason = classifyServerError(event.code ?? "", event.retryable === true);
+    // A rejected audio rate right after a backlog flush is the network bunching that flush up: reconnect, keep the source.
+    if (reason.code === "invalid_audio" && this.flushedConnection) {
+      this.closing = { code: reason.code, disposition: "transient" };
+      return;
+    }
     switch (reason.disposition) {
       case "rollover": this.rollover(generation); return;
       case "fatal": this.halt(reason); return;
       // The server closes the socket next; that close reconnects with this reason.
-      case "transient": this.closingCode = reason.code; return;
+      case "transient": this.closing = reason; return;
       case "notice": this.notice = reason; this.deps.onChange(); return;
     }
   }
@@ -345,13 +358,15 @@ export class LiveController {
 
   private lost(generation: number, error: unknown): void {
     if (generation !== this.generation || !this.active) return;
-    let reason = this.closingCode ? classifyServerError(this.closingCode, true) : classifyError(error);
+    let reason = this.closing ?? classifyError(error);
     if (reason.disposition === "notice") reason = { ...reason, disposition: "transient" };
     this.dropConnection();
     this.trimBacklog();
     this.deps.onDisconnect(reason);
     if (!this.active) return;
     if (reason.disposition === "rollover") { this.rollingOver = true; this.setPhase("reconnecting"); this.connect(); return; }
+    // A rollover that fails is an ordinary reconnect from here on: show the attempts, the network wait or the sign-in.
+    this.rollingOver = false;
     if (reason.action === "signin") {
       // Keep capturing (the newest four seconds are kept) until the user signs in; `resume()` continues.
       this.failure = reason;
@@ -469,9 +484,12 @@ export class LiveController {
   /** Stops and keeps the reason; the page offers `reason.action` (re-share, restart, sign in) when there is one. */
   private halt(reason: Classified): void {
     if (!this.active) return;
+    const connected = this.transport !== undefined;
     this.failure = reason;
     void this.shutdown();
     this.setPhase("stopped");
+    // A reply the closed connection was still producing must not look as if it were still coming.
+    if (connected) this.deps.onDisconnect(reason);
   }
 
   private shutdown(): Promise<void> {
@@ -500,8 +518,8 @@ export class LiveController {
     this.connection?.abort();
     this.connection = undefined;
     this.ready = false;
-    this.closingCode = undefined;
-    this.flushing = this.stalled = false;
+    this.closing = undefined;
+    this.flushing = this.stalled = this.flushedConnection = false;
     try { transport?.close(); } catch { /* already closed */ }
   }
 

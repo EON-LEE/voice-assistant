@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LiveState, answers, translationChunks } from "../../src/VoiceAssistant.Web/src/live-state.js";
+import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply } from "../../src/VoiceAssistant.Web/src/live-state.js";
 import { parseEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 
 const final = (turnId: string, text: string) => ({ type: "transcript.final", turnId, revision: 1, text });
@@ -253,6 +253,61 @@ test("Live: a reply cancelled after its primary line keeps the line readable, ma
   state.apply({ type: "response.delta", turnId: "t", responseId: "r2", text: "Still", primaryDone: false });
   state.cancelCurrent();
   assert.equal(state.display?.id, "r", "a draft without a finished line never replaces it");
+});
+
+test("Live: continuing after a stop clears an old pause and an unfinished reply but keeps the conversation", () => {
+  const state = new LiveState();
+  state.apply(final("one", "First?"));
+  state.apply({ type: "response.started", turnId: "one", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "First answer.", sources: [] });
+  state.apply(final("two", "Second?"));
+  state.apply({ type: "response.started", turnId: "two", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Half" });
+  state.pause(true);
+  state.restart(true);
+  assert.equal(state.generating, false);
+  assert.equal(state.display?.id, "r1", "the conversation stays");
+  assert.equal(state.turns.length, 2);
+  state.apply(final("three", "Third?"));
+  state.apply({ type: "response.started", turnId: "three", responseId: "r3" });
+  state.apply({ type: "response.delta", turnId: "three", responseId: "r3", text: "Third answer.", primaryDone: true });
+  assert.equal(state.display?.id, "r3", "replies are no longer suppressed by the old pause");
+  state.restart(false);
+  assert.equal(state.display, null);
+  assert.equal(state.turns.length, 0);
+});
+
+test("Live: ending the reply of a lost connection keeps a finished line and drops a draft", () => {
+  const state = new LiveState();
+  state.apply(final("t", "Status?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "Draft" });
+  state.endReply();
+  assert.equal(state.generating, false);
+  assert.equal(state.display?.id, undefined, "a draft is never shown");
+  state.apply({ type: "response.started", turnId: "t", responseId: "r2" });
+  assert.equal(state.current?.id, "r2", "ending a reply suppresses nothing that comes later");
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r2", text: "All green.", primaryDone: true });
+  state.endReply();
+  assert.equal(state.display?.text, "All green.");
+  assert.equal(state.display?.interrupted, true);
+});
+
+test("Live: the Korean line under an unfinished or interrupted primary line never waits forever", () => {
+  const reply = (extra: Partial<LiveReply>): LiveReply => ({ id: "r", turnId: "t", text: "Ship on Friday.", complete: false, sources: [], ...extra });
+  assert.equal(primaryMeaning(null, undefined, undefined), meaningTexts.waiting);
+  assert.equal(primaryMeaning(reply({ primaryDone: true }), undefined, undefined), meaningTexts.preparing, "the completion will translate it");
+  assert.equal(primaryMeaning(reply({ primaryDone: true }), undefined, "금요일에 출시합니다."), "금요일에 출시합니다.", "a pushed line shows early");
+  assert.equal(primaryMeaning(reply({ primaryDone: true, interrupted: true }), undefined, "금요일에 출시합니다."), "금요일에 출시합니다.");
+  assert.equal(primaryMeaning(reply({ primaryDone: true, interrupted: true }), undefined, undefined), meaningTexts.interrupted);
+  assert.equal(primaryMeaning(reply({ primaryDone: true, interrupted: true }), undefined, null), meaningTexts.interrupted, "a failed push");
+  assert.equal(primaryMeaning(reply({ complete: true }), undefined, "푸시"), meaningTexts.preparing, "a completed reply waits for its own translation");
+  assert.equal(primaryMeaning(reply({ interrupted: true }), "번역됨", undefined), "번역됨");
+  assert.doesNotMatch(meaningTexts.interrupted, /준비 중/);
+  assert.equal(translatable(reply({ primaryDone: true })), false, "an unfinished reply translates at completion");
+  assert.equal(translatable(reply({ primaryDone: true, interrupted: true })), true);
+  assert.equal(translatable(reply({ complete: true })), true);
+  assert.equal(translatable(null), false);
 });
 
 test("Live: long speech is translated in bounded chunks without losing words", () => {
