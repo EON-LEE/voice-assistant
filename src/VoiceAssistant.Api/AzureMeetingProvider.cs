@@ -17,9 +17,15 @@ namespace VoiceAssistant.Api;
 
 public sealed class AzureMeetingProvider : IMeetingProvider
 {
+    /// <summary>Overall cap for one retrieval, including its single retry.</summary>
+    internal static readonly TimeSpan RetrievalTimeout = TimeSpan.FromSeconds(10);
+    /// <summary>The most a transient failure may add: the pause before the retry plus the retry itself.</summary>
+    internal static readonly TimeSpan RetryBudget = TimeSpan.FromMilliseconds(800);
+    internal static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(100);
     private readonly ServiceSettings settings;
     private readonly TokenCredential credential;
     private readonly AzureOpenAIClient openAI;
+    private readonly AzureOpenAIClient retrievalOpenAI;
     private readonly SearchClient? search;
 
     public AzureMeetingProvider(ServiceSettings settings, TokenCredential? credential = null)
@@ -27,22 +33,36 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         this.settings = settings;
         this.credential = credential ?? new DefaultAzureCredential();
         openAI = new(new Uri(settings.OpenAIEndpoint), this.credential);
+        retrievalOpenAI = new(new Uri(settings.OpenAIEndpoint), this.credential, RetrievalOpenAIOptions());
         if (settings.SearchEnabled)
-            search = new(new Uri(settings.SearchEndpoint), settings.SearchIndex, this.credential);
+            search = new(new Uri(settings.SearchEndpoint), settings.SearchIndex, this.credential, RetrievalSearchOptions());
     }
 
-    internal AzureMeetingProvider(ServiceSettings settings, AzureOpenAIClient openAI, SearchClient? search)
+    /// <param name="retrievalOpenAI">Embedding client for retrieval; defaults to <paramref name="openAI"/>.</param>
+    internal AzureMeetingProvider(ServiceSettings settings, AzureOpenAIClient openAI, SearchClient? search,
+        AzureOpenAIClient? retrievalOpenAI = null)
     {
         this.settings = settings;
         this.openAI = openAI;
+        this.retrievalOpenAI = retrievalOpenAI ?? openAI;
         this.search = search;
         credential = new DefaultAzureCredential();
     }
 
     public AzureMeetingProvider(ServiceSettings settings, AzureServiceClients clients)
-        : this(settings, clients.OpenAI, clients.Search)
+        : this(settings, clients.OpenAI, clients.RetrievalSearch, clients.RetrievalOpenAI)
     {
         credential = clients.Credential;
+    }
+
+    /// <summary>Live retrieval does its own single fast retry, so the SDK must not add slow backoff retries first.</summary>
+    internal static AzureOpenAIClientOptions RetrievalOpenAIOptions() => new() { RetryPolicy = new ClientRetryPolicy(maxRetries: 0) };
+
+    internal static SearchClientOptions RetrievalSearchOptions()
+    {
+        var options = new SearchClientOptions();
+        options.Retry.MaxRetries = 0;
+        return options;
     }
 
     public Task<ISpeechStream> StartSpeechAsync(Action<Transcript> transcript,
@@ -97,44 +117,74 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     public async Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation)
     {
         if (search is null) return new("disabled", []);
-        try
+        using var overall = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        overall.CancelAfter(RetrievalTimeout);
+        ReadOnlyMemory<float>? embedding = null;
+        for (var attempt = 0; ; attempt++)
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            var embedding = await openAI.GetEmbeddingClient(settings.EmbeddingDeployment)
-                .GenerateEmbeddingAsync(query, new EmbeddingGenerationOptions { Dimensions = 1536 }, timeout.Token);
-            var options = CreateSearchOptions(settings, objectId, embedding.Value.ToFloats());
-            var result = await search.SearchAsync<SearchDocument>(query, options, timeout.Token);
-            RequireCompleteSemanticResults(result.Value.SemanticSearch);
-            var documents = new List<Evidence>();
-            await foreach (var page in result.Value.GetResultsAsync().AsPages().WithCancellation(timeout.Token))
+            // The first attempt leaves the retry budget inside the overall cap; the single retry may use only that budget.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(overall.Token);
+            deadline.CancelAfter(attempt == 0 ? RetrievalTimeout - RetryBudget : RetryBudget - RetryDelay);
+            try
             {
-                if (page.GetRawResponse().Status == 206 || page.ContinuationToken is not null)
-                    throw new ProviderException("grounding_unavailable", "Search returned an incomplete candidate set.");
-                foreach (var match in page.Values)
-                {
-                    // A high RRF score or nearest-neighbor rank is not evidence of semantic relevance.
-                    var relevant = IsRelevantSemanticScore(match.SemanticSearch?.RerankerScore, settings.SearchMinimumRerankerScore);
-                    if (!relevant || documents.Count >= 5) continue;
-                    var document = match.Document;
-                    if (!document.TryGetValue("content", out var body) || body is not string content ||
-                        !document.TryGetValue("title", out var heading) || heading is not string title ||
-                        !document.TryGetValue("url", out var link) || link is not string url ||
-                        !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http"))
-                        throw new ProviderException("grounding_unavailable", "Search returned an invalid source.");
-                    DateTimeOffset? updatedAt = document.TryGetValue("updatedAt", out var updated) && updated is DateTimeOffset date ? date : null;
-                    documents.Add(new(content[..Math.Min(content.Length, 6000)], new(title[..Math.Min(title.Length, 300)], url, updatedAt)));
-                }
+                // A successful embedding is kept, so a retry after a Search failure repeats only the search.
+                embedding ??= (await retrievalOpenAI.GetEmbeddingClient(settings.EmbeddingDeployment)
+                    .GenerateEmbeddingAsync(query, new EmbeddingGenerationOptions { Dimensions = 1536 }, deadline.Token)).Value.ToFloats();
+                return await SearchOnceAsync(search, query, objectId, embedding.Value, deadline.Token);
             }
-            return new(documents.Count == 0 ? "no_matches" : "grounded", documents);
-        }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is RequestFailedException or System.ClientModel.ClientResultException
-            or OperationCanceledException or AuthenticationFailedException or ProviderException or JsonException or FormatException)
-        {
-            throw new ProviderException("grounding_unavailable", "Grounding is unavailable. No factual answer was generated.");
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (RetrievalFailure.Classify(exception) is { } failure)
+            {
+                // Throttling, server errors, time-outs and network failures get one fast retry; anything else fails at once.
+                if (attempt > 0 || !failure.Transient) throw Unavailable(failure with { Retried = attempt > 0 });
+                try { await Task.Delay(RetryDelay, overall.Token); }
+                catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { throw Unavailable(failure); }
+            }
         }
     }
+
+    private async Task<Grounding> SearchOnceAsync(SearchClient client, string query, string objectId, ReadOnlyMemory<float> embedding,
+        CancellationToken cancellation)
+    {
+        var result = await client.SearchAsync<SearchDocument>(query, CreateSearchOptions(settings, objectId, embedding), cancellation);
+        RequireCompleteSemanticResults(result.Value.SemanticSearch);
+        var documents = new List<Evidence>();
+        var scored = 0;
+        var unscored = 0;
+        await foreach (var page in result.Value.GetResultsAsync().AsPages().WithCancellation(cancellation))
+        {
+            if (page.GetRawResponse().Status == 206)
+                throw ResultFailure("partial_results", transient: true, "Search returned an incomplete candidate set.");
+            if (page.ContinuationToken is not null)
+                throw ResultFailure("invalid_result", transient: false, "Search returned more candidates than requested.");
+            foreach (var match in page.Values)
+            {
+                // A high RRF score or nearest-neighbor rank is not evidence of semantic relevance: an unscored candidate is skipped.
+                var relevant = SemanticRelevance(match.SemanticSearch?.RerankerScore, settings.SearchMinimumRerankerScore);
+                if (relevant is null) { unscored++; continue; }
+                scored++;
+                if (relevant is false || documents.Count >= 5) continue;
+                var document = match.Document;
+                if (!document.TryGetValue("content", out var body) || body is not string content ||
+                    !document.TryGetValue("title", out var heading) || heading is not string title ||
+                    !document.TryGetValue("url", out var link) || link is not string url ||
+                    !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http"))
+                    throw ResultFailure("invalid_result", transient: false, "Search returned an invalid source.");
+                DateTimeOffset? updatedAt = document.TryGetValue("updatedAt", out var updated) && updated is DateTimeOffset date ? date : null;
+                documents.Add(new(content[..Math.Min(content.Length, 6000)], new(title[..Math.Min(title.Length, 300)], url, updatedAt)));
+            }
+        }
+        // Candidates without a single semantic score mean ranking did not run: a failure, never "no matches".
+        if (scored == 0 && unscored > 0)
+            throw ResultFailure("unscored", transient: false, "Semantic relevance scoring is unavailable.");
+        return new(documents.Count == 0 ? "no_matches" : "grounded", documents);
+    }
+
+    private static ProviderException Unavailable(RetrievalFailure failure) =>
+        new("grounding_unavailable", "Grounding is unavailable. No document-based answer was generated.") { Retrieval = failure };
+
+    private static ProviderException ResultFailure(string kind, bool transient, string message) =>
+        new("grounding_unavailable", message) { Retrieval = RetrievalFailure.Result(kind, transient) };
 
     internal static SearchOptions CreateSearchOptions(ServiceSettings settings, string objectId, ReadOnlyMemory<float> embedding)
     {
@@ -158,17 +208,18 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         return options;
     }
 
-    internal static bool IsRelevantSemanticScore(double? score, double minimum)
-    {
-        if (!score.HasValue || !double.IsFinite(score.Value) || score.Value is < 0 or > 4)
-            throw new ProviderException("grounding_unavailable", "Semantic relevance scoring is unavailable.");
-        return score.Value >= minimum;
-    }
+    /// <summary>Whether a candidate passes the semantic gate; null when it has no usable reranker score (finite, 0..4).</summary>
+    internal static bool? SemanticRelevance(double? score, double minimum) =>
+        score is { } value && double.IsFinite(value) && value is >= 0 and <= 4 ? value >= minimum : null;
 
     private static void RequireCompleteSemanticResults(SemanticSearchResults? semantic)
     {
-        if (semantic is null || semantic.ErrorReason is not null || semantic.ResultsType is not null)
-            throw new ProviderException("grounding_unavailable", "Semantic ranking did not complete.");
+        if (semantic is null) throw ResultFailure("semantic_failed", transient: false, "Semantic ranking did not run.");
+        if (semantic.ErrorReason is null && semantic.ResultsType is null) return;
+        // A ranker time-out or capacity limit is worth one retry; any other partial response is not.
+        var transient = semantic.ErrorReason == SemanticErrorReason.MaxWaitExceeded ||
+            semantic.ErrorReason == SemanticErrorReason.CapacityOverloaded || semantic.ErrorReason == SemanticErrorReason.Transient;
+        throw ResultFailure(transient ? "partial_results" : "semantic_failed", transient, "Semantic ranking did not complete.");
     }
 
     public IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
@@ -177,6 +228,14 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     public IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding,
         SessionOptions options, string responseRoute, CancellationToken cancellation) =>
         StreamAnswerAsync(conversation, grounding, options, responseRoute, false, cancellation);
+
+    /// <summary>Added when document search failed for this reply: the model may still help, but only in general terms.</summary>
+    internal const string UnavailableInstructions = """
+        Document search failed for this reply, so the participant's materials could not be checked.
+        Give a brief, general and non-committal reply to the current target, using only the transcript and general knowledge.
+        Do not state or guess company-specific facts, numbers, names, dates, prices, customers or commitments.
+        When the target needs such details, you may say they still need to be confirmed; never promise an action.
+        """;
 
     /// <summary>Shared with tools/ReplyQualityEval so offline scores measure the deployed classifier.</summary>
     public const string TurnPrompt = """
@@ -235,7 +294,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         SessionOptions options, string responseRoute, bool suggestions,
         [EnumeratorCancellation] CancellationToken cancellation)
     {
-        if (grounding.Status is not ("disabled" or "grounded" or "no_matches"))
+        if (grounding.Status is not ("disabled" or "grounded" or "no_matches" or "unavailable"))
             throw new ProviderException("grounding_unavailable", "Grounding is unavailable. No response was generated.");
         var messages = new List<ChatMessage>
         {
@@ -365,6 +424,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 If a second safe wording is not possible, output only the first line.
                 These are suggestions, not words the user has actually spoken.
                 """));
+        if (grounding.Status == "unavailable") messages.Add(new SystemChatMessage(UnavailableInstructions));
         messages.Add(new UserChatMessage("Untrusted session context (JSON data only): " +
             JsonSerializer.Serialize(new
             {

@@ -298,23 +298,32 @@ public sealed partial class ApiTests
     }
 
     [Fact]
-    public async Task SearchFailureIsVisibleAndDoesNotInvokeModel()
+    public async Task SearchAndModelFailureFallBackToTheFixedUnavailableCompletion()
     {
         await using var host = await Host.StartAsync(provider: new UnavailableSearchProvider());
         using var socket = await host.ConnectAsync();
         await Send(socket, Start);
         await Receive(socket);
         await socket.SendAsync(Enumerable.Repeat((byte)1, 640).ToArray(), WebSocketMessageType.Binary, true, CancellationToken.None);
-        Assert.Equal("grounding_unavailable", (await Until(socket, "error")).GetProperty("code").GetString());
-        var completed = await Until(socket, "response.completed");
+        var messages = await ReceiveUntilAsync(socket, Completed);
+        // The non-fatal search error comes first and only once, even though the general model reply failed as well.
+        var error = Assert.Single(messages, message => TypeOf(message) == "error");
+        Assert.Equal("grounding_unavailable", error.GetProperty("code").GetString());
+        Assert.True(error.GetProperty("retryable").GetBoolean());
+        Assert.DoesNotContain(messages, message => TypeOf(message) == "response.delta");
+        var completed = messages[^1];
+        Assert.Equal("response.completed", TypeOf(completed));
         Assert.Equal("unavailable", completed.GetProperty("grounding").GetString());
         Assert.Equal(0, completed.GetProperty("sources").GetArrayLength());
+        Assert.Equal("Grounding is unavailable. Please try again before relying on a factual answer.", completed.GetProperty("text").GetString());
+        Assert.Single(completed.GetProperty("suggestions").EnumerateArray());
     }
 
     [Theory]
     [InlineData("no_matches", 2)]
     [InlineData("disabled", 2)]
     [InlineData("grounded", 2)]
+    [InlineData("unavailable", 2)]
     public async Task ResponseMetricsIncludeTranscriptOnlyNoMatchesModel(string grounding, int expectedMeasurements)
     {
         var measurements = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -430,7 +439,7 @@ public sealed partial class ApiTests
         public Task<Grounding> RetrieveAsync(string query, string objectId, CancellationToken cancellation) =>
             throw new ProviderException("grounding_unavailable", "Grounding is unavailable.");
         public IAsyncEnumerable<string> AnswerAsync(IReadOnlyList<ConversationTurn> conversation, Grounding grounding, CancellationToken cancellation) =>
-            throw new InvalidOperationException("Must not invoke a model on Search failure.");
+            throw new InvalidOperationException("Synthetic model failure after a search failure.");
     }
 
     private sealed class Host(WebApplication app, string address) : IAsyncDisposable

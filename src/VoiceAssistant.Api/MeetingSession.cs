@@ -264,36 +264,21 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }, lifetime.Token);
                         if (message.ModelResponse) responseMeasurement?.CompletedSent();
                         responseActive = false;
-                        if (responsePending)
-                        {
-                            var completedQueueHistory = pendingResponseHistory;
-                            var completedQueueTurn = pendingResponseTurn;
-                            await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 0,
-                                preparedHistory: completedQueueHistory, preparedTurn: completedQueueTurn);
-                        }
+                        await StartPendingResponseAsync(lifetime.Token);
+                        break;
+                    case "grounding.unavailable" when message.Generation == generationNumber && responseActive:
+                        // Non-fatal and sent before the general reply, so older clients still learn why it is not document-based.
+                        await ErrorAsync("grounding_unavailable", GroundingUnavailableMessage, true, lifetime.Token);
+                        break;
+                    case "grounding.fallback" when message.Generation == generationNumber && responseActive:
+                        await CompleteWithoutGroundingAsync(lifetime.Token);
+                        await StartPendingResponseAsync(lifetime.Token);
                         break;
                     case "generation.error" when message.Generation == generationNumber && responseActive:
                         var failure = (ProviderException)message.Value!;
                         await ErrorAsync(failure.Code, failure.Message, true, lifetime.Token);
                         if (failure.Code == "grounding_unavailable")
-                        {
-                            await SendAsync(new
-                            {
-                                type = "response.completed",
-                                responseId,
-                                turnId = responseTurn,
-                                text = "Grounding is unavailable. Please try again before relying on a factual answer.",
-                                suggestions = new[] { "Grounding is unavailable. Please try again before relying on a factual answer." },
-                                sources = Array.Empty<Source>(),
-                                grounding = "unavailable",
-                                responseRoute,
-                                retrievalPrefetched
-                            }, lifetime.Token);
-                            // This fixed notice is not translated server-side; tell the client so it does not wait for it.
-                            if (koreanScope is not null)
-                                await SendAsync(new { type = "response.korean", responseId, turnId = responseTurn, index = 0, failed = true }, lifetime.Token);
-                            responseActive = false;
-                        }
+                            await CompleteWithoutGroundingAsync(lifetime.Token);
                         else
                         {
                             var pending = responsePending;
@@ -304,13 +289,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             pendingResponseHistory = pendingHistory;
                             pendingResponseTurn = pendingTurn;
                         }
-                        if (responsePending)
-                        {
-                            var recoveryQueueHistory = pendingResponseHistory;
-                            var recoveryQueueTurn = pendingResponseTurn;
-                            await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 0,
-                                preparedHistory: recoveryQueueHistory, preparedTurn: recoveryQueueTurn);
-                        }
+                        await StartPendingResponseAsync(lifetime.Token);
                         break;
                 }
             }
@@ -510,6 +489,39 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         responsePending = true;
     }
 
+    private const string GroundingUnavailableMessage =
+        "Document search is unavailable, so this reply is general and not based on your materials.";
+    private const string UnavailableNotice = "Grounding is unavailable. Please try again before relying on a factual answer.";
+
+    /// <summary>Starts the queued reply, if any, after the active one completed or failed.</summary>
+    private Task StartPendingResponseAsync(CancellationToken lifetime) => responsePending
+        ? StartResponseAsync(lifetime, manual: false, currentSegments: 0,
+            preparedHistory: pendingResponseHistory, preparedTurn: pendingResponseTurn)
+        : Task.CompletedTask;
+
+    /// <summary>The fixed completion used when neither the materials nor a general model reply are available.</summary>
+    private async Task CompleteWithoutGroundingAsync(CancellationToken cancellation)
+    {
+        // Korean started for a reply that failed mid-stream must not arrive for text the client no longer shows.
+        if (koreanScope is not null) koreanScope.Abandoned = true;
+        await SendAsync(new
+        {
+            type = "response.completed",
+            responseId,
+            turnId = responseTurn,
+            text = UnavailableNotice,
+            suggestions = new[] { UnavailableNotice },
+            sources = Array.Empty<Source>(),
+            grounding = "unavailable",
+            responseRoute,
+            retrievalPrefetched
+        }, cancellation);
+        // This fixed notice is not translated server-side; tell the client so it does not wait for it.
+        if (koreanScope is not null)
+            await SendAsync(new { type = "response.korean", responseId, turnId = responseTurn, index = 0, failed = true }, cancellation);
+        responseActive = false;
+    }
+
     private ConversationTurn[] CreateFocusedHistory(int currentSegments)
     {
         // Only segments still in the bounded history can be targeted; older gathered speech is dropped, never an error.
@@ -569,6 +581,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private async Task GenerateAsync(int number, ConversationTurn[] history, string route,
         Task<RetrievalOutcome>? prefetched, KoreanScope? scope, SessionOptions settings, CancellationToken cancellation, CancellationToken lifetime)
     {
+        var groundingUnavailable = false;
         try
         {
             if (route == "profile")
@@ -585,11 +598,25 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             // and never delays or blocks the suggestion. Its failure is observed here so it can never go unhandled.
             var turnSignal = provider.ShouldRespondAsync(history, cancellation);
             _ = turnSignal.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
-            var grounding = route != "knowledge" ? new Grounding("disabled", []) :
-                prefetched is not null ? (await prefetched.WaitAsync(cancellation)).RequireGrounding() :
-                await MeetingMetrics.MeasureRetrievalAsync(provider,
-                    RetrievalQuery.Build(history[^1].Text, history.Take(history.Length - 1).ToArray()), objectId, cancellation);
-            var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches";
+            var grounding = new Grounding("disabled", []);
+            if (route == "knowledge")
+            {
+                try
+                {
+                    grounding = prefetched is not null ? (await prefetched.WaitAsync(cancellation)).RequireGrounding() :
+                        await MeetingMetrics.MeasureRetrievalAsync(provider,
+                            RetrievalQuery.Build(history[^1].Text, history.Take(history.Length - 1).ToArray()), objectId, cancellation);
+                }
+                catch (ProviderException failure) when (failure.Code == "grounding_unavailable")
+                {
+                    LogRetrievalFailure(logger, failure);
+                    // Announced before the reply, as before, so the client knows this reply is not based on its materials.
+                    await events.Writer.WriteAsync(new("grounding.unavailable", Generation: number), cancellation);
+                    groundingUnavailable = true;
+                    grounding = new("unavailable", []);
+                }
+            }
+            var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches" or "unavailable";
             var translation = scope is null ? TranslationContext.Empty
                 : new TranslationContext(settings.Topic, KoreanTranslation.Terms(settings, grounding));
             var text = new StringBuilder();
@@ -633,12 +660,33 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         new ProviderException("model_busy", "Azure model request limit reached. Wait briefly, then retry."),
                     _ => new ProviderException("response_unavailable", "Response service is unavailable. Please retry.")
                 };
-                logger.LogWarning("Meeting response failed with code {Code}, HTTP status {Status}.", error.Code,
-                    exception is System.ClientModel.ClientResultException client ? client.Status : 0);
-                await events.Writer.WriteAsync(new("generation.error", error, number), lifetime);
+                logger.LogWarning("Meeting response failed with code {Code}: {ExceptionType}, HTTP status {Status}, after search failure {AfterSearchFailure}.",
+                    error.Code, exception.GetType().Name, HttpStatusText(exception), groundingUnavailable);
+                // The search failure was already announced; when the general reply fails too, only the fixed notice follows.
+                await events.Writer.WriteAsync(groundingUnavailable
+                    ? new("grounding.fallback", Generation: number)
+                    : new("generation.error", error, number), lifetime);
             }
         }
     }
+
+    /// <summary>Content-free log line for a search failure: the cause's category, exception type, HTTP status, Search code and retry.</summary>
+    internal static void LogRetrievalFailure(ILogger logger, ProviderException failure)
+    {
+        var cause = failure.Retrieval;
+        logger.LogWarning("Meeting retrieval unavailable: {Kind}, transient {Transient}, {ExceptionType}, HTTP status {Status}, search code {SearchCode}, retried {Retried}.",
+            cause?.Kind ?? "unknown", cause?.Transient ?? false, cause?.ExceptionType ?? nameof(ProviderException),
+            cause?.HttpStatus?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none", cause?.ErrorCode ?? "none",
+            cause?.Retried ?? false);
+    }
+
+    /// <summary>The HTTP status an Azure SDK exception carries, or "none" when no HTTP answer was received.</summary>
+    internal static string HttpStatusText(Exception exception) => exception switch
+    {
+        System.ClientModel.ClientResultException { Status: > 0 } client => client.Status.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Azure.RequestFailedException { Status: > 0 } failed => failed.Status.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        _ => "none"
+    };
 
     /// <summary>
     /// Translates one reply line for a client that opted in. It runs beside the answer, publishes through the event loop and

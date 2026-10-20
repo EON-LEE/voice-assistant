@@ -17,6 +17,8 @@ public sealed class ProviderException(string code, string message) : Exception(m
 {
     public string Code { get; } = code;
     public SpeechCancellation? SpeechCancellation { get; init; }
+    /// <summary>Content-free cause of a <c>grounding_unavailable</c> failure, when retrieval produced it.</summary>
+    public RetrievalFailure? Retrieval { get; init; }
 }
 
 public interface ISpeechStream : IAsyncDisposable
