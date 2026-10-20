@@ -128,10 +128,10 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 options,
                 transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
                 error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
-            // An opted-in client is told the server will push a Korean line for every reply line, so it knows to wait for it.
-            object ready = options.ReplyKorean
-                ? new { type = "session.ready", protocolVersion = 1, replyKorean = true }
-                : new { type = "session.ready", protocolVersion = 1 };
+            // The client learns which optional features this socket has: pushed Korean lines, and settings changes while running.
+            var ready = new Dictionary<string, object> { ["type"] = "session.ready", ["protocolVersion"] = 1 };
+            if (options.ReplyKorean) ready["replyKorean"] = true;
+            if (!options.TranscribeOnly) ready["sessionUpdate"] = true;
             await SendAsync(ready, lifetime.Token);
             // Cancelling a pending ReceiveAsync aborts the socket; retain it until the fatal time-limit event is sent.
             receiver = ReceiveLoopAsync(receiving.Token);
@@ -213,6 +213,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         pendingSpeech.Clear(); settleNumber++;
                         await CancelResponseAsync(lifetime.Token);
                         break;
+                    case "session.update":
+                        if (options.TranscribeOnly)
+                        {
+                            await ErrorAsync("transcribe_only", "This session only transcribes speech.", false, lifetime.Token);
+                            break;
+                        }
+                        // A reply already generating keeps the settings it started with; the change applies from the next one.
+                        options = options.Apply((SessionUpdate)message.Value!);
+                        prefetch?.UpdateOptions(options);
+                        await SendAsync(new { type = "session.updated", responseMode = options.ResponseMode, replyKorean = options.ReplyKorean }, lifetime.Token);
+                        break;
                     case "session.stop":
                         await CancelResponseAsync(lifetime.Token);
                         return;
@@ -274,7 +285,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                                 retrievalPrefetched
                             }, lifetime.Token);
                             // This fixed notice is not translated server-side; tell the client so it does not wait for it.
-                            if (options.ReplyKorean)
+                            if (koreanScope is not null)
                                 await SendAsync(new { type = "response.korean", responseId, turnId = responseTurn, index = 0, failed = true }, lifetime.Token);
                             responseActive = false;
                         }
@@ -425,8 +436,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                     if (DateTime.UtcNow - window > TimeSpan.FromSeconds(1)) { window = DateTime.UtcNow; commands = 0; }
                     if (++commands > 10) throw new ProviderException("command_limit", "Too many commands.");
                     var command = ParseCommand(message.Bytes);
-                    await events.Writer.WriteAsync(new(command), cancellation);
-                    if (command == "session.stop") return;
+                    await events.Writer.WriteAsync(new(command.Type, command.Update), cancellation);
+                    if (command.Type == "session.stop") return;
                 }
             }
         }
@@ -454,17 +465,20 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         { return false; }
     }
 
-    private static string ParseCommand(byte[] bytes)
+    private sealed record Command(string Type, SessionUpdate? Update = null);
+
+    private static Command ParseCommand(byte[] bytes)
     {
         try
         {
             using var json = JsonDocument.Parse(bytes);
             var type = json.RootElement.GetProperty("type").GetString();
-            return type is "response.request" or "response.cancel" or "session.stop" ? type :
-                throw new ProviderException("invalid_command", "Unsupported command.");
+            if (type is "response.request" or "response.cancel" or "session.stop") return new(type);
+            if (type == "session.update") return new(type, SessionOptions.ParseUpdate(json.RootElement.GetProperty("options")));
+            throw new ProviderException("invalid_command", "Unsupported command.");
         }
         catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException)
-        { throw new ProviderException("invalid_command", "Command must be a JSON object with a supported type."); }
+        { throw new ProviderException("invalid_command", "Command must be a JSON object with a supported type and valid options."); }
     }
 
     private async Task<WireMessage?> ReceiveAsync(CancellationToken cancellation, int textLimit = 4096)
@@ -511,11 +525,13 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         generation.CancelAfter(TimeSpan.FromSeconds(30));
         responseId = Guid.NewGuid().ToString("N");
         responseTurn = preparedTurn ?? lastTurn;
-        var scope = options.ReplyKorean ? new KoreanScope(responseId, responseTurn) : null;
+        // The reply keeps the settings it starts with, even when the client changes them while it generates.
+        var settings = options;
+        var scope = settings.ReplyKorean ? new KoreanScope(responseId, responseTurn) : null;
         koreanScope = scope;
         var prior = history.Take(history.Length - 1).ToArray();
         var targetText = history[^1].Text;
-        responseRoute = ResponseRouting.Select(targetText, options, prior);
+        responseRoute = ResponseRouting.Select(targetText, settings, prior);
         var prefetched = prefetch?.Take(responseTurn!, targetText, responseRoute, prior);
         retrievalPrefetched = prefetched is not null;
         responseActive = true;
@@ -527,7 +543,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
         var token = generation.Token;
         var route = responseRoute;
-        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, scope, token, lifetime));
+        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, scope, settings, token, lifetime));
     }
 
     private async Task CancelResponseAsync(CancellationToken cancellation)
@@ -546,15 +562,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     }
 
     private async Task GenerateAsync(int number, ConversationTurn[] history, string route,
-        Task<RetrievalOutcome>? prefetched, KoreanScope? scope, CancellationToken cancellation, CancellationToken lifetime)
+        Task<RetrievalOutcome>? prefetched, KoreanScope? scope, SessionOptions settings, CancellationToken cancellation, CancellationToken lifetime)
     {
         try
         {
             if (route == "profile")
             {
                 cancellation.ThrowIfCancellationRequested();
-                var introduction = ProfileIntroduction.Compose(options);
-                StartKorean(scope, 0, introduction, new TranslationContext(options.Topic, options.Phrases), lifetime);
+                var introduction = ProfileIntroduction.Compose(settings);
+                StartKorean(scope, 0, introduction, new TranslationContext(settings.Topic, settings.Phrases), lifetime);
                 await events.Writer.WriteAsync(new("delta", introduction, number), cancellation);
                 await events.Writer.WriteAsync(new("complete",
                     new Completion(introduction, [introduction], [], "disabled", "profile", false), number), cancellation);
@@ -570,10 +586,10 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                     RetrievalQuery.Build(history[^1].Text, history.Take(history.Length - 1).ToArray()), objectId, cancellation);
             var modelResponse = grounding.Status is "disabled" or "grounded" or "no_matches";
             var translation = scope is null ? TranslationContext.Empty
-                : new TranslationContext(options.Topic, KoreanTranslation.Terms(options, grounding));
+                : new TranslationContext(settings.Topic, KoreanTranslation.Terms(settings, grounding));
             var text = new StringBuilder();
             string? alternative = null;
-            await foreach (var update in provider.AnswerWithSuggestionsAsync(history, grounding, options, route, cancellation).WithCancellation(cancellation))
+            await foreach (var update in provider.AnswerWithSuggestionsAsync(history, grounding, settings, route, cancellation).WithCancellation(cancellation))
             {
                 cancellation.ThrowIfCancellationRequested();
                 var delta = update.Text;

@@ -16,11 +16,23 @@
             <span id="capture-status" class="live-capture">마이크 꺼짐 · 우클릭으로 설정 및 시작</span>
             <span class="live-version">WEB v2</span>
           </div>
+          <div class="live-quick" role="group" aria-label="빠른 설정">
+            <div class="live-seg" role="group" aria-labelledby="doc-label">
+              <span id="doc-label" class="live-seg-label">문서검색</span>
+              <button id="doc-on" type="button" aria-pressed="true">사용</button>
+              <button id="doc-off" type="button" aria-pressed="false">미사용</button>
+            </div>
+            <button id="toggle-captions" class="live-chip" type="button" aria-pressed="false">자막</button>
+            <button id="toggle-korean" class="live-chip" type="button" aria-pressed="false">한국어 뜻</button>
+          </div>
+          <p id="quick-note" class="live-note" role="status" hidden></p>
           <p id="session-error" class="live-error" role="alert" hidden></p>
         </header>
-        <section class="live-answers" aria-label="내가 말할 추천 답변과 한국어 뜻">
-          <div class="live-label">답변 기준 발언</div>
-          <p id="question-text" class="live-question" lang="en">영어 대화를 기다리고 있어요.</p>
+        <section class="live-answers" aria-label="내가 말할 추천 답변">
+          <div id="caption-block" hidden>
+            <div class="live-label">답변 기준 발언</div>
+            <p id="question-text" class="live-question" lang="en">영어 대화를 기다리고 있어요.</p>
+          </div>
           <div class="live-answers-header">
             <h1 class="live-answers-title">지금 읽을 답변</h1>
             <button id="hold-answer" class="live-hold" type="button" aria-pressed="false" disabled>답변 고정</button>
@@ -29,15 +41,15 @@
           <article class="live-card primary" aria-label="추천 답변 1">
             <div class="live-choice"><span id="primary-label">추천 영어 답변</span></div>
             <p id="answer-text" class="live-english" lang="en" aria-live="polite" aria-atomic="true">답변이 완성되면 여기에 표시됩니다.</p>
-            <div class="live-meaning">
+            <div id="answer-meaning" class="live-meaning" hidden>
               <div class="live-meaning-label">한국어 뜻</div>
               <p id="answer-korean" lang="ko">영어 추천 답변의 한국어 뜻이 함께 표시됩니다.</p>
             </div>
           </article>
           <p class="live-grounding"><span id="grounding-badge" class="live-badge" role="status">근거 상태 대기</span></p>
           <details id="live-details" class="live-details">
-            <summary>대화 · 대안 · 상세 근거</summary>
-            <section class="live-conversation" aria-label="들은 대화, AI 추천 아님">
+            <summary id="details-summary">대안 · 상세 근거</summary>
+            <section id="conversation-section" class="live-conversation" aria-label="들은 대화, AI 추천 아님" hidden>
               <h2 class="live-label">들은 대화</h2>
               <div id="conversation" class="live-history" aria-live="off">
                 <p class="live-waiting">영어 대화를 기다리고 있어요.</p>
@@ -47,7 +59,7 @@
             <article id="alternative-card" class="live-card secondary" aria-label="추천 답변 2" hidden>
               <div class="live-choice"><span>다른 대응 방식</span><span>대안 표현</span></div>
               <p id="alternative-text" class="live-english" lang="en"></p>
-              <div class="live-meaning">
+              <div id="alternative-meaning" class="live-meaning" hidden>
                 <div class="live-meaning-label">한국어 뜻</div>
                 <p id="alternative-korean" lang="ko"></p>
               </div>
@@ -90,11 +102,11 @@
           <meter id="input-level" min="0" max="1" value="0" aria-label="입력 음량"></meter>
         </div>
         <p id="display-hint" class="live-hint" hidden>라이브 시작 시 뜨는 공유 선택창에서 <strong>Teams 탭(또는 화면)을 선택</strong>하고 <strong>"탭 오디오 공유"/"시스템 오디오 공유"를 반드시 체크</strong>하세요. 헤드셋을 써도 Teams 소리를 직접 가져옵니다.</p>
-        <label>답변 근거
+        <label>문서검색
           <select id="response-mode">
-            <option value="grounded">항상 내 문서 검색 (기본)</option>
-            <option value="balanced">필요할 때만 문서 검색</option>
-            <option value="conversation">대화만 사용 (문서 검색 안 함)</option>
+            <option value="grounded">사용 · 항상 내 문서 검색 (기본)</option>
+            <option value="balanced">사용 · 필요할 때만 문서 검색</option>
+            <option value="conversation">미사용 · 대화만 사용</option>
           </select>
         </label>
         <label>회의 주제 (선택)

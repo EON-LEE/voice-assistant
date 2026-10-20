@@ -79,7 +79,8 @@ Neural read-aloud. Request:
 { "text": "The main risk is a slow database migration.", "voice": "coach", "rate": "slow" }
 ```
 * `text`: 1..400 characters of English. `voice`: `coach` (default, the user's own voice model for shadowing) or `partner`
-  (a different voice for the practice partner). `rate`: `normal` (default) or `slow` (about 80 % speed).
+  (a different voice for the practice partner). `rate`: `normal` (default), `slow` (about 80 % speed) or `fast`
+  (about 125 % speed).
 * `200` with `Content-Type: audio/mpeg` (Azure Speech neural voice, 24 kHz mono mp3), `Cache-Control: no-store`,
   body is the whole clip (clips are short). The server chooses the actual Azure voice names; use English (en-US)
   neural voices that are available in the deployed Speech region (verify against the live resource and record the

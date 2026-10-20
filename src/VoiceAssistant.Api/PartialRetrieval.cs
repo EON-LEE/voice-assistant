@@ -13,7 +13,7 @@ internal sealed class PartialRetrieval : IAsyncDisposable
 {
     private readonly IMeetingProvider provider;
     private readonly string objectId;
-    private readonly SessionOptions options;
+    private SessionOptions options;
     private readonly object gate = new();
     private readonly Channel<bool> changed = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
     { SingleReader = true, FullMode = BoundedChannelFullMode.DropOldest });
@@ -86,6 +86,18 @@ internal sealed class PartialRetrieval : IAsyncDisposable
             if (!worthRetrieving || ResponseRouting.Select(partial.Text, options, history) != "knowledge") return;
             candidate = new(partial.TurnId, text, query, queryIdentity, partial.Final, lifetime.Token);
             changed.Writer.TryWrite(true);
+        }
+    }
+
+    // A changed response mode makes a pending candidate unwanted (or newly wanted); the next partial decides again.
+    internal void UpdateOptions(SessionOptions updated)
+    {
+        lock (gate)
+        {
+            if (closed) return;
+            var changedMode = options.ResponseMode != updated.ResponseMode;
+            options = updated;
+            if (changedMode) Release();
         }
     }
 

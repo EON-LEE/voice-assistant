@@ -94,6 +94,14 @@ describe("bounded API clients", () => {
     await expect(new CoachClient(audio("text/html")).speak("Hello.", "coach", "slow", signal())).rejects.toThrow();
     await expect(new CoachClient(async () => new Response(new Uint8Array(4 * 1024 * 1024 + 1), { headers: { "Content-Type": "audio/mpeg" } })).speak("Hello.", "coach", "slow", signal())).rejects.toThrow();
   });
+  it("sends each supported speech rate, including fast, and rejects any other before a request", async () => {
+    const request = vi.fn(async (_url: string, _init: RequestInit) => new Response(new Uint8Array([1]), { headers: { "Content-Type": "audio/mpeg" } }));
+    const client = new CoachClient(request);
+    for (const rate of ["normal", "slow", "fast"] as const) await client.speak("Hello.", "coach", rate, signal());
+    expect(request.mock.calls.map(call => JSON.parse(call[1].body as string).rate)).toEqual(["normal", "slow", "fast"]);
+    await expect(client.speak("Hello.", "coach", "turbo" as unknown as "fast", signal())).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(3);
+  });
   it("includes transcribeOnly only when explicitly set and validates its type", () => {
     expect(createStartMessage(defaultOptions())).not.toHaveProperty("options.transcribeOnly");
     expect(createStartMessage({ ...defaultOptions(), transcribeOnly: true })).toHaveProperty("options.transcribeOnly", true);

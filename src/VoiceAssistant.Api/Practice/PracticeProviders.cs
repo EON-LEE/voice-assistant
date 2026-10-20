@@ -186,7 +186,7 @@ public static class PracticeSsml
     public const string PartnerVoice = "en-US-GuyNeural";
     public static string Create(PracticeRequest request)
     {
-        if (request.Voice is not ("coach" or "partner") || request.Rate is not ("normal" or "slow"))
+        if (request.Voice is not ("coach" or "partner") || request.Rate is not ("normal" or "slow" or "fast"))
             throw PracticeException.Invalid();
         var buffer = new StringBuilder();
         using (var writer = XmlWriter.Create(buffer, new XmlWriterSettings { OmitXmlDeclaration = true }))
@@ -197,7 +197,7 @@ public static class PracticeSsml
             writer.WriteStartElement("voice");
             writer.WriteAttributeString("name", request.Voice == "coach" ? CoachVoice : PartnerVoice);
             writer.WriteStartElement("prosody");
-            writer.WriteAttributeString("rate", request.Rate == "slow" ? "-20%" : "0%");
+            writer.WriteAttributeString("rate", request.Rate switch { "slow" => "-20%", "fast" => "+25%", _ => "0%" });
             writer.WriteString(request.Text);
             writer.WriteEndElement();
             writer.WriteEndElement();

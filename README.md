@@ -32,17 +32,38 @@ recognition, tab/system-audio recognition, or focus/transparency above PowerPoin
 ## Browser application
 
 The current `/live.html` page and `VoiceAssistant.WebOverlay` host prioritize
-one completed English suggestion and its response-bound question, with Korean
-meaning below. Streaming drafts do not replace the reading sentence; the
+one completed English suggestion and its response-bound question. Korean meaning
+and the recognized-conversation captions are off by default; switch them on in the
+quick row below. Streaming drafts do not replace the reading sentence; the
 previous completed answer is explicitly labeled while a newer one is prepared.
 Hold answer freezes that answer and its question locally without pausing
 capture or model requests. Release it to show the latest completed answer.
 Use the separate Pause control in the right-click menu to stop sending audio.
-Conversation history, alternative wording and source details are collapsed
-under the disclosure. Grounding warnings and connection errors remain visible.
-The overlay remains resizable, including narrow windows and enlarged text.
-This presentation change does not establish answer accuracy or real-meeting
-usability; the older microphone-only desktop prototype is unchanged.
+Conversation history (only while captions are on), alternative wording and
+source details are collapsed under the disclosure. Grounding warnings and
+connection errors remain visible. The overlay remains resizable, including narrow
+windows and enlarged text. This presentation change does not establish answer
+accuracy or real-meeting usability; the older microphone-only desktop prototype
+is unchanged.
+
+### Quick settings: document search, captions, Korean meaning
+
+Under the status line the live page has a quick row for the three choices that
+most affect speed and screen space:
+
+| Control | Effect | Default |
+| --- | --- | --- |
+| 문서검색 **사용 / 미사용** | On searches your uploaded materials (Azure AI Search). Off answers from the conversation only and skips retrieval, the fastest path | 사용 |
+| **자막** | Shows what was heard (the recognized conversation) | off |
+| **한국어 뜻** | Shows the Korean meaning of the answer and alternative, and of heard questions while captions are on. Off makes no translation requests | off |
+
+The choices are kept in this browser/WebOverlay profile. **사용** returns to the
+last "on" mode chosen in Settings (search on every reply, or only when needed).
+With a server that announces `sessionUpdate`, a change made during a session is
+sent as `session.update` and applies from the next reply; a reply already being
+prepared keeps its settings. With an older server the page says that document
+search changes apply from the next connection, and Stop then Start applies them.
+Korean meaning and captions work with any server.
 
 Deployed application: https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io
 
@@ -78,14 +99,14 @@ stop rather than silently use the microphone.
 
 The two meeting pages intentionally keep separate defaults:
 
-| Page | Intended path | Session defaults | Korean assist |
+| Page | Intended path | Session defaults | Korean assist (off by default) |
 | --- | --- | --- | --- |
-| `/live.html` | Current overlay and `LiveCoach.exe` | Grounded, semantic segmentation, 1100ms silence fallback | `translationOnly`; no Hangul reading generation |
-| `/index.html` | Existing full browser UI | Balanced, 500ms end silence | Korean translation plus approximate Hangul reading |
+| `/live.html` | Current overlay and `LiveCoach.exe` | Grounded (document search on), semantic segmentation, 1100ms silence fallback | `translationOnly`; no Hangul reading generation |
+| `/index.html` | Existing full browser UI | Balanced (document search on, when needed), 500ms end silence | Korean translation plus approximate Hangul reading |
 
 Settings do not transfer between these pages. `/live.html` may retain its own
-WebOverlay/browser sign-in profile and overlay preferences; `/index.html` keeps
-meeting settings in memory and clears them on reload.
+WebOverlay/browser sign-in profile, overlay preferences and quick settings;
+`/index.html` keeps meeting settings in memory and clears them on reload.
 
 The initial implementation separates streaming speech recognition from text
 generation. Foundry-hosted models provide English replies, while Azure AI Search
@@ -110,14 +131,18 @@ deployment or a live Teams meeting test.
 
 ## Faster meeting responses
 
-Before starting a **Live** session, expand **Meeting context and answer settings**.
-Settings apply to that session only and are not stored in browser storage.
+On `/index.html`, choose **Document search** before starting a **Live** session;
+the other settings are under **Meeting context and speech settings**. These
+settings apply to that session only and are not stored in browser storage (the
+`/live.html` quick row above keeps its own choices). On a server that announces
+`sessionUpdate`, the Document search choice can also be changed while the session
+runs and applies from the next reply.
 
 | Setting | Behavior |
 | --- | --- |
-| Balanced | Skips retrieval only for clearly supported general requests; ambiguous/private-fact requests still use authorized Search |
-| Always knowledge | Searches approved references for each answer |
-| Conversation only | Avoids retrieval waits; answers from the conversation and must not invent company-specific facts |
+| Document search: On · when needed (`balanced`) | Skips retrieval only for clearly supported general requests; ambiguous/private-fact requests still use authorized Search |
+| Document search: On · every reply (`grounded`) | Searches approved references for each answer |
+| Document search: Off · conversation only (`conversation`) | Avoids retrieval waits; answers from the conversation and must not invent company-specific facts |
 | Confirmed name, role and project | Supplies only facts you explicitly confirm; blank fields are not guessed |
 | Names and terms | Adds a short Azure Speech phrase list, useful for technical acronyms |
 | End-of-turn silence | Defaults to 500ms in the new web client; shorter values trade waiting time against premature segmentation |
@@ -198,12 +223,13 @@ a larger real-meeting sample remain future validation, not completed work.
 
 ## English coach: Korean assist, read-aloud and practice rounds
 
-The meeting page is an English meeting coach. The English reply streams exactly as before; after it completes the browser
-asks `POST /api/assist/enrich` for a Korean translation of the question and the reply and a word-chunk Hangul reading of the
-reply (approximate, a guide only). "Click to listen" calls `POST /api/assist/speak` (Azure Speech neural voices
-`en-US-JennyNeural` for the coach and `en-US-GuyNeural` for the practice partner, 24 kHz mono mp3, normal or slow) for shadowing.
+The meeting page is an English meeting coach. The English reply streams exactly as before. Korean assist is off by default
+(no translation request is made); when switched on, the browser asks `POST /api/assist/enrich` after the reply completes for a
+Korean translation of the question and the reply and a word-chunk Hangul reading of the reply (approximate, a guide only).
+"Click to listen" calls `POST /api/assist/speak` (Azure Speech neural voices `en-US-JennyNeural` for the coach and
+`en-US-GuyNeural` for the practice partner, 24 kHz mono mp3, **fast** by default, normal or slow) for shadowing.
 The Practice tab runs a stateless AI partner round (`/api/practice/turn|suggest|feedback|summary`) with sales, interview,
-presentation or custom scenarios, optional use of your uploaded materials, Korean feedback on wording/grammar/clarity (not
+presentation or custom scenarios, a **Document search** checkbox for your uploaded materials, Korean feedback on wording/grammar/clarity (not
 pronunciation or accent) and a Korean summary. Answers use a recognition-only WebSocket (`transcribeOnly`). Nothing is stored.
 Contract: `contracts/practice-v1.md`. Live evidence (deployed Korea Central, synthetic prompts only):
 `tests/acceptance-results/practice-live-2026-10-04.json` plus three consecutive full passes; reply-style re-check

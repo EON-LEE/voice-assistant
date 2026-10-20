@@ -1,7 +1,7 @@
 import type { AudioSource } from "./capture.js";
 import type { ServerEvent } from "./protocol.js";
 import { asError, type Transport } from "./transport.js";
-import { createStartMessage, type SessionOptions } from "./options.js";
+import { createStartMessage, validateUpdate, type SessionOptions, type SessionUpdate } from "./options.js";
 
 export class MeetingSession {
   private readonly lifetime = new AbortController();
@@ -61,6 +61,12 @@ export class MeetingSession {
   }
   request(): void { if (!this.paused) this.command("response.request"); }
   cancel(): void { this.command("response.cancel"); }
+  /** Changes document search or Korean for the replies that start from now on; only call it when `session.ready` said `sessionUpdate`. */
+  update(settings: SessionUpdate): void {
+    const options = validateUpdate(settings);
+    if (!this.isReady || this.options?.transcribeOnly) return;
+    try { this.transport.send({ type: "session.update", options }); } catch (error) { this.fail(asError(error)); }
+  }
   private command(type: string): void {
     if (!this.isReady) return;
     try { this.transport.send({ type }); } catch (error) { this.fail(asError(error)); }

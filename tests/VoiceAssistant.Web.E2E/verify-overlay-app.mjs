@@ -14,6 +14,9 @@ const state = () => page.evaluate(() => ({
   error: document.querySelector("#session-error").textContent,
 }));
 console.log("before:", JSON.stringify(await state()));
+// Captions and Korean meaning are off by default; switch them on so the output below shows them.
+for (const id of ["toggle-captions", "toggle-korean"])
+  if ((await page.locator(`#${id}`).getAttribute("aria-pressed")) !== "true") await page.locator(`#${id}`).click();
 await page.locator("#live-panel").click({ button: "right", position: { x: 200, y: 300 } });
 await page.locator('[data-action="start"]').click();
 await page.waitForFunction(() => !document.querySelector("#answer-text").textContent.includes("표시됩니다"), null, { timeout: 25000 });

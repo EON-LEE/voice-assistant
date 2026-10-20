@@ -1,6 +1,6 @@
 export type CoachKind = "question" | "reply";
 export type Voice = "coach" | "partner";
-export type Rate = "normal" | "slow";
+export type Rate = "normal" | "slow" | "fast";
 export interface Chunk { en: string; ko: string }
 export interface Enrichment { korean: string; pronunciation: Chunk[] | null }
 export interface Scenario { kind: "sales" | "interview" | "presentation" | "custom"; description: string; difficulty: number }
@@ -165,7 +165,7 @@ export class CoachClient {
     return ko;
   }
   async speak(input: string, voice: Voice, rate: Rate, signal: AbortSignal): Promise<Blob> {
-    text(input, 1, 400, true); choice(voice, ["coach", "partner"]); choice(rate, ["normal", "slow"]);
+    text(input, 1, 400, true); choice(voice, ["coach", "partner"]);     choice(rate, ["normal", "slow", "fast"]);
     const response = await this.post("/api/assist/speak", { text: input, voice, rate }, signal, true);
     const type = response.headers.get("Content-Type")?.split(";")[0]?.trim();
     if (type !== "audio/mpeg" && !(this.fake() && type === "audio/wav")) throw new CoachError("invalid_response");

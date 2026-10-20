@@ -2,9 +2,9 @@ import { openSettings, closeSheet, setConnectionMode, startMeeting, stopMeeting,
 import { test, expect } from '@playwright/test';
 
 const fake = { mode: 'Fake', clientId: '', authority: '', scope: '', webSocketPath: '/api/meeting' };
-async function setup(page) {
+async function setup(page, { sessionUpdate = false, openOptions = true } = {}) {
   const starts = [], commands = [];
-  let socket;
+  let socket, effective = { responseMode: 'balanced', replyKorean: false };
   await page.route('**/api/client-config', route => route.fulfill({ json: fake }));
   await page.routeWebSocket('**/api/meeting*', connection => {
     socket = connection;
@@ -13,14 +13,19 @@ async function setup(page) {
       const command = JSON.parse(message); commands.push(command);
       if (command.type === 'session.start') {
         starts.push(command);
-        connection.send(JSON.stringify({ type: 'session.ready' }));
+        effective = { responseMode: command.options.responseMode, replyKorean: command.options.replyKorean === true };
+        connection.send(JSON.stringify({ type: 'session.ready', ...(sessionUpdate ? { sessionUpdate: true } : {}) }));
         connection.send(JSON.stringify({ type: 'transcript.final', turnId: 't', revision: 1, text: 'Original fictional test question.' }));
+      }
+      if (command.type === 'session.update' && sessionUpdate) {
+        effective = { ...effective, ...command.options };
+        connection.send(JSON.stringify({ type: 'session.updated', ...effective }));
       }
     });
   });
   await page.goto('/');
   await setConnectionMode(page, 'synthetic');
-  await page.locator('#meeting-options').evaluate(details => { details.open = true; });
+  if (openOptions) await page.locator('#meeting-options').evaluate(details => { details.open = true; });
   await expect(page.getByTestId('start')).toBeEnabled();
   return { starts, commands, send: event => socket.send(JSON.stringify(event)) };
 }
@@ -77,6 +82,50 @@ test('all answer modes and silence presets reach start.options unchanged', async
     await expect(page.locator('#profile-name')).toBeEnabled();
   }
 });
+test('document search is a visible select outside the collapsed details and can change during a session that supports it', async ({ page }) => {
+  const backend = await setup(page, { sessionUpdate: true, openOptions: false });
+  const updates = () => backend.commands.filter(command => command.type === 'session.update');
+  await expect(page.locator('#meeting-options')).not.toHaveAttribute('open');
+  await expect(page.locator('#answer-options')).toBeVisible();
+  await expect(page.locator('label[for="response-mode"]')).toContainText('Document search');
+  await expect(page.locator('#response-mode option')).toHaveText([
+    'On · when needed · 필요할 때만 (recommended)', 'On · every reply · 항상 사용', 'Off · conversation only · 미사용 (fastest)']);
+  await expect(page.locator('#response-mode')).toHaveValue('balanced');
+  await expect(page.locator('#response-mode-note')).toContainText('Applies when you start');
+  await startMeeting(page);
+  await expect.poll(() => backend.starts.length).toBe(1);
+  await openSettings(page);
+  await expect(page.locator('#response-mode')).toBeEnabled();
+  await expect(page.locator('#response-mode-note')).toContainText('next reply');
+  await page.locator('#response-mode').selectOption('conversation');
+  await expect.poll(updates).toEqual([{ type: 'session.update', options: { responseMode: 'conversation' } }]);
+  await page.locator('#response-mode').selectOption('grounded');
+  await expect.poll(updates).toEqual([
+    { type: 'session.update', options: { responseMode: 'conversation' } },
+    { type: 'session.update', options: { responseMode: 'grounded' } },
+  ]);
+  await expect(page.locator('#response-mode')).toHaveValue('grounded');
+  await expect(page.getByTestId('error')).toBeHidden();
+  await expect(page.locator('#profile-name')).toBeDisabled();
+  await stopMeeting(page);
+  await openSettings(page);
+  await expect(page.locator('#response-mode')).toBeEnabled();
+  await expect(page.locator('#response-mode')).toHaveValue('grounded');
+  await expect(page.locator('#response-mode-note')).toContainText('Applies when you start');
+});
+test('a server that cannot change settings during a session keeps document search fixed and says so', async ({ page }) => {
+  const backend = await setup(page);
+  await startMeeting(page);
+  await expect.poll(() => backend.starts.length).toBe(1);
+  await openSettings(page);
+  await expect(page.locator('#response-mode')).toBeDisabled();
+  await expect(page.locator('#response-mode-note')).toContainText('Fixed for this session');
+  expect(backend.commands.some(command => command.type === 'session.update')).toBe(false);
+  await stopMeeting(page);
+  await openSettings(page);
+  await expect(page.locator('#response-mode')).toBeEnabled();
+  await expect(page.locator('#response-mode-note')).toContainText('Applies when you start');
+});
 test('oversized phrase list fails before socket while demo stays one click', async ({ page }) => {
   const backend = await setup(page);
   await page.locator('#meeting-phrases').fill(Array(41).fill('term').join('\n'));
@@ -85,6 +134,7 @@ test('oversized phrase list fails before socket while demo stays one click', asy
   expect(backend.starts).toHaveLength(0);
   await setConnectionMode(page, 'demo');
   await expect(page.locator('#meeting-options')).toBeHidden();
+  await expect(page.locator('#answer-options')).toBeHidden();
   await startMeeting(page);
   await expect(page.getByTestId('status')).toContainText('DEMO');
   await expect(page.getByTestId('error')).toBeHidden();

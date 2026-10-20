@@ -7,8 +7,10 @@ import { SocketTransport, asError } from "./transport.js";
 import { defaultOptions, type SessionOptions } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
 import type { ServerEvent } from "./protocol.js";
-import { LiveState, answers, isTransientFailure, translationChunks, type LiveReply } from "./live-state.js";
+import { LiveState, answers, isTransientFailure, translationChunks, type LiveReply, type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
+import { parseSettings, pendingUpdate, settingsKey, withDocumentSearch, withResponseMode, documentSearchOn,
+  type LiveSettings, type ResponseMode } from "./live-settings.js";
 
 let liveDocument = document;
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -36,23 +38,22 @@ let connectionMessage = "", warning = "";
 let translations = new AbortController();
 const meetingKo = new Map<string, string>();
 const failedTurns = new Map<string, string>();
+const requestedTurns = new Set<string>();
 const replyKo = new Map<string, string[]>();
 // The server pushes a Korean line with each reply line; a line it cannot provide falls back to the translation request.
 const pushes = new PushedKorean(korean => /[\uac00-\ud7a3]/u.test(korean) || auth.isFake && korean.startsWith("[fake-ko] "));
 let pushing = false;
+// Only a reply that began while the server was pushing Korean has a pushed line to wait for.
+const pushedAtStart = new Set<string>();
+// What the connected session runs with, and whether the server accepts setting changes while connected.
+let applied: { responseMode: ResponseMode; replyKorean: boolean } = { responseMode: "grounded", replyKorean: false };
+let startedMode: ResponseMode = "grounded";
+let canUpdate = false, updating = false;
+let quickNote = "";
+const recentTranslatedTurns = 6;
 
-interface StoredSettings { deviceId: string; responseMode: SessionOptions["responseMode"]; topic: string; audioSource: "microphone" | "display" }
-const settingsKey = "live-coach-settings";
-function loadSettings(): StoredSettings {
-  try {
-    const value = JSON.parse(localStorage.getItem(settingsKey) ?? "{}") as Partial<StoredSettings>;
-    return {
-      deviceId: typeof value.deviceId === "string" ? value.deviceId : "",
-      responseMode: value.responseMode === "balanced" || value.responseMode === "conversation" ? value.responseMode : "grounded",
-      topic: typeof value.topic === "string" ? value.topic.slice(0, 300) : "",
-      audioSource: value.audioSource === "display" ? "display" : "microphone",
-    };
-  } catch { return { deviceId: "", responseMode: "grounded", topic: "", audioSource: "microphone" }; }
+function loadSettings(): LiveSettings {
+  try { return parseSettings(localStorage.getItem(settingsKey)); } catch { return parseSettings(null); }
 }
 let settings = loadSettings();
 responseMode.value = settings.responseMode; topic.value = settings.topic; audioSource.value = settings.audioSource;
@@ -61,20 +62,56 @@ function renderAudioSource(): void {
   microphoneSettings.hidden = display; displayHint.hidden = !display;
 }
 renderAudioSource();
+function persist(): void {
+  try { localStorage.setItem(settingsKey, JSON.stringify(settings)); } catch { /* storage unavailable: the choice lasts until the page closes */ }
+}
 function saveSettings(): void {
-  settings = { deviceId: micDevice.value, responseMode: responseMode.value as StoredSettings["responseMode"],
-    topic: topic.value.trim(), audioSource: audioSource.value as StoredSettings["audioSource"] };
-  localStorage.setItem(settingsKey, JSON.stringify(settings));
+  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: audioSource.value as LiveSettings["audioSource"] };
+  persist();
 }
 micDevice.addEventListener("change", saveSettings);
-responseMode.addEventListener("change", saveSettings);
 topic.addEventListener("change", saveSettings);
 audioSource.addEventListener("change", () => { renderAudioSource(); saveSettings(); });
+
+// ---------- Quick settings: document search, captions, Korean ----------
+
+function changeSettings(next: LiveSettings): void {
+  const before = settings;
+  settings = next;
+  persist();
+  if (before.showKorean && !next.showKorean) dropKorean();
+  if (next.showKorean && (!before.showKorean || next.showCaptions && !before.showCaptions)) translateOnScreen();
+  syncSession();
+  render();
+}
+$("doc-on").addEventListener("click", () => changeSettings(withDocumentSearch(settings, true)));
+$("doc-off").addEventListener("click", () => changeSettings(withDocumentSearch(settings, false)));
+$("toggle-captions").addEventListener("click", () => changeSettings({ ...settings, showCaptions: !settings.showCaptions }));
+$("toggle-korean").addEventListener("click", () => changeSettings({ ...settings, showKorean: !settings.showKorean }));
+responseMode.addEventListener("change", () => changeSettings(withResponseMode(settings, responseMode.value as ResponseMode)));
+
+/** Makes the connected session match the settings. A change reaches the next reply; a reply already under way keeps its own. */
+function syncSession(): void {
+  if (!ready || !session) return;
+  const update = pendingUpdate(applied, settings);
+  if (!update) { quickNote = ""; return; }
+  if (!canUpdate) {
+    // Korean still works without the server: the client translates it itself. Document search needs the server.
+    quickNote = update.responseMode ? "이 서버는 연결 중 문서검색 변경을 지원하지 않아요 · 다음 연결부터 적용돼요" : "";
+    return;
+  }
+  quickNote = "";
+  if (updating) return;
+  session.update(update);
+  updating = true;
+}
+/** Forgets what the last connection accepted; the next `session.ready` says it again. */
+function resetUpdate(): void { canUpdate = updating = false; quickNote = ""; }
 
 function sessionOptions(): SessionOptions {
   // endSilenceMs is required by the options validator but has no effect under semantic segmentation.
   return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
-    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 1000, replyKorean: true };
+    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 1000, replyKorean: settings.showKorean };
 }
 
 // ---------- Live session lifecycle with automatic reconnect ----------
@@ -96,7 +133,8 @@ async function startLive(): Promise<void> {
     render(); return;
   }
   translations.abort(); translations = new AbortController();
-  state.resetSession(); meetingKo.clear(); failedTurns.clear(); replyKo.clear(); pushes.clear(); pushing = false;
+  state.resetSession(); meetingKo.clear(); failedTurns.clear(); requestedTurns.clear(); replyKo.clear(); pushes.clear(); pushing = false;
+  pushedAtStart.clear(); resetUpdate();
   active = true; paused = false; attempt = 0; readyAt = 0; connectionMessage = ""; warning = "";
   liveChannel?.postMessage("started");
   connect();
@@ -125,18 +163,20 @@ function connect(): void {
     onLevel: level => { $<HTMLMeterElement>("input-level").value = level; },
   });
   const transport = new SocketTransport(() => auth.endpoint(false));
+  const options = sessionOptions();
+  startedMode = options.responseMode;
   const current: MeetingSession = new MeetingSession(source, transport,
     event => { if (session === current) onEvent(event); },
     () => { if (session === current) render(); },
     error => { if (session === current) onFailure(error); },
-    sessionOptions());
+    options);
   session = current;
   render();
   void current.start();
 }
 
 function onFailure(error: Error): void {
-  ready = false; pushing = false; pushes.expire();
+  ready = false; pushing = false; pushes.expire(); resetUpdate();
   const message = error.message;
   if (!active) { render(); return; }
   if (!isTransientFailure(message)) {
@@ -161,7 +201,7 @@ function onFailure(error: Error): void {
 }
 
 async function stopLive(message = ""): Promise<void> {
-  active = false; reconnecting = false; ready = false; pushing = false; pushes.expire();
+  active = false; reconnecting = false; ready = false; pushing = false; pushes.expire(); resetUpdate();
   clearTimeout(reconnectTimer); reconnectTimer = undefined;
   const current = session; session = undefined;
   connectionMessage = message;
@@ -171,15 +211,26 @@ async function stopLive(message = ""): Promise<void> {
 }
 
 function onEvent(e: ServerEvent): void {
-  if (e.type === "response.korean") { pushes.record(e); return; }
+  // With Korean off nothing is recorded, even while the server has not yet stopped sending it.
+  if (e.type === "response.korean") { if (settings.showKorean) pushes.record(e); return; }
   state.apply(e);
   if (e.type === "session.ready") {
-    ready = true; reconnecting = false; readyAt = Date.now(); connectionMessage = ""; pushing = e.replyKorean === true;
+    ready = true; reconnecting = false; readyAt = Date.now(); connectionMessage = "";
+    pushing = e.replyKorean === true; canUpdate = e.sessionUpdate === true; updating = false;
+    applied = { responseMode: startedMode, replyKorean: pushing };
     if (paused) session?.pause(true);
+    // A setting may have changed between connecting and being ready.
+    syncSession();
   }
-  if (e.type === "transcript.final") void translateTurn(e.turnId!, e.text!);
+  if (e.type === "session.updated") {
+    applied = { responseMode: e.responseMode ?? applied.responseMode, replyKorean: e.replyKorean === true };
+    pushing = applied.replyKorean; updating = false;
+    syncSession();
+  }
+  if (e.type === "response.started" && pushing && settings.showKorean) pushedAtStart.add(e.responseId!);
+  if (e.type === "transcript.final" && settings.showKorean && settings.showCaptions) void translateTurn(e.turnId!, e.text!);
   const completed = state.current;
-  if (e.type === "response.completed" && completed && completed.id === e.responseId && completed.complete)
+  if (e.type === "response.completed" && settings.showKorean && completed && completed.id === e.responseId && completed.complete)
     void translateReply(completed);
   schedule();
 }
@@ -210,6 +261,7 @@ async function translate(kind: CoachKind, text: string, signal: AbortSignal): Pr
 }
 async function translateTurn(turnId: string, text: string): Promise<void> {
   const signal = translations.signal;
+  requestedTurns.add(turnId);
   failedTurns.delete(turnId);
   try {
     const korean = await translate("question", text, signal);
@@ -230,17 +282,41 @@ async function translateReply(reply: LiveReply, retry = false): Promise<void> {
   }));
   const keep = new Set([state.current?.id, state.lastCompleted?.id, state.display?.id]);
   for (const id of replyKo.keys()) if (!keep.has(id)) replyKo.delete(id);
+  for (const id of pushedAtStart) if (!keep.has(id)) pushedAtStart.delete(id);
   pushes.prune(keep);
 }
 /** The server's pushed line when it has one in time; otherwise (or on a retry) the client translates the line itself. */
 async function replyLine(responseId: string, index: number, english: string, retry: boolean, signal: AbortSignal): Promise<string> {
-  const pushed = await pushes.wait(responseId, index, pushing && !retry ? pushedKoreanWaitMs : 0, signal);
+  const wait = !retry && pushedAtStart.has(responseId) ? pushedKoreanWaitMs : 0;
+  const pushed = await pushes.wait(responseId, index, wait, signal);
   return pushed ?? translate("reply", english, signal);
 }
 function retryTranslations(): void {
+  if (!settings.showKorean) return;
   const display = state.display;
   if (display?.complete) void translateReply(display, true);
-  for (const [turnId, text] of failedTurns) void translateTurn(turnId, text);
+  if (settings.showCaptions) for (const [turnId, text] of failedTurns) void translateTurn(turnId, text);
+}
+
+/** Turning Korean off stops all Korean work at once: running requests end and no "translating…" line stays behind. */
+function dropKorean(): void {
+  translations.abort(); translations = new AbortController();
+  meetingKo.clear(); failedTurns.clear(); requestedTurns.clear(); replyKo.clear();
+  pushes.clear(); pushedAtStart.clear();
+}
+/** Turning Korean (or captions) on translates what is already on screen, so the meanings do not wait for the next reply. */
+function translateOnScreen(): void {
+  const display = state.display;
+  if (display?.complete && !replyKo.has(display.id)) void translateReply(display, true);
+  if (!settings.showCaptions) return;
+  for (const turn of state.turns.filter(value => value.final).slice(-recentTranslatedTurns))
+    if (!requestedTurns.has(turn.id)) void translateTurn(turn.id, turn.text);
+}
+/** The Korean line shown under a heard turn; `undefined` means the turn has none (Korean off, or never requested). */
+function turnKorean(turn: LiveTurn): string | undefined {
+  if (!settings.showKorean) return undefined;
+  if (!turn.final) return "듣는 중…";
+  return meetingKo.get(turn.id) ?? (requestedTurns.has(turn.id) ? "한국어 번역 중…" : undefined);
 }
 
 // ---------- Focused reading view ----------
@@ -265,14 +341,36 @@ function render(): void {
   const error = connectionMessage || state.error || warning;
   const errorLine = $("session-error");
   errorLine.textContent = error; errorLine.hidden = !error;
+  renderQuick();
   renderConversation();
   renderSuggestions();
   renderMenu();
 }
 
+function setPressed(id: string, pressed: boolean): void {
+  const element = $(id), value = String(pressed);
+  if (element.getAttribute("aria-pressed") !== value) element.setAttribute("aria-pressed", value);
+}
+function setHidden(id: string, hidden: boolean): void {
+  const element = $(id);
+  if (element.hidden !== hidden) element.hidden = hidden;
+}
+/** Quick settings and what they show or hide. Hidden parts keep their content, so switching one on shows it at once. */
+function renderQuick(): void {
+  const search = documentSearchOn(settings);
+  setPressed("doc-on", search); setPressed("doc-off", !search);
+  setPressed("toggle-captions", settings.showCaptions); setPressed("toggle-korean", settings.showKorean);
+  setHidden("caption-block", !settings.showCaptions); setHidden("conversation-section", !settings.showCaptions);
+  setHidden("answer-meaning", !settings.showKorean); setHidden("alternative-meaning", !settings.showKorean);
+  setText("details-summary", settings.showCaptions ? "대화 · 대안 · 상세 근거" : "대안 · 상세 근거");
+  if (responseMode.value !== settings.responseMode) responseMode.value = settings.responseMode;
+  setText("quick-note", quickNote);
+  setHidden("quick-note", !quickNote);
+}
+
 function renderConversation(): void {
   const recent = state.turns.slice(-12);
-  const signature = JSON.stringify(recent.map(turn => [turn.id, turn.revision, turn.final, meetingKo.get(turn.id) ?? ""]));
+  const signature = JSON.stringify(recent.map(turn => [turn.id, turn.revision, turn.final, turnKorean(turn) ?? null]));
   if (signature === renderedConversation) return;
   renderedConversation = signature;
   const host = $("conversation");
@@ -284,11 +382,15 @@ function renderConversation(): void {
   host.replaceChildren(...recent.map((turn, index) => {
     const line = document.createElement("div");
     line.className = index === recent.length - 1 ? "live-line current" : "live-line";
-    const en = document.createElement("p"), ko = document.createElement("p");
+    const en = document.createElement("p");
     en.className = "en"; en.lang = "en"; en.textContent = turn.text;
-    ko.className = "ko"; ko.lang = "ko";
-    ko.textContent = !turn.final ? "듣는 중…" : meetingKo.get(turn.id) ?? "한국어 번역 중…";
-    line.append(en, ko);
+    line.append(en);
+    const korean = turnKorean(turn);
+    if (korean !== undefined) {
+      const ko = document.createElement("p");
+      ko.className = "ko"; ko.lang = "ko"; ko.textContent = korean;
+      line.append(ko);
+    }
     return line;
   }));
   host.scrollTop = host.scrollHeight;
@@ -298,10 +400,12 @@ function renderSuggestions(): void {
   const display = state.display, values = answers(display);
   const ko = display ? replyKo.get(display.id) ?? [] : [];
   setText("answer-text", values[0] ?? "답변이 완성되면 여기에 표시됩니다.");
-  setText("answer-korean", ko[0] ?? (display ? "한국어 번역 준비 중…" : "영어 추천 답변의 한국어 뜻이 함께 표시됩니다."));
+  if (settings.showKorean) {
+    setText("answer-korean", ko[0] ?? (display ? "한국어 번역 준비 중…" : "영어 추천 답변의 한국어 뜻이 함께 표시됩니다."));
+    setText("alternative-korean", ko[1] ?? "한국어 번역 준비 중…");
+  }
   $("alternative-card").hidden = values.length < 2;
   setText("alternative-text", values[1] ?? "");
-  setText("alternative-korean", ko[1] ?? "한국어 번역 준비 중…");
   const generating = ready && state.generating;
   const previous = !!display && (state.hasNewerReply || generating && state.current?.id !== display.id);
   const myTurn = !previous && !!display?.respondNow;
@@ -353,7 +457,7 @@ function renderMenu(): void {
   item("hold").textContent = state.readingHeld
     ? state.hasNewerReply ? "새 답변 보기 / 화면 고정 해제" : "화면 고정 해제"
     : "읽는 동안 답변 고정 (오디오는 계속 듣기)";
-  item("translate").disabled = !state.display?.complete && failedTurns.size === 0;
+  item("translate").disabled = !settings.showKorean || !state.display?.complete && failedTurns.size === 0;
   item("float").hidden = !("documentPictureInPicture" in window);
   item("float").textContent = pipWindow ? "작은 창 닫고 페이지로 돌아가기" : "항상 위 작은 창으로 띄우기";
 }

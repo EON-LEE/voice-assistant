@@ -65,6 +65,7 @@ export class PracticeUI {
       if (this.round.view.question) void this.listen(this.round.view.question.text, "partner", "partner");
     });
     this.el("hint-listen").addEventListener("click", () => { if (this.hintText) void this.listen(this.hintText, "coach", "hint"); });
+    this.check("practice-korean").addEventListener("change", () => this.koreanChanged());
   }
   get active(): boolean { return this.starting || this.round.active; }
   async configure(): Promise<void> {
@@ -135,9 +136,15 @@ export class PracticeUI {
   }
   private partner(question: PartnerTurn): void {
     this.session?.pause(true); this.enrich.reset();
-    void this.enrich.load("question", question.text);
+    if (this.check("practice-korean").checked) void this.enrich.load("question", question.text);
     // Autoplay only follows explicit Start/Next in an active practice round. A blocked play has a visible button fallback.
     void this.listen(question.text, "partner", "partner");
+  }
+  private koreanChanged(): void {
+    if (!this.check("practice-korean").checked) { this.enrich.reset(); return; }
+    const view = this.round.view;
+    if (view.question && view.phase !== "summary") void this.enrich.load("question", view.question.text);
+    if (view.hint) void this.enrich.load("reply", view.hint.text);
   }
   private async listen(text: string, voice: "coach" | "partner", key: string): Promise<void> {
     this.session?.pause(true);
@@ -183,7 +190,7 @@ export class PracticeUI {
         this.text(this.el("practice-hint-sources"), "li", `Hint references: ${view.hint.grounding}`);
         for (const source of view.hint.sources) this.text(this.el("practice-hint-sources"), "li", source.title);
       }
-      if (view.hint) void this.enrich.load("reply", view.hint.text); else this.enrich.clear("reply");
+      if (view.hint && this.check("practice-korean").checked) void this.enrich.load("reply", view.hint.text); else this.enrich.clear("reply");
     }
     this.el("practice-feedback").hidden = !view.feedback;
     this.el("practice-next").hidden = view.phase !== "feedback";

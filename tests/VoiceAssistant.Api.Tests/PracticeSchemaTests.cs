@@ -20,6 +20,7 @@ public sealed class PracticeSchemaTests
     [InlineData("enrich", """{"kind":"reply","text":"Let me check.\nThen I can answer."}""")]
     [InlineData("speak", """{"text":"Please check the plan."}""")]
     [InlineData("speak", """{"text":"Please check the plan.","voice":"partner","rate":"slow"}""")]
+    [InlineData("speak", """{"text":"Please check the plan.","rate":"fast"}""")]
     public void AssistRequestsAcceptOnlyDocumentedTypes(string operation, string json) =>
         Assert.Equal(operation, Parse(operation, json).Operation);
 
@@ -54,6 +55,7 @@ public sealed class PracticeSchemaTests
         {
             """{"text":"hi","voice":null}""", """{"text":"hi","voice":"en-US-Evil"}""",
             """{"text":"hi","rate":"1.2"}""", """{"text":"hi","rate":false}""",
+            """{"text":"hi","rate":"turbo"}""", """{"text":"hi","rate":"Fast"}""",
             """{"text":"hi","ssml":"<speak/>"}"""
         }) yield return ["speak", json];
         yield return ["speak", JsonSerializer.Serialize(new { text = new string('a', 401) })];
@@ -196,6 +198,17 @@ public sealed class PracticeSchemaTests
         Assert.Throws<PracticeException>(() => Parse("suggest", longQuestion));
         var longTopic = longQuestion.Replace(new string('a', 801), "Question?").Replace("\"topic\":\"\"", "\"topic\":\"" + new string('t', 301) + "\"");
         Assert.Throws<PracticeException>(() => Parse("suggest", longTopic));
+    }
+
+    [Theory]
+    [InlineData("normal", "0%")]
+    [InlineData("slow", "-20%")]
+    [InlineData("fast", "+25%")]
+    public void SsmlMapsEachSpeechRateToAFixedProsodyPercentage(string rate, string expected)
+    {
+        var xml = XDocument.Parse(PracticeSsml.Create(new("speak", "Please check the plan.", Rate: rate)));
+        XNamespace ns = "http://www.w3.org/2001/10/synthesis";
+        Assert.Equal(expected, xml.Descendants(ns + "prosody").Single().Attribute("rate")!.Value);
     }
 
     [Fact]

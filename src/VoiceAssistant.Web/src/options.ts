@@ -14,6 +14,12 @@ export interface SessionOptions {
   replyKorean?: boolean;
 }
 
+/** What `session.update` can change while a session runs; replies that start later use it. */
+export interface SessionUpdate {
+  responseMode?: SessionOptions["responseMode"];
+  replyKorean?: boolean;
+}
+
 export function defaultOptions(): SessionOptions {
   return { responseMode: "balanced", profile: { name: "", role: "", project: "" },
     profileConfirmed: false, topic: "", phrases: [], endSilenceMs: 500 };
@@ -22,7 +28,7 @@ export function defaultOptions(): SessionOptions {
 /** Validate and copy at Start so later form edits cannot mutate the active session. */
 export function validateOptions(input: SessionOptions): SessionOptions {
   if (!["balanced", "grounded", "conversation"].includes(input.responseMode))
-    throw new Error("Choose Balanced, Always knowledge, or Conversation only.");
+    throw new Error("Choose Document search: On when needed, On every reply, or Off.");
   const field = (value: string, limit: number, name: string): string => {
     if (typeof value !== "string") throw new Error(`${name} must be text.`);
     const trimmed = value.trim();
@@ -59,6 +65,21 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     ...(input.semanticSegmentation === undefined ? {} : { semanticSegmentation: input.semanticSegmentation }),
     ...(input.replySettleMs === undefined ? {} : { replySettleMs: input.replySettleMs }),
     ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }) };
+}
+
+/** Validate and copy a `session.update` payload: only the given, known settings, at least one. */
+export function validateUpdate(input: SessionUpdate): SessionUpdate {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("A settings update must be an object.");
+  if (Object.keys(input).some(key => key !== "responseMode" && key !== "replyKorean"))
+    throw new Error("A settings update changes responseMode or replyKorean only.");
+  if (input.responseMode !== undefined && !["balanced", "grounded", "conversation"].includes(input.responseMode))
+    throw new Error("Choose Document search: On when needed, On every reply, or Off.");
+  if (input.replyKorean !== undefined && typeof input.replyKorean !== "boolean")
+    throw new Error("replyKorean must be a boolean.");
+  const update: SessionUpdate = { ...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
+    ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }) };
+  if (!Object.keys(update).length) throw new Error("A settings update must change at least one setting.");
+  return update;
 }
 
 export function parsePhrases(text: string): string[] {

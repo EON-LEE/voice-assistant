@@ -8,6 +8,9 @@ page.on("console", m => logs.push(`${m.type()}: ${m.text()}`));
 page.on("pageerror", e => logs.push(`pageerror: ${e.message}`));
 await page.goto("http://127.0.0.1:5173/live.html");
 await page.waitForTimeout(1500);
+// Captions and Korean meaning are off by default; switch them on so the output below shows them.
+for (const id of ["toggle-captions", "toggle-korean"])
+  if ((await page.locator(`#${id}`).getAttribute("aria-pressed")) !== "true") await page.locator(`#${id}`).click();
 await page.screenshot({ path: `${out}\\web-live-idle.png` });
 await page.locator("#live-panel").click({ button: "right", position: { x: 200, y: 300 } });
 await page.screenshot({ path: `${out}\\web-live-menu.png` });
