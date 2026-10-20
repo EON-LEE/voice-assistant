@@ -3,7 +3,7 @@ import type { Grounding, ServerEvent, Source } from "./protocol.js";
 export interface LiveTurn { id: string; revision: number; text: string; final: boolean }
 export interface LiveReply {
   id: string; turnId: string; text: string; complete: boolean; sources: Source[];
-  grounding?: Grounding; suggestions?: string[]; respondNow?: boolean;
+  question?: string; grounding?: Grounding; suggestions?: string[]; respondNow?: boolean;
 }
 export function answers(reply: LiveReply | null): string[] {
   if (!reply) return [];
@@ -17,8 +17,8 @@ function bounded(text: string): string {
 }
 
 /**
- * Same ownership rules as the desktop overlay: ongoing speech never discards a started reply,
- * the last completed suggestions stay visible while the next reply is prepared, and stale ids are ignored.
+ * Only completed replies are presented for reading. Drafts never replace the last complete answer,
+ * and an explicit reading hold preserves its question and reply while capture continues.
  */
 export class LiveState {
   turns: LiveTurn[] = [];
@@ -30,8 +30,11 @@ export class LiveState {
   private latestTurn: string | undefined;
   private suppressedTurn: string | undefined;
   private suppressAll = false;
+  private heldReply: LiveReply | null = null;
 
-  get display(): LiveReply | null { return this.current?.text ? this.current : this.lastCompleted; }
+  get display(): LiveReply | null { return this.heldReply ?? this.lastCompleted; }
+  get readingHeld(): boolean { return this.heldReply !== null; }
+  get hasNewerReply(): boolean { return !!this.heldReply && !!this.lastCompleted && this.heldReply.id !== this.lastCompleted.id; }
   get latest(): LiveTurn | undefined { return this.turns.at(-1); }
   /** A newer reply is being produced. With gathered replies, not every final gets its own reply. */
   get generating(): boolean { return !!this.current && !this.current.complete; }
@@ -40,7 +43,10 @@ export class LiveState {
     this.turns = []; this.current = null; this.lastCompleted = null; this.error = "";
     this.seen.clear(); this.order = []; this.latestTurn = undefined;
     this.suppressedTurn = undefined; this.suppressAll = false;
+    this.heldReply = null;
   }
+  holdDisplay(): void { if (this.display?.complete) this.heldReply = this.display; }
+  releaseDisplay(): void { this.heldReply = null; }
   pause(value: boolean): void {
     this.suppressAll = value;
     if (value) this.cancelCurrent(); else this.suppressedTurn = undefined;
@@ -72,11 +78,12 @@ export class LiveState {
       }
       case "response.started":
         if (this.suppressAll || this.suppressedTurn === e.turnId || this.seen.has(e.responseId!)) return;
-        if (!this.turns.some(turn => turn.id === e.turnId)) return;
+        const target = this.turns.find(turn => turn.id === e.turnId);
+        if (!target) return;
         this.seen.add(e.responseId!); this.order.push(e.responseId!);
         if (this.order.length > 256) this.seen.delete(this.order.shift()!);
         this.error = "";
-        this.current = { id: e.responseId!, turnId: e.turnId!, text: "", complete: false, sources: [] };
+        this.current = { id: e.responseId!, turnId: e.turnId!, question: target.text, text: "", complete: false, sources: [] };
         return;
       case "response.delta":
       case "response.completed":

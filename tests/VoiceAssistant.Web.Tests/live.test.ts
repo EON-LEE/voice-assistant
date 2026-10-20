@@ -38,14 +38,75 @@ test("Live: continuous speech never discards a started reply and keeps last sugg
   assert.equal(state.generating, false, "a newer final alone may never get its own gathered reply");
   state.apply({ type: "response.started", turnId: "two", responseId: "r2" });
   assert.equal(state.generating, true, "a newer reply is being produced");
-  assert.equal(state.display!.id, "r1", "previous suggestions stay until the new reply streams text");
+  assert.equal(state.display!.id, "r1", "previous suggestions stay until the new reply completes");
   state.apply({ type: "response.delta", turnId: "one", responseId: "r1", text: "stale" });
   state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Alex owns it." });
-  assert.equal(state.display!.text, "Alex owns it.");
+  assert.equal(state.current!.text, "Alex owns it.");
+  assert.equal(state.display!.text, "Review first.", "drafts must not replace a complete reading answer");
   state.pause(true);
   assert.equal(state.display!.id, "r1");
   state.resetSession();
   assert.equal(state.display, null);
+});
+
+test("Live: the first reading answer waits for completion without hiding generation progress", () => {
+  const state = new LiveState();
+  state.holdDisplay();
+  assert.equal(state.readingHeld, false);
+  state.apply(final("t", "Who will check?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "I will" });
+  assert.equal(state.generating, true);
+  const draftDisplay = state.display;
+  assert.equal(draftDisplay, null);
+  state.apply({ type: "response.completed", turnId: "t", responseId: "r", text: "I will check.", sources: [], grounding: "disabled" });
+  assert.equal(state.display?.text, "I will check.");
+  assert.equal(state.display?.question, "Who will check?");
+  assert.equal(state.generating, false);
+});
+
+test("Live: reading hold preserves a complete answer and its question while newer replies finish", () => {
+  const state = new LiveState();
+  state.apply(final("one", "What is the next step?"));
+  state.apply({ type: "response.started", turnId: "one", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "Review the plan.", sources: [],
+    suggestions: ["Review the plan.", "Could we review it together?"] });
+  state.holdDisplay();
+  assert.equal(state.readingHeld, true);
+  assert.equal(state.hasNewerReply, false);
+  for (let i = 2; i <= 70; i++) {
+    state.apply(final(`t${i}`, `Question ${i}?`));
+    state.apply({ type: "response.started", turnId: `t${i}`, responseId: `r${i}` });
+    state.apply({ type: "response.completed", turnId: `t${i}`, responseId: `r${i}`, text: `Answer ${i}.`, sources: [] });
+  }
+  assert.equal(state.display?.question, "What is the next step?", "a held target survives the bounded transcript history");
+  assert.equal(state.display?.text, "Review the plan.");
+  assert.deepEqual(answers(state.display), ["Review the plan.", "Could we review it together?"]);
+  assert.equal(state.hasNewerReply, true);
+  assert.equal(state.lastCompleted?.id, "r70", "holding must not suppress incoming replies");
+  state.releaseDisplay();
+  assert.equal(state.display?.id, "r70", "release selects the latest complete reply, not an intermediate reply");
+  assert.equal(state.readingHeld, false);
+  assert.equal(state.hasNewerReply, false);
+  state.holdDisplay();
+  state.resetSession();
+  assert.equal(state.readingHeld, false);
+  assert.equal(state.display, null);
+});
+
+test("Live: cancelling a newer draft never replaces or releases a held reading answer", () => {
+  const state = new LiveState();
+  state.apply(final("t", "Question?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.completed", turnId: "t", responseId: "r", text: "Check first.", sources: [] });
+  state.holdDisplay();
+  state.apply({ type: "response.started", turnId: "t", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r2", text: "Incomplete" });
+  state.apply({ type: "response.cancelled", turnId: "t", responseId: "r2" });
+  assert.equal(state.display?.text, "Check first.");
+  assert.equal(state.readingHeld, true);
+  state.releaseDisplay();
+  assert.equal(state.display?.text, "Check first.");
 });
 
 test("Live: duplicate, unknown-turn and cancelled replies are ignored safely", () => {

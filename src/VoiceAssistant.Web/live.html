@@ -18,44 +18,52 @@
           </div>
           <p id="session-error" class="live-error" role="alert" hidden></p>
         </header>
-        <section class="live-conversation" aria-label="들은 대화, AI 추천 아님">
-          <div class="live-label">들은 대화</div>
-          <div id="conversation" class="live-history" aria-live="polite">
-            <p class="live-waiting">영어 대화를 기다리고 있어요.</p>
-          </div>
-          <p class="live-context">이전 대화 맥락 기본 연결 · 추천은 실제 발화로 기억하지 않음</p>
-        </section>
         <section class="live-answers" aria-label="내가 말할 추천 답변과 한국어 뜻">
+          <div class="live-label">답변 기준 발언</div>
+          <p id="question-text" class="live-question" lang="en">영어 대화를 기다리고 있어요.</p>
           <div class="live-answers-header">
-            <span class="live-answers-title">내가 말할 추천 답변</span>
-            <span id="grounding-badge" class="live-badge">맥락 연결</span>
+            <h1 class="live-answers-title">지금 읽을 답변</h1>
+            <button id="hold-answer" class="live-hold" type="button" aria-pressed="false" disabled>답변 고정</button>
           </div>
+          <p id="reading-status" class="live-reading-status" role="status">우클릭으로 설정 / 라이브 시작</p>
           <article class="live-card primary" aria-label="추천 답변 1">
-            <div class="live-choice"><span id="primary-label">01 · 바로 답하기</span><span>우선 추천</span></div>
-            <p id="answer-text" class="live-english">대화가 인식되면 추천 답변이 여기에 표시됩니다.</p>
+            <div class="live-choice"><span id="primary-label">추천 영어 답변</span></div>
+            <p id="answer-text" class="live-english" lang="en" aria-live="polite" aria-atomic="true">답변이 완성되면 여기에 표시됩니다.</p>
             <div class="live-meaning">
               <div class="live-meaning-label">한국어 뜻</div>
               <p id="answer-korean" lang="ko">영어 추천 답변의 한국어 뜻이 함께 표시됩니다.</p>
             </div>
           </article>
-          <article id="alternative-card" class="live-card secondary" aria-label="추천 답변 2" hidden>
-            <div class="live-choice"><span>02 · 다른 대응 방식</span><span>대안 표현</span></div>
-            <p id="alternative-text" class="live-english"></p>
-            <div class="live-meaning">
-              <div class="live-meaning-label">한국어 뜻</div>
-              <p id="alternative-korean" lang="ko"></p>
-            </div>
-          </article>
-          <p id="continuity" class="live-continuity">우클릭으로 설정 / 라이브 시작</p>
+          <p class="live-grounding"><span id="grounding-badge" class="live-badge" role="status">근거 상태 대기</span></p>
+          <details id="live-details" class="live-details">
+            <summary>대화 · 대안 · 상세 근거</summary>
+            <section class="live-conversation" aria-label="들은 대화, AI 추천 아님">
+              <h2 class="live-label">들은 대화</h2>
+              <div id="conversation" class="live-history" aria-live="off">
+                <p class="live-waiting">영어 대화를 기다리고 있어요.</p>
+              </div>
+              <p class="live-context">이전 대화 맥락 기본 연결 · 추천은 실제 발화로 기억하지 않음</p>
+            </section>
+            <article id="alternative-card" class="live-card secondary" aria-label="추천 답변 2" hidden>
+              <div class="live-choice"><span>다른 대응 방식</span><span>대안 표현</span></div>
+              <p id="alternative-text" class="live-english" lang="en"></p>
+              <div class="live-meaning">
+                <div class="live-meaning-label">한국어 뜻</div>
+                <p id="alternative-korean" lang="ko"></p>
+              </div>
+            </article>
+            <p id="continuity" class="live-continuity">추천은 실제로 말한 내용이 아닙니다.</p>
+            <footer class="live-footer">
+              <p id="grounding-text">문서 근거 상태는 답변 완료 후 표시됩니다</p>
+              <p id="sources-text"></p>
+            </footer>
+          </details>
         </section>
-        <footer class="live-footer">
-          <p id="grounding-text">문서 근거 상태는 답변 완료 후 표시됩니다</p>
-          <p id="sources-text"></p>
-        </footer>
         <div id="live-menu" class="live-menu" role="menu" hidden>
           <button type="button" role="menuitem" data-action="settings">오디오 소스 설정 / 내 문서</button>
           <button type="button" role="menuitem" data-action="start">라이브 시작 · 선택한 오디오를 Azure로 전송 (참여자 허락 필요)</button>
           <button type="button" role="menuitem" data-action="pause">내가 말할 동안 일시정지</button>
+          <button type="button" role="menuitem" data-action="hold">읽는 동안 답변 고정 (오디오는 계속 듣기)</button>
           <button type="button" role="menuitem" data-action="retry">추천 답변 다시 생성</button>
           <button type="button" role="menuitem" data-action="translate">한국어 번역 재시도</button>
           <button type="button" role="menuitem" data-action="stop">회의 종료 / 마이크 해제</button>

@@ -9,8 +9,9 @@ import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
 import type { ServerEvent } from "./protocol.js";
 import { LiveState, answers, isTransientFailure, translationChunks, type LiveReply } from "./live-state.js";
 
+let liveDocument = document;
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
-  const value = document.getElementById(id);
+  const value = document.getElementById(id) ?? liveDocument.getElementById(id);
   if (!value) throw new Error(`Missing #${id}`);
   return value as T;
 };
@@ -221,7 +222,7 @@ async function translateReply(reply: LiveReply): Promise<void> {
     catch (error) { if (!signal.aborted) result[index] = `${failureLabel(error)} · 우클릭으로 재시도`; }
     if (!signal.aborted) schedule();
   }));
-  const keep = new Set([state.current?.id, state.lastCompleted?.id]);
+  const keep = new Set([state.current?.id, state.lastCompleted?.id, state.display?.id]);
   for (const id of replyKo.keys()) if (!keep.has(id)) replyKo.delete(id);
 }
 function retryTranslations(): void {
@@ -230,11 +231,16 @@ function retryTranslations(): void {
   for (const [turnId, text] of failedTurns) void translateTurn(turnId, text);
 }
 
-// ---------- Rendering (same wording and layout rules as the desktop overlay) ----------
+// ---------- Focused reading view ----------
 
 let frame = 0;
 function schedule(): void { if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); }); }
 let renderedConversation = "";
+
+function setText(id: string, text: string): void {
+  const element = $(id);
+  if (element.textContent !== text) element.textContent = text;
+}
 
 function render(): void {
   const capture = reconnecting ? "reconnecting" : ready ? paused ? "paused" : "on" : "off";
@@ -279,25 +285,36 @@ function renderConversation(): void {
 function renderSuggestions(): void {
   const display = state.display, values = answers(display);
   const ko = display ? replyKo.get(display.id) ?? [] : [];
-  $("answer-text").textContent = values[0] ?? "대화가 인식되면 추천 답변이 여기에 표시됩니다.";
-  $("answer-korean").textContent = ko[0] ?? (display ? "한국어 번역 준비 중…" : "영어 추천 답변의 한국어 뜻이 함께 표시됩니다.");
+  setText("answer-text", values[0] ?? "답변이 완성되면 여기에 표시됩니다.");
+  setText("answer-korean", ko[0] ?? (display ? "한국어 번역 준비 중…" : "영어 추천 답변의 한국어 뜻이 함께 표시됩니다."));
   $("alternative-card").hidden = values.length < 2;
-  $("alternative-text").textContent = values[1] ?? "";
-  $("alternative-korean").textContent = ko[1] ?? "한국어 번역 준비 중…";
+  setText("alternative-text", values[1] ?? "");
+  setText("alternative-korean", ko[1] ?? "한국어 번역 준비 중…");
   const generating = ready && state.generating;
-  // "Previous" only while a newer reply is being produced; ongoing speech (maybe the user answering) keeps the hint current.
-  const previous = !!display && generating && state.current?.id !== display.id;
+  const previous = !!display && (state.hasNewerReply || generating && state.current?.id !== display.id);
   const myTurn = !previous && !!display?.respondNow;
-  $("primary-label").textContent = previous ? "01 · 이전 질문용 답변" : myTurn ? "01 · 지금 답할 차례" : "01 · 바로 답하기";
-  document.querySelector(".live-card.primary")!.classList.toggle("my-turn", myTurn);
-  const question = state.turns.find(turn => turn.id === display?.turnId)?.text ?? (display ? "이전 대화" : "");
-  $("continuity").textContent = !display
-    ? generating ? "내 문서에서 근거를 찾아 답변 준비 중…" : active ? "듣는 중 · 질문이 끝나면 추천 답변을 만듭니다" : "우클릭으로 설정 / 라이브 시작"
-    : `${previous ? "이전" : "현재"} 답변 기준: ${question}` +
-      (generating ? "\n새 추천 답변 생성 중 · 기존 답변 유지" : "\n추천은 실제로 말한 내용이 아닙니다.");
-  $("grounding-badge").textContent = ({ grounded: "맥락 + 내 문서 근거", no_matches: "문서 근거 없음",
-    unavailable: "문서 검색 실패", disabled: "대화 맥락" } as Record<string, string>)[display?.grounding ?? ""]
-    ?? (generating ? "근거 확인 중" : "맥락 연결");
+  $("primary-label").textContent = previous ? "이전 질문용 답변" : myTurn ? "지금 말할 추천" : "추천 영어 답변";
+  panel.querySelector(".live-card.primary")!.classList.toggle("my-turn", myTurn);
+  panel.querySelector<HTMLElement>(".live-answers")!.dataset.previous = String(previous);
+  setText("question-text", display?.question ?? state.turns.find(turn => turn.id === display?.turnId)?.text
+    ?? (display ? "이전 대화" : state.latest?.text ?? "영어 대화를 기다리고 있어요."));
+  $("reading-status").textContent = state.readingHeld
+    ? state.hasNewerReply ? "새 답변 도착 · 고정을 해제하면 표시합니다"
+      : generating ? "화면 고정됨 · 새 답변 준비 중"
+        : "화면 고정됨 · 오디오 전송 상태는 위에서 확인하세요"
+    : generating ? display ? "새 답변 준비 중 · 아래는 이전 질문용 답변" : "답변 준비 중 · 완성되면 표시합니다"
+      : display ? "추천 문장입니다 · 내용 확인 후 사용하세요"
+        : active ? "듣는 중 · 답변이 완성되면 표시합니다" : "우클릭으로 설정 / 라이브 시작";
+  const hold = $<HTMLButtonElement>("hold-answer");
+  hold.disabled = !display;
+  hold.setAttribute("aria-pressed", String(state.readingHeld));
+  hold.textContent = state.readingHeld ? state.hasNewerReply ? "새 답변 보기" : "고정 해제" : "답변 고정";
+  $("continuity").textContent = "추천은 실제로 말한 내용이 아닙니다. 화면 고정은 오디오 전송을 중지하지 않습니다.";
+  const badge = $("grounding-badge");
+  badge.dataset.grounding = display?.grounding ?? "";
+  badge.textContent = ({ grounded: "문서 인용 있음 · 내용 확인 필요", no_matches: "문서 근거 없음 · 사실 확인 필요",
+    unavailable: "문서 검색 실패 · 사실 답변에 의존하지 마세요", disabled: "문서 검색 미사용 · 대화 맥락만 사용" } as Record<string, string>)[display?.grounding ?? ""]
+    ?? (generating ? "근거 확인 중" : "근거 상태 대기");
   $("grounding-text").textContent = ({ grounded: "근거 있음 · 내 업로드 문서", no_matches: "문서 근거 없음 · 사실 확인 필요",
     unavailable: "문서 검색 실패 · 사실 답변에 의존하지 마세요", disabled: "이번 답변은 문서 검색을 사용하지 않음" } as Record<string, string>)
     [display?.grounding ?? ""] ?? "문서 근거 상태는 답변 완료 후 표시됩니다";
@@ -306,7 +323,13 @@ function renderSuggestions(): void {
     (sources.length > 3 ? ` · 외 ${sources.length - 3}개` : "");
 }
 
-// ---------- Right-click menu (the overlay itself has no buttons) ----------
+function toggleReadingHold(): void {
+  if (state.readingHeld) state.releaseDisplay(); else state.holdDisplay();
+  render();
+}
+$("hold-answer").addEventListener("click", toggleReadingHold);
+
+// ---------- Right-click session controls ----------
 
 const item = (action: string): HTMLButtonElement => menu.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!;
 function renderMenu(): void {
@@ -314,21 +337,32 @@ function renderMenu(): void {
   item("stop").disabled = !active;
   item("pause").disabled = item("retry").disabled = !ready;
   item("pause").textContent = paused ? "다시 듣기" : "내가 말할 동안 일시정지";
+  item("hold").disabled = !state.display;
+  item("hold").textContent = state.readingHeld
+    ? state.hasNewerReply ? "새 답변 보기 / 화면 고정 해제" : "화면 고정 해제"
+    : "읽는 동안 답변 고정 (오디오는 계속 듣기)";
   item("translate").disabled = !state.display?.complete && failedTurns.size === 0;
   item("float").hidden = !("documentPictureInPicture" in window);
   item("float").textContent = pipWindow ? "작은 창 닫고 페이지로 돌아가기" : "항상 위 작은 창으로 띄우기";
 }
+function positionMenu(x: number, y: number): void {
+  const bounds = panel.getBoundingClientRect();
+  const left = Math.max(4, Math.min(x, bounds.width - menu.offsetWidth - 4));
+  const top = Math.max(4, Math.min(y, bounds.height - menu.offsetHeight - 4));
+  menu.style.left = `${left}px`; menu.style.top = `${top}px`;
+}
+new ResizeObserver(() => {
+  if (!menu.hidden) positionMenu(parseFloat(menu.style.left), parseFloat(menu.style.top));
+}).observe(panel);
 function openMenu(x: number, y: number): void {
   renderMenu();
   menu.hidden = false;
   const bounds = panel.getBoundingClientRect();
-  const left = Math.max(4, Math.min(x - bounds.left, bounds.width - menu.offsetWidth - 4));
-  const top = Math.max(4, Math.min(y - bounds.top, bounds.height - menu.offsetHeight - 4));
-  menu.style.left = `${left}px`; menu.style.top = `${top}px`;
+  positionMenu(x - bounds.left, y - bounds.top);
   menu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   const owner = panel.ownerDocument;
   const close = (event: Event): void => {
-    if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+    if (event.type === "keydown" && "key" in event && event.key !== "Escape") return;
     if (event.type === "pointerdown" && menu.contains(event.target as Node)) return;
     closeMenu();
     owner.removeEventListener("pointerdown", close, true); owner.removeEventListener("keydown", close, true);
@@ -352,6 +386,7 @@ menu.addEventListener("click", event => {
   if (action === "start") void startLive();
   if (action === "stop") void stopLive();
   if (action === "pause") { paused = !paused; state.pause(paused); session?.pause(paused); render(); }
+  if (action === "hold") toggleReadingHold();
   if (action === "retry") { state.beginRequest(); session?.request(); render(); }
   if (action === "translate") retryTranslations();
   if (action === "float") void toggleFloat();
@@ -413,8 +448,11 @@ async function toggleFloat(): Promise<void> {
   floatingStage.className = "live-stage";
   floatingStage.append(panel);
   floating.document.body.append(floatingStage);
+  liveDocument = floating.document;
   pipWindow = floating;
-  floating.addEventListener("pagehide", () => { stage.append(panel); pipWindow = undefined; closeMenu(); render(); });
+  floating.addEventListener("pagehide", () => {
+    stage.append(panel); liveDocument = document; pipWindow = undefined; closeMenu(); render();
+  });
   render();
 }
 
