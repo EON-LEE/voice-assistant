@@ -36,6 +36,7 @@ internal sealed class ProcessLoopbackCapture : ICaptureSession
     private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<Exception?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long packets, silentPackets;
+    private int disposed;
 
     private ProcessLoopbackCapture(AudioClient client, WaveFormat format, CaptureDataHandler onData, string description)
     {
@@ -176,6 +177,7 @@ internal sealed class ProcessLoopbackCapture : ICaptureSession
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref disposed, 1) == 1) return;
         stop.Set();
         try
         {

@@ -110,6 +110,12 @@ test("An unsupported Windows build, a silent host and abort reject prepare and r
   await assert.rejects(cancelled, /cancelled/);
   assert.equal(aborted.webview.sent("host-audio.stop").length, 1);
   await assert.rejects(fixture().source.prepare(abort.signal));
+
+  const closed = fixture();
+  closed.webview.postMessage = () => { throw new Error("WebView closed"); };
+  await assert.rejects(closed.source.prepare(new AbortController().signal), /WebView closed/);
+  assert.equal(closed.webview.listening, 0);
+  await tick();
 });
 
 test("Frames decode to 640-byte buffers, flow only after start and never while paused", async () => {

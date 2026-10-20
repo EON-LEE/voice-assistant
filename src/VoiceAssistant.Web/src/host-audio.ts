@@ -168,6 +168,8 @@ export class HostAudioSource implements AudioSource {
     signal.addEventListener("abort", aborted, { once: true });
     try {
       const answered = new Promise<void>((resolve, reject) => { this.answer = { resolve, reject }; });
+      // Observed below; this only keeps an early failure from also surfacing as an unhandled rejection.
+      answered.catch(() => {});
       this.deps.webview.addEventListener("message", this.listener);
       this.requested = true;
       this.send({ type: "host-audio.start", source: this.deps.source, id: this.id });
