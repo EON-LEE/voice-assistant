@@ -483,11 +483,17 @@ public sealed class AzureMeetingProvider : IMeetingProvider
         await foreach (var update in openAI.GetChatClient(settings.ChatDeployment)
             .CompleteChatStreamingAsync(messages, CreateChatOptions(settings, settings.ChatReasoningEffort), cancellation))
         {
+            // With asynchronous filtering the verdict can follow text already streamed, even a "stop" update, so every update
+            // is checked until the stream ends. A stopped reply never completes; the session withdraws what was sent.
+            if (update.FinishReason == ChatFinishReason.ContentFilter)
+                throw new ProviderException("response_filtered", FilteredMessage);
             foreach (var part in update.ContentUpdate)
                 if (!string.IsNullOrEmpty(part.Text)) yield return part.Text;
         }
 
     }
+
+    internal const string FilteredMessage = "The content filter stopped this response, so it was withdrawn.";
 
     internal static ChatCompletionOptions CreateChatOptions(ServiceSettings settings, string? reasoningEffort = null)
     {

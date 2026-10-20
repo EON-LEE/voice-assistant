@@ -753,7 +753,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     /// <summary>The fixed completion used when neither the materials nor a general model reply are available.</summary>
     private async Task CompleteWithoutGroundingAsync(CancellationToken cancellation)
     {
-        // Korean started for a reply that failed mid-stream must not arrive for text the client no longer shows.
+        // Korean started for a reply that failed after its stream ended must not arrive for text the client no longer shows.
         if (koreanScope is not null) koreanScope.Abandoned = true;
         await SendAsync(new
         {
@@ -901,8 +901,6 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 primaryDoneSent |= primaryDone;
                 if (delta.Length > 0 || primaryDone)
                     await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse, PrimaryDone: primaryDone), cancellation);
-                // The first line is final as soon as the second begins, so its translation overlaps the alternative.
-                if (update.PrimaryDone) StartKorean(scope, 0, text.ToString().Trim(), translation, lifetime);
             }
             cancellation.ThrowIfCancellationRequested();
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
@@ -910,6 +908,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             if (!primaryDoneSent)
                 await events.Writer.WriteAsync(new("delta", "", number, ModelResponse: modelResponse, PrimaryDone: true), cancellation);
             var suggestions = ReplySuggestions.Complete(text.ToString(), alternative);
+            // Translation starts only once the stream has ended normally: with asynchronous content filtering a line is not
+            // checked before then, and a reply the filter stops (response_filtered) must never reach the translation call.
             for (var index = 0; index < suggestions.Length; index++)
                 StartKorean(scope, index, suggestions[index].Trim(), translation, lifetime);
             var classifierStarted = clock.GetTimestamp();
@@ -944,10 +944,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         new ProviderException("model_busy", "Azure model request limit reached. Wait briefly, then retry."),
                     _ => new ProviderException("response_unavailable", "Response service is unavailable. Please retry.")
                 };
-                logger.LogWarning("Meeting response failed with code {Code}: {ExceptionType}, HTTP status {Status}, after search failure {AfterSearchFailure}.",
-                    error.Code, exception.GetType().Name, HttpStatusText(exception), groundingUnavailable);
+                // Content-free, like every failure line: a withdrawn reply logs its code and generation, never its text.
+                var filtered = error.Code == "response_filtered";
+                if (filtered)
+                    logger.LogWarning("Meeting response withdrawn: code {Code}, generation {Generation}, after search failure {AfterSearchFailure}.",
+                        error.Code, number, groundingUnavailable);
+                else
+                    logger.LogWarning("Meeting response failed with code {Code}: {ExceptionType}, HTTP status {Status}, after search failure {AfterSearchFailure}.",
+                        error.Code, exception.GetType().Name, HttpStatusText(exception), groundingUnavailable);
                 // The search failure was already announced; when the general reply fails too, only the fixed notice follows.
-                await events.Writer.WriteAsync(groundingUnavailable
+                // A reply the content filter stopped is withdrawn instead, because that notice would complete it.
+                await events.Writer.WriteAsync(groundingUnavailable && !filtered
                     ? new("grounding.fallback", Generation: number)
                     : new("generation.error", error, number), lifetime);
             }

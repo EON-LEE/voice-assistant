@@ -121,13 +121,15 @@ public sealed partial class ApiTests
         await Receive(socket);
 
         provider.Emit(new("q", 1, KoreanQuestion, true));
-        await ReceiveUntilAsync(socket, found => found.Any(message => IsKorean(message, 0)));
+        await ReceiveUntilAsync(socket, found => found.Any(IsPrimaryDone));
         await Send(socket, UpdateCommand(new { responseMode = "conversation", replyKorean = false }));
         await Until(socket, "session.updated");
 
         alternative.SetResult();
-        var rest = await ReceiveUntilAsync(socket, found => Completed(found) && found.Any(message => IsKorean(message, 1)));
+        var rest = await ReceiveUntilAsync(socket, found => Completed(found) && found.Any(message => IsKorean(message, 0)) &&
+            found.Any(message => IsKorean(message, 1)));
         Assert.Equal("no_matches", rest.Single(message => TypeOf(message) == "response.completed").GetProperty("grounding").GetString());
+        Assert.Equal("한국어: " + KoreanPrimaryReply, rest.Single(message => IsKorean(message, 0)).GetProperty("korean").GetString());
         Assert.Equal("한국어: " + KoreanAlternative, rest.Single(message => IsKorean(message, 1)).GetProperty("korean").GetString());
 
         var retrievals = provider.Retrievals;

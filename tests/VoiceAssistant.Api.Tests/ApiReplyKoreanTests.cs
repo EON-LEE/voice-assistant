@@ -44,7 +44,7 @@ public sealed partial class ApiTests
     }
 
     [Fact]
-    public async Task OptedInClientGetsEachKoreanLineAsSoonAsItsEnglishLineIsFinal()
+    public async Task OptedInClientGetsKoreanForEachLineOnlyOnceTheStreamHasEnded()
     {
         var alternative = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var provider = new ControlledProvider
@@ -58,23 +58,28 @@ public sealed partial class ApiTests
         Assert.True(ready.GetProperty("replyKorean").GetBoolean());
 
         provider.Emit(new("q", 1, KoreanQuestion, true));
-        var beforeCompletion = await ReceiveUntilAsync(socket, messages => messages.Any(message => IsKorean(message, 0)));
-        Assert.False(Completed(beforeCompletion));
-        var primary = beforeCompletion.Single(message => IsKorean(message, 0));
-        Assert.Equal("한국어: " + KoreanPrimaryReply, primary.GetProperty("korean").GetString());
-        Assert.False(primary.TryGetProperty("failed", out _));
+        // The primary line is complete and shown, but the content filter can still stop the stream: nothing is translated yet.
+        var streaming = await ReceiveUntilAsync(socket, messages => messages.Any(IsPrimaryDone));
+        await Task.Delay(200);
+        Assert.Empty(provider.Translations);
 
         alternative.SetResult();
-        var rest = await ReceiveUntilAsync(socket, messages => Completed(messages) && messages.Any(message => IsKorean(message, 1)));
+        var rest = await ReceiveUntilAsync(socket, messages => Completed(messages) && messages.Any(message => IsKorean(message, 0)) &&
+            messages.Any(message => IsKorean(message, 1)));
+        Assert.DoesNotContain(streaming, message => TypeOf(message) == "response.korean");
         var completed = rest.Single(message => TypeOf(message) == "response.completed");
+        var primary = rest.Single(message => IsKorean(message, 0));
         var second = rest.Single(message => IsKorean(message, 1));
+        Assert.Equal("한국어: " + KoreanPrimaryReply, primary.GetProperty("korean").GetString());
+        Assert.False(primary.TryGetProperty("failed", out _));
         Assert.Equal(completed.GetProperty("responseId").GetString(), primary.GetProperty("responseId").GetString());
         Assert.Equal(completed.GetProperty("responseId").GetString(), second.GetProperty("responseId").GetString());
         Assert.Equal(completed.GetProperty("turnId").GetString(), second.GetProperty("turnId").GetString());
         Assert.Equal("한국어: " + KoreanAlternative, second.GetProperty("korean").GetString());
         Assert.Equal([KoreanPrimaryReply, KoreanAlternative],
             completed.GetProperty("suggestions").EnumerateArray().Select(item => item.GetString()));
-        Assert.Equal([KoreanPrimaryReply, KoreanAlternative], provider.Translations.Select(item => item.English));
+        // Both lines start together when the stream ends, in either order.
+        Assert.Equal([KoreanPrimaryReply, KoreanAlternative], provider.Translations.Select(item => item.English).Order());
         await Send(socket, """{"type":"session.stop"}""");
     }
 
@@ -163,7 +168,8 @@ public sealed partial class ApiTests
         var provider = new ControlledProvider
         {
             AutomaticRetrieval = true, Alternative = KoreanAlternative,
-            HoldAlternative = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+            // The stream has ended, so its lines are being translated, but the reply still waits for the turn classifier.
+            TurnSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
             Translate = async (english, _, _) =>
             {
                 await gate.Task;
@@ -177,9 +183,9 @@ public sealed partial class ApiTests
         await Receive(socket);
 
         provider.Emit(new("q", 1, KoreanQuestion, true));
-        var messages = await ReceiveUntilAsync(socket, found => found.Any(message => TypeOf(message) == "response.delta"));
-        await WaitUntilAsync(() => !provider.Translations.IsEmpty, TimeSpan.FromSeconds(3));
-        Assert.Single(provider.Translations);
+        var messages = await ReceiveUntilAsync(socket, found => found.Any(IsPrimaryDone));
+        await WaitUntilAsync(() => provider.Translations.Count == 2, TimeSpan.FromSeconds(3));
+        Assert.Equal(2, provider.Translations.Count);
 
         await Send(socket, """{"type":"response.cancel"}""");
         messages.AddRange(await ReceiveUntilAsync(socket, found => found.Any(message => TypeOf(message) == "response.cancelled")));
@@ -189,7 +195,33 @@ public sealed partial class ApiTests
 
         await Send(socket, """{"type":"session.stop"}""");
         messages.AddRange(await ReceiveUntilCloseAsync(socket));
-        Assert.DoesNotContain(messages, message => TypeOf(message) == "response.korean");
+        Assert.DoesNotContain(messages, message => TypeOf(message) is "response.korean" or "response.completed");
+    }
+
+    [Fact]
+    public async Task ResponseCancelledWhileItStreamsStartsNoTranslation()
+    {
+        var alternative = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new ControlledProvider
+        {
+            AutomaticRetrieval = true, Alternative = KoreanAlternative, HoldAlternative = alternative, Translate = Prefixed
+        };
+        await using var host = await Host.StartAsync(provider: provider);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded", replySettleMs = 300, replyKorean = true }));
+        await Receive(socket);
+
+        provider.Emit(new("q", 1, KoreanQuestion, true));
+        var messages = await ReceiveUntilAsync(socket, found => found.Any(IsPrimaryDone));
+        await Send(socket, """{"type":"response.cancel"}""");
+        messages.AddRange(await ReceiveUntilAsync(socket, found => found.Any(message => TypeOf(message) == "response.cancelled")));
+        alternative.SetResult();
+        await Task.Delay(200);
+
+        await Send(socket, """{"type":"session.stop"}""");
+        messages.AddRange(await ReceiveUntilCloseAsync(socket));
+        Assert.DoesNotContain(messages, message => TypeOf(message) is "response.korean" or "response.completed");
+        Assert.Empty(provider.Translations);
     }
 
     [Fact]
