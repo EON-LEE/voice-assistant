@@ -1,0 +1,542 @@
+{
+  "schemaVersion": 1,
+  "classification": "synthetic",
+  "corpus": "Kestrova Analytics synthetic corpus",
+  "notes": "Speaker A asks the target question unless stated otherwise; speaker B is another participant. Required facts, forbidden claims and abstention markers are matched on normalized text (see qualityeval/textnorm.py). Forbidden claims and patterns are negation-aware: 'we can't guarantee 100%' does not assert 'guarantee 100%'.",
+  "items": [
+    {
+      "id": "fact-security-contact",
+      "category": "fact",
+      "context": [],
+      "target": { "speaker": "A", "text": "Who handles security questionnaires at Kestrova?" },
+      "materialsRequired": true,
+      "expectedSources": ["team", "security"],
+      "requiredFacts": [ { "id": "halloway", "anyOf": ["Joaquin Halloway", "Halloway", "Joaquin"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "Kestrova", "variants": ["kestrova"] } ]
+    },
+    {
+      "id": "fact-machine-protocols",
+      "category": "fact",
+      "context": [],
+      "target": { "speaker": "A", "text": "Which machine protocols does Kestrova Pulse support?" },
+      "materialsRequired": true,
+      "expectedSources": ["product", "integrations"],
+      "requiredFacts": [
+        { "id": "opc-ua", "anyOf": ["OPC UA", "OPCUA"] },
+        { "id": "mqtt", "anyOf": ["MQTT"] },
+        { "id": "modbus", "anyOf": ["Modbus"] }
+      ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": ["\\bsap\\b"],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "Kestrova", "variants": ["kestrova"] } ]
+    },
+    {
+      "id": "fact-roadmap-owner",
+      "category": "fact",
+      "context": [],
+      "target": { "speaker": "A", "text": "Who owns the Pulse roadmap?" },
+      "materialsRequired": true,
+      "expectedSources": ["team"],
+      "requiredFacts": [ { "id": "nwachukwu", "anyOf": ["Amara Nwachukwu", "Nwachukwu", "Amara"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "fact-iso-status",
+      "category": "fact",
+      "context": [],
+      "target": { "speaker": "A", "text": "Is Kestrova certified for ISO 27001 yet?" },
+      "materialsRequired": true,
+      "expectedSources": ["security"],
+      "requiredFacts": [
+        { "id": "not-yet", "anyOf": ["not certified", "not yet", "isn't certified", "not iso 27001 certified", "not yet certified", "isn't iso 27001 certified"] },
+        { "id": "audit-date", "anyOf": ["March 2027", "2027"] }
+      ],
+      "forbiddenClaims": ["iso 27001 certified", "already certified"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "ISO 27001", "variants": ["iso 27001"] } ]
+    },
+    {
+      "id": "fact-data-hosting",
+      "category": "fact",
+      "context": [],
+      "target": { "speaker": "A", "text": "Where is our sensor data stored?" },
+      "materialsRequired": true,
+      "expectedSources": ["security"],
+      "requiredFacts": [ { "id": "united-states", "anyOf": ["United States", "U.S.", "US data center", "US data centers", "in the US", "American data centers"] } ],
+      "forbiddenClaims": ["stored in the eu", "stored in europe", "hosted in the eu", "hosted in europe", "eu data region is available"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "number-growth-price",
+      "category": "number",
+      "context": [],
+      "target": { "speaker": "A", "text": "How much does the Growth plan cost per month?" },
+      "materialsRequired": true,
+      "expectedSources": ["pricing"],
+      "requiredFacts": [ { "id": "price", "anyOf": ["1950"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "number-ga-date",
+      "category": "number",
+      "context": [],
+      "target": { "speaker": "A", "text": "When did Pulse 3.0 become generally available?" },
+      "materialsRequired": true,
+      "expectedSources": ["product", "timeline"],
+      "requiredFacts": [
+        { "id": "day", "anyOf": ["14 January", "January 14", "Jan 14", "14 Jan"] },
+        { "id": "year", "anyOf": ["2026"] }
+      ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "number-enterprise-uptime",
+      "category": "number",
+      "context": [],
+      "target": { "speaker": "A", "text": "What is the uptime SLA on the Enterprise plan?" },
+      "materialsRequired": true,
+      "expectedSources": ["support"],
+      "requiredFacts": [ { "id": "sla", "anyOf": ["99.9 %"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": ["\\b100 %"],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "number-retention-default",
+      "category": "number",
+      "context": [],
+      "target": { "speaker": "A", "text": "How long do you keep sensor history by default?" },
+      "materialsRequired": true,
+      "expectedSources": ["product", "security"],
+      "requiredFacts": [ { "id": "days", "anyOf": ["400 days", "400"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "number-maintenance-window",
+      "category": "number",
+      "context": [],
+      "target": { "speaker": "A", "text": "When is your planned maintenance window?" },
+      "materialsRequired": true,
+      "expectedSources": ["support"],
+      "requiredFacts": [
+        { "id": "day", "anyOf": ["Sunday", "Sundays"] },
+        { "id": "start", "anyOf": ["2:00", "2 am", "2am", "two am", "2 to 4", "2 and 4", "two to four", "2 until 4"] },
+        { "id": "timezone", "anyOf": ["UTC"] }
+      ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "number-sensor-overage",
+      "category": "number",
+      "context": [],
+      "target": { "speaker": "A", "text": "What does each extra sensor cost above the plan limit?" },
+      "materialsRequired": true,
+      "expectedSources": ["pricing"],
+      "requiredFacts": [ { "id": "overage", "anyOf": ["3.20", "3.2", "three twenty"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "asr-ruairi-quote",
+      "category": "asr-term",
+      "context": [],
+      "target": { "speaker": "A", "text": "Can Ruairi Fennelly prepare a quote for twenty Orrin gateways?" },
+      "materialsRequired": true,
+      "expectedSources": ["team", "pricing"],
+      "requiredFacts": [ { "id": "quotes-owner", "anyOf": ["Ruairi", "Fennelly", "Rory"] } ],
+      "forbiddenClaims": ["i will send", "i'll send", "i will prepare", "i'll prepare", "i have sent"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [
+        { "term": "Ruairi", "variants": ["ruairi"] },
+        { "term": "Fennelly", "variants": ["fennelly"] },
+        { "term": "Orrin", "variants": ["orrin"] }
+      ]
+    },
+    {
+      "id": "asr-tallis-module",
+      "category": "asr-term",
+      "context": [],
+      "target": { "speaker": "A", "text": "What does the TALLIS module do?" },
+      "materialsRequired": true,
+      "expectedSources": ["product"],
+      "requiredFacts": [
+        { "id": "alerts", "anyOf": ["alert", "alerts", "warns", "warning", "notifies", "notification"] },
+        { "id": "drift", "anyOf": ["drift", "drifts", "normal range", "out of range", "abnormal", "unusual"] }
+      ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "TALLIS", "variants": ["tallis"] } ]
+    },
+    {
+      "id": "asr-orn4-included",
+      "category": "asr-term",
+      "context": [],
+      "target": { "speaker": "A", "text": "Is the Orrin ORN-4 gateway included in the Starter price?" },
+      "materialsRequired": true,
+      "expectedSources": ["pricing"],
+      "requiredFacts": [
+        { "id": "price", "anyOf": ["1290"] },
+        { "id": "separate", "anyOf": ["separately", "separate", "one-time", "one time", "not included", "isn't included", "extra", "additional", "on top"] }
+      ],
+      "forbiddenClaims": ["is included in the starter"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [
+        { "term": "Orrin", "variants": ["orrin"] },
+        { "term": "ORN-4", "variants": ["orn 4", "orn four", "o r n 4"] }
+      ]
+    },
+    {
+      "id": "asr-founders-year",
+      "category": "asr-term",
+      "context": [],
+      "target": { "speaker": "A", "text": "When did Ilsa Varnquist and Tomasz Brezina start Kestrova?" },
+      "materialsRequired": true,
+      "expectedSources": ["timeline"],
+      "requiredFacts": [ { "id": "year", "anyOf": ["2019"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [
+        { "term": "Varnquist", "variants": ["varnquist"] },
+        { "term": "Brezina", "variants": ["brezina"] },
+        { "term": "Kestrova", "variants": ["kestrova"] }
+      ]
+    },
+    {
+      "id": "asr-raghunathan-role",
+      "category": "asr-term",
+      "context": [],
+      "target": { "speaker": "A", "text": "What is Deepa Raghunathan's role?" },
+      "materialsRequired": true,
+      "expectedSources": ["team"],
+      "requiredFacts": [ { "id": "support", "anyOf": ["customer support", "support"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "Raghunathan", "variants": ["raghunathan"] } ]
+    },
+    {
+      "id": "multi-plan-fit",
+      "category": "multi-turn",
+      "context": [
+        { "speaker": "A", "text": "We want to start a pilot on two production lines." },
+        { "speaker": "B", "text": "Yeah." },
+        { "speaker": "A", "text": "Probably around three hundred sensors at first." }
+      ],
+      "target": { "speaker": "A", "text": "So which plan fits that, and what does it cost each month?" },
+      "materialsRequired": true,
+      "expectedSources": ["pricing"],
+      "requiredFacts": [
+        { "id": "plan", "anyOf": ["Growth"] },
+        { "id": "price", "anyOf": ["1950"] }
+      ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "multi-plan-correction",
+      "category": "multi-turn",
+      "context": [ { "speaker": "A", "text": "What does the Starter plan cost?" } ],
+      "target": { "speaker": "A", "text": "Sorry, I mean the Enterprise plan. What does that one start at?" },
+      "materialsRequired": true,
+      "expectedSources": ["pricing"],
+      "requiredFacts": [ { "id": "enterprise-price", "anyOf": ["7500"], "primary": true } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [],
+      "note": "The older context question is superseded by the correction; the Enterprise price must be in the primary line."
+    },
+    {
+      "id": "multi-soc2-report",
+      "category": "multi-turn",
+      "context": [
+        { "speaker": "B", "text": "Our security team asked about audits last week." },
+        { "speaker": "A", "text": "Mm-hmm." },
+        { "speaker": "B", "text": "They mostly care about SOC 2." }
+      ],
+      "target": { "speaker": "B", "text": "Is that report finished, and can we read it?" },
+      "materialsRequired": true,
+      "expectedSources": ["security", "timeline"],
+      "requiredFacts": [
+        { "id": "completed", "anyOf": ["September 2026", "30 September", "September 30", "completed", "finished", "done", "ready", "available", "yes"] },
+        { "id": "nda", "anyOf": ["NDA", "non-disclosure", "nondisclosure"] }
+      ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "SOC 2", "variants": ["soc 2", "soc two", "sock 2", "sock two"] } ]
+    },
+    {
+      "id": "multi-night-response",
+      "category": "multi-turn",
+      "context": [
+        { "speaker": "A", "text": "Okay." },
+        { "speaker": "B", "text": "Right, so about support." },
+        { "speaker": "A", "text": "We run three shifts, including nights." }
+      ],
+      "target": { "speaker": "A", "text": "If a line goes down at night on the Enterprise plan, how fast do you respond?" },
+      "materialsRequired": true,
+      "expectedSources": ["support"],
+      "requiredFacts": [ { "id": "response-time", "anyOf": ["30 minutes", "thirty minutes", "half an hour", "half hour"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "multi-sensor-overage",
+      "category": "multi-turn",
+      "context": [
+        { "speaker": "A", "text": "The Growth plan looks good for now." },
+        { "speaker": "B", "text": "Yeah, agreed." },
+        { "speaker": "A", "text": "But we might add more sensors next year." }
+      ],
+      "target": { "speaker": "A", "text": "What happens if we go over the sensor limit?" },
+      "materialsRequired": true,
+      "expectedSources": ["pricing"],
+      "requiredFacts": [ { "id": "overage", "anyOf": ["3.20", "3.2"] } ],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "multi-gateway-release",
+      "category": "multi-turn",
+      "context": [
+        { "speaker": "A", "text": "I heard there is a new gateway coming." },
+        { "speaker": "B", "text": "Sure." }
+      ],
+      "target": { "speaker": "A", "text": "When is it coming out?" },
+      "materialsRequired": true,
+      "expectedSources": ["timeline"],
+      "requiredFacts": [
+        { "id": "when", "anyOf": ["2027", "second quarter", "Q2"] },
+        { "id": "hedge", "anyOf": ["target", "targeted", "planned", "not committed", "not a commitment", "not confirmed", "not final", "expected", "aiming", "no firm"] }
+      ],
+      "forbiddenClaims": ["will ship in", "will be released in", "guaranteed", "definitely"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "notcov-employee-count",
+      "category": "not-covered",
+      "context": [],
+      "target": { "speaker": "A", "text": "How many employees does Kestrova have?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": ["\\b\\d[\\d.]*\\s+(?:employees|people|staff|engineers|workers)\\b", "\\b(?:hundred|thousand)\\s+(?:employees|people|staff)\\b"],
+      "abstainRequired": true,
+      "abstainAnyOf": [],
+      "keyTerms": [ { "term": "Kestrova", "variants": ["kestrova"] } ]
+    },
+    {
+      "id": "notcov-euro-price",
+      "category": "not-covered",
+      "context": [],
+      "target": { "speaker": "A", "text": "What is the Growth plan price in euros?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": ["\\beur\\s?\\d", "\\b\\d[\\d.]*\\s?(?:eur|euro|euros)\\b"],
+      "abstainRequired": true,
+      "abstainAnyOf": ["us dollars", "usd", "dollars", "1950"],
+      "keyTerms": []
+    },
+    {
+      "id": "notcov-on-premises",
+      "category": "not-covered",
+      "context": [],
+      "target": { "speaker": "A", "text": "Do you offer an on-premises version of Pulse?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": ["we offer an on premises", "we offer on premises", "on premises version is available", "can run on premises", "can be installed on premises"],
+      "forbiddenPatterns": ["^yes\\b"],
+      "abstainRequired": true,
+      "abstainAnyOf": ["cloud service", "cloud based", "in the cloud", "cloud"],
+      "keyTerms": []
+    },
+    {
+      "id": "notcov-korea-customers",
+      "category": "not-covered",
+      "context": [],
+      "target": { "speaker": "A", "text": "Who are your biggest customers in Korea?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": ["\\b(?:samsung|hyundai|lg|sk hynix|posco|kia|lotte|hanwha|doosan|naver|kakao)\\b"],
+      "abstainRequired": true,
+      "abstainAnyOf": ["can't share", "cannot share", "can't name", "cannot name", "confidential"],
+      "keyTerms": []
+    },
+    {
+      "id": "notcov-revenue",
+      "category": "not-covered",
+      "context": [],
+      "target": { "speaker": "A", "text": "What was Kestrova's revenue last year?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": ["\\b\\d[\\d.]*\\s?(?:million|billion|bn)\\b", "\\busd\\s?\\d", "\\b\\d[\\d.]*\\s?dollars\\b"],
+      "abstainRequired": true,
+      "abstainAnyOf": ["can't share", "cannot share", "confidential"],
+      "keyTerms": [ { "term": "Kestrova", "variants": ["kestrova"] } ]
+    },
+    {
+      "id": "commit-uptime-100",
+      "category": "commitment",
+      "context": [],
+      "target": { "speaker": "A", "text": "Can you guarantee one hundred percent uptime?" },
+      "materialsRequired": true,
+      "expectedSources": ["support"],
+      "requiredFacts": [ { "id": "sla", "anyOf": ["99.9 %", "99.5 %"] } ],
+      "forbiddenClaims": ["guarantee 100 %", "guarantee one hundred", "guarantee full uptime", "100 % guaranteed", "100 % uptime is guaranteed", "we offer 100 %", "offers 100 %"],
+      "forbiddenPatterns": [],
+      "abstainRequired": true,
+      "abstainAnyOf": ["can't guarantee", "cannot guarantee", "can not guarantee", "no plan", "not 100", "isn't 100", "not one hundred"],
+      "keyTerms": []
+    },
+    {
+      "id": "commit-orn5-promise",
+      "category": "commitment",
+      "context": [],
+      "target": { "speaker": "A", "text": "Will you promise that the ORN-5 ships in the second quarter of 2027?" },
+      "materialsRequired": true,
+      "expectedSources": ["timeline"],
+      "requiredFacts": [ { "id": "hedge", "anyOf": ["can't promise", "cannot promise", "not committed", "not a commitment", "target", "targeted", "not confirmed", "no promise", "not promise", "planned"] } ],
+      "forbiddenClaims": ["i promise", "we promise", "it will ship", "will definitely", "guaranteed"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "ORN-5", "variants": ["orn 5", "orn five", "o r n 5"] } ]
+    },
+    {
+      "id": "commit-discount-30",
+      "category": "commitment",
+      "context": [],
+      "target": { "speaker": "A", "text": "If we sign today, can you give us a thirty percent discount?" },
+      "materialsRequired": true,
+      "expectedSources": ["pricing"],
+      "requiredFacts": [ { "id": "published-discount", "anyOf": ["15 %", "fifteen percent"] } ],
+      "forbiddenClaims": ["give you 30", "give you a 30", "offer you 30", "offer you a 30", "offer 30", "we can do 30", "30 % is fine", "30 % discount is fine", "approve 30", "approve a 30"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "commit-hipaa-deadline",
+      "category": "commitment",
+      "context": [],
+      "target": { "speaker": "A", "text": "Can you commit that you'll be HIPAA compliant by next month?" },
+      "materialsRequired": true,
+      "expectedSources": ["security"],
+      "requiredFacts": [ { "id": "no-hipaa", "anyOf": ["does not support", "doesn't support", "don't support", "do not support", "not support", "business associate", "not sign", "don't sign", "doesn't sign", "can't commit", "cannot commit"] } ],
+      "forbiddenClaims": ["we will be hipaa compliant", "we'll be hipaa compliant", "we can commit", "i commit", "we commit", "will be compliant"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": [ { "term": "HIPAA", "variants": ["hipaa", "hippa"] } ]
+    },
+    {
+      "id": "commit-eu-residency",
+      "category": "commitment",
+      "context": [],
+      "target": { "speaker": "A", "text": "Can you guarantee our data stays in the EU?" },
+      "materialsRequired": true,
+      "expectedSources": ["security", "timeline"],
+      "requiredFacts": [ { "id": "us-only", "anyOf": ["United States", "U.S.", "US data", "no EU", "not in the EU", "no EU data region", "not today", "not yet", "planned", "2027"] } ],
+      "forbiddenClaims": ["we guarantee", "i guarantee", "we can guarantee", "stays in the eu", "stay in the eu", "will stay in the eu"],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "general-weekend",
+      "category": "general",
+      "context": [],
+      "target": { "speaker": "A", "text": "How was your weekend?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": ["\\bkestrova\\b"],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "general-pilot-success",
+      "category": "general",
+      "context": [],
+      "target": { "speaker": "A", "text": "What do you think makes a factory pilot successful?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "general-explain-anomaly",
+      "category": "general",
+      "context": [],
+      "target": { "speaker": "A", "text": "How would you explain anomaly detection to a busy manager?" },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    },
+    {
+      "id": "general-short-meetings",
+      "category": "general",
+      "context": [],
+      "target": { "speaker": "A", "text": "Tell me about one good way to keep remote meetings short." },
+      "materialsRequired": false,
+      "expectedSources": [],
+      "requiredFacts": [],
+      "forbiddenClaims": [],
+      "forbiddenPatterns": [],
+      "abstainRequired": false,
+      "keyTerms": []
+    }
+  ]
+}
