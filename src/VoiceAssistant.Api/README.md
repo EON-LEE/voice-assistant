@@ -67,6 +67,7 @@ Each switch changes one behavior so it can be A/B tested on staging with the qua
 | `Azure__ChatAuxiliaryReasoningEffort` | unset \| `minimal` \| `low` \| `medium` (unset) | The same, for the turn classifier and the Korean translation requests. |
 | `Azure__ChatApiVersion` | unset \| a dated version such as `2025-04-01-preview` (unset) | The `api-version` of the live chat requests (answer, classifier, translation). Unset keeps the pinned SDK's default (`2024-10-21`). Set it only if the deployment rejects `reasoning_effort` under the default. |
 | `Session__EarlyStartAtFinal` | `true` \| `false` (`false`) | With `replySettleMs` > 0, a final that makes the gathered speech a complete question or request (the rule that picks the 300 ms settle) starts its reply at once instead of after the settle. |
+| `Speech__MaterialPhraseHints` | `true` \| `false` (`false`) | Adds phrase hints from the caller's own materials to the live speech recognizer's phrase list, after the client's phrases. |
 
 How the reasoning switches work:
 
@@ -80,6 +81,15 @@ How early start works (`Session__EarlyStartAtFinal`):
 - If the target changed, the whole gathered speech is answered and replaces the early reply, exactly as a superseding request does today (`response.cancelled`, then `response.started`). A second complete question in the same window replaces it at its own final.
 - An early start happens only when no reply is active, or to replace this window's own early reply. A reply still answering an earlier window keeps holding and queueing the next question as before.
 - `voiceassistant.reply.settle_wait` shows the effect: about 0 ms for early replies.
+
+How material phrase hints work (`Speech__MaterialPhraseHints`):
+
+- **Source.** Hints come only from the caller's own materials, read through the same ACL filter as retrieval: the document titles plus up to 1,000 chunks (one Search page). They never come from transcripts.
+- **Extraction.** Hints are document titles (without the file extension), acronyms, product codes such as `ORN-4`, CamelCase names, and capitalized names of two or more words that occur at least twice. An all-capital word that also appears in lower case is treated as a shouted heading, not an acronym. Common heading words are dropped.
+- **Ranking and caps.** Titles come first, then terms by frequency. At most 100 hints of at most 50 characters are kept. They are merged after the client's `phrases`, case-insensitively without duplicates.
+- **Scope.** Hints go only to the recognizer's phrase list (including in-process recognizer restarts). Prompts and Korean translation keep the client's phrases. Practice (`transcribeOnly`) sessions get no hints.
+- **Cache.** Hints are cached per user for up to 30 minutes, and dropped when that user uploads or deletes a document. Issuing a session ticket starts building them in the background. A session start waits at most 1 s for hints that are not ready, then uses the client's phrases only. A failed build yields no hints and is retried by the next session.
+- **Logs.** Only counts and timings are logged (`Material phrase hints built: N phrases ...`, `Speech phrase list: N from the client and M from materials.`), never the phrases.
 
 Chat requests explicitly use `max_completion_tokens`, not legacy `max_tokens`, and omit custom temperature. The pinned Azure.AI.OpenAI2.1 requires its documented `SetNewMaxCompletionTokensPropertyEnabled` extension to prevent rewriting the token property. Options use the public SDK model reader to initialize the property bag required by that extension; an offline transport test verifies the actual request JSON. A bounded live GPT-5 diagnostic reproduced HTTP400 `unsupported_parameter` for `max_tokens` before this correction and streamed output afterward.
 

@@ -89,6 +89,10 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private int settleNumber;
     private int overflow;
     private SessionOptions options = SessionOptions.Legacy;
+    /// <summary>The recognizer's options: the client's, plus material phrase hints when that experiment is on.</summary>
+    private SessionOptions speechOptions = SessionOptions.Legacy;
+    /// <summary>How long a session start waits for material phrase hints that are not cached yet.</summary>
+    internal static readonly TimeSpan PhraseHintWait = TimeSpan.FromSeconds(1);
     private PartialRetrieval? prefetch;
     private string responseRoute = "knowledge";
     private bool retrievalPrefetched;
@@ -175,7 +179,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             using (var json = JsonDocument.Parse(start.Bytes))
                 options = json.RootElement.TryGetProperty("options", out var input) ? SessionOptions.Parse(input) : SessionOptions.Legacy;
             if (!options.TranscribeOnly) prefetch = new(provider, objectId, options, lifetime.Token);
-            speech = await StartSpeechAsync(options, new SpeechAttempt(delivered: true), lifetime, startup.Token);
+            speechOptions = await SpeechOptionsAsync(startup.Token);
+            speech = await StartSpeechAsync(speechOptions, new SpeechAttempt(delivered: true), lifetime, startup.Token);
             // The client learns which optional features this socket has: pushed Korean lines, and settings changes while running.
             var ready = new Dictionary<string, object> { ["type"] = "session.ready", ["protocolVersion"] = 1 };
             if (options.ReplyKorean) ready["replyKorean"] = true;
@@ -307,7 +312,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         // An error of a recognizer that was already replaced says nothing about the current one.
                         if (message.Generation != 0 && message.Generation != Volatile.Read(ref speechNumber)) break;
                         if (speech is null || RestartableSpeechFailure(fatal) is not { } failedWith) throw fatal;
-                        speechRestart = RestartSpeechAsync(speech, failedWith, options, lifetime);
+                        speechRestart = RestartSpeechAsync(speech, failedWith, speechOptions, lifetime);
                         speech = null;
                         break;
                     case "speech.restarted":
@@ -316,7 +321,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         // A failure the new recognizer reported before this hand-over is handled like any other.
                         if (restarted.Attempt.HandOver() is not { } early) break;
                         if (RestartableSpeechFailure(early) is not { } earlyCode) throw early;
-                        speechRestart = RestartSpeechAsync(speech, earlyCode, options, lifetime);
+                        speechRestart = RestartSpeechAsync(speech, earlyCode, speechOptions, lifetime);
                         speech = null;
                         break;
                     case "korean":
@@ -457,6 +462,28 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             if (speech is not null) await DisposeSpeechAsync(speech);
             MeetingMetrics.SessionEnded(endReason);
         }
+    }
+
+    /// <summary>
+    /// The recognizer's options: the client's, plus phrase hints from the caller's own materials when that experiment is on
+    /// (live sessions only, not practice). The hints reach only the speech phrase list, never prompts or translation, and
+    /// only their count is logged.
+    /// </summary>
+    private async Task<SessionOptions> SpeechOptionsAsync(CancellationToken cancellation)
+    {
+        if (features.PhraseHints is not { } hints || options.TranscribeOnly) return options;
+        IReadOnlyList<string> materials;
+        try { materials = await hints.GetAsync(objectId).WaitAsync(PhraseHintWait, cancellation); }
+        catch (TimeoutException)
+        {
+            materials = [];
+            logger.LogInformation("Material phrase hints were not ready within {WaitMs} ms; speech starts with the client phrases.",
+                (long)PhraseHintWait.TotalMilliseconds);
+        }
+        var merged = Knowledge.MaterialPhrases.Merge(options.Phrases, materials);
+        logger.LogInformation("Speech phrase list: {ClientPhrases} from the client and {MaterialPhrases} from materials.",
+            options.Phrases.Count, merged.Count - options.Phrases.Count);
+        return options with { Phrases = merged };
     }
 
     /// <summary>Starts a recognizer whose errors carry its number, so a late error of a replaced recognizer can be ignored.</summary>

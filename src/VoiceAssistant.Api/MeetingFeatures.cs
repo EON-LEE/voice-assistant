@@ -10,4 +10,10 @@ public sealed record MeetingFeatures
     /// after the settle window. The settle still runs and replaces that reply only when later speech changed its target.
     /// </summary>
     public bool EarlyStartAtFinal { get; init; }
+
+    /// <summary>
+    /// Speech phrase hints from the caller's own materials, merged after the client's phrases into the recognizer's phrase list
+    /// (not into prompts or translation). Null when switched off.
+    /// </summary>
+    public Knowledge.MaterialPhraseHints? PhraseHints { get; init; }
 }
