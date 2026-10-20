@@ -18,6 +18,7 @@
     "../../src/VoiceAssistant.Web/src/audio.worklet.ts",
     "../../src/VoiceAssistant.Web/src/session.ts",
     "../../src/VoiceAssistant.Web/src/transport.ts",
-    "../../src/VoiceAssistant.Web/src/capture.ts"
+    "../../src/VoiceAssistant.Web/src/capture.ts",
+    "../../src/VoiceAssistant.Web/src/host-audio.ts"
   ]
 }
