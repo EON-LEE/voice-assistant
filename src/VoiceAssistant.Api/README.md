@@ -61,6 +61,8 @@ Missing mandatory Azure configuration prevents startup. Search is intentionally 
 
 Each switch changes one behavior so it can be A/B tested on staging with the quality evaluation, one variable at a time. All are **off or unset by default**, which keeps the behavior described elsewhere in this README. An invalid value prevents startup instead of being ignored. At startup the API logs one content-free line with the values in effect (`Live reply switches: ...`).
 
+The deployment template (`infra/main.bicep`) turns on the two switches that passed that evaluation: `Session__EarlyStartAtFinal` (settle wait about 350 → 70 ms) and `Speech__MaterialPhraseHints` (key-term recognition 0.48 → 0.67 on the synthetic suite, at the same latency and answer quality). `minimal` reasoning effort, also with api-version `2025-04-01-preview`, gave no first-token gain and is not used.
+
 | Key (environment variable) | Values (default) | Effect |
 | --- | --- | --- |
 | `Azure__ChatReasoningEffort` | unset \| `minimal` \| `low` \| `medium` (unset) | Sends `reasoning_effort` with the live answer request. Unset sends no `reasoning_effort` (the deployment default). |
