@@ -29,7 +29,10 @@ export interface LiveControllerDeps {
   createTransport(): Transport;
   /** Read at every connection, so each new session starts with the latest settings. */
   options(): SessionOptions;
-  /** Every server event except `error`, which the controller turns into a notice, reconnect, rollover or stop. */
+  /**
+   * Every server event except `error`, which the controller turns into a notice, reconnect, rollover or stop. A
+   * `response_filtered` notice is passed on too, so the page can remove the reply the content filter stopped.
+   */
   onEvent(event: ServerEvent): void;
   /** The server connection ended or was replaced; replies in flight end with it. */
   onDisconnect(reason: Classified): void;
@@ -411,7 +414,10 @@ export class LiveController {
       case "fatal": this.halt(reason); return;
       // The server closes the socket next; that close reconnects with this reason.
       case "transient": this.closing = reason; return;
-      case "notice": this.notice = reason; this.deps.onChange(); return;
+      case "notice":
+        this.notice = reason;
+        if (reason.code === "response_filtered") this.deps.onEvent(event);
+        this.deps.onChange(); return;
     }
   }
 

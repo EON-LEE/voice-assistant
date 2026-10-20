@@ -255,6 +255,79 @@ test("Live: a reply cancelled after its primary line keeps the line readable, ma
   assert.equal(state.display?.id, "r", "a draft without a finished line never replaces it");
 });
 
+const filtered = { type: "error", code: "response_filtered", message: "The content filter stopped this response, so it was withdrawn.", retryable: true };
+
+test("Live: a primary line the content filter stops leaves the screen and is never kept as interrupted", () => {
+  const state = new LiveState();
+  state.apply(final("one", "Old question?"));
+  state.apply({ type: "response.started", turnId: "one", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "Old answer.", sources: [] });
+  state.apply(final("two", "Status?"));
+  state.apply({ type: "response.started", turnId: "two", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Withheld line.", primaryDone: true });
+  assert.equal(state.display?.id, "r2");
+  state.apply(filtered);
+  assert.equal(state.display?.id, undefined, "the stopped line is gone, and the answer it replaced does not come back as current");
+  assert.equal(state.generating, false);
+  state.apply({ type: "response.cancelled", turnId: "two", responseId: "r2" });
+  assert.equal(state.display?.id, undefined, "its cancellation is not shown as an interrupted line");
+  state.apply(final("three", "Next?"));
+  state.apply({ type: "response.started", turnId: "three", responseId: "r3" });
+  state.apply({ type: "response.delta", turnId: "three", responseId: "r3", text: "Next answer.", primaryDone: true });
+  assert.equal(state.display?.text, "Next answer.", "listening goes on");
+  state.apply({ type: "response.cancelled", turnId: "three", responseId: "r3" });
+  assert.equal(state.display?.text, "Next answer.", "a normal cancellation still keeps the finished line");
+  assert.equal(state.display?.interrupted, true);
+});
+
+test("Live: a held reply the content filter stops is withdrawn; an older held reply stays", () => {
+  const state = new LiveState();
+  state.apply(final("t", "Status?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "Withheld line.", primaryDone: true });
+  state.holdDisplay();
+  assert.equal(state.readingHeld, true);
+  state.apply(filtered);
+  state.apply({ type: "response.cancelled", turnId: "t", responseId: "r" });
+  assert.equal(state.readingHeld, false, "the hold of the stopped reply ends with it");
+  assert.equal(state.display, null);
+
+  const older = new LiveState();
+  older.apply(final("one", "First?"));
+  older.apply({ type: "response.started", turnId: "one", responseId: "r1" });
+  older.apply({ type: "response.completed", turnId: "one", responseId: "r1", text: "First answer.", sources: [] });
+  older.holdDisplay();
+  older.apply(final("two", "Second?"));
+  older.apply({ type: "response.started", turnId: "two", responseId: "r2" });
+  older.apply({ type: "response.delta", turnId: "two", responseId: "r2", text: "Withheld line.", primaryDone: true });
+  assert.equal(older.hasNewerReply, true);
+  older.apply(filtered);
+  older.apply({ type: "response.cancelled", turnId: "two", responseId: "r2" });
+  assert.equal(older.display?.text, "First answer.", "a different, older held reply is untouched");
+  assert.equal(older.readingHeld, true);
+  assert.equal(older.hasNewerReply, false, "the stopped reply is no newer reply waiting behind the hold");
+  older.releaseDisplay();
+  assert.equal(older.display, null);
+});
+
+test("Live: a stopped reply this page had already ended (a pause) is still removed by its cancellation", () => {
+  const state = new LiveState();
+  state.apply(final("t", "Status?"));
+  state.apply({ type: "response.started", turnId: "t", responseId: "r" });
+  state.apply({ type: "response.delta", turnId: "t", responseId: "r", text: "Withheld line.", primaryDone: true });
+  state.pause(true);
+  assert.equal(state.display?.interrupted, true, "a pause keeps the finished line, interrupted");
+  state.apply(filtered);
+  state.apply({ type: "response.cancelled", turnId: "t", responseId: "r" });
+  assert.equal(state.display?.id, undefined);
+  state.pause(false);
+  state.apply(final("u", "Next?"));
+  state.apply({ type: "response.started", turnId: "u", responseId: "r2" });
+  state.apply({ type: "response.delta", turnId: "u", responseId: "r2", text: "Next answer.", primaryDone: true });
+  state.apply({ type: "response.cancelled", turnId: "u", responseId: "r2" });
+  assert.equal(state.display?.interrupted, true, "the withdrawal ended with its own cancellation");
+});
+
 test("Live: continuing after a stop clears an old pause and an unfinished reply but keeps the conversation", () => {
   const state = new LiveState();
   state.apply(final("one", "First?"));

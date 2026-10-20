@@ -57,6 +57,8 @@ export class LiveState {
   private suppressAll = false;
   private heldReply: LiveReply | null = null;
   private shownReply: LiveReply | null = null;
+  /** A `response_filtered` error arrived: the `response.cancelled` that follows withdraws its reply, wherever it is shown. */
+  private withdrawing = false;
 
   /** The newest readable reply: a finished primary line or a completed reply. */
   get shown(): LiveReply | null { return this.shownReply; }
@@ -71,7 +73,7 @@ export class LiveState {
     this.turns = []; this.current = null; this.lastCompleted = null; this.error = "";
     this.seen.clear(); this.order = []; this.latestTurn = undefined;
     this.suppressedTurn = undefined; this.suppressAll = false;
-    this.heldReply = null; this.shownReply = null;
+    this.heldReply = null; this.shownReply = null; this.withdrawing = false;
   }
   holdDisplay(): void {
     const display = this.display;
@@ -90,6 +92,7 @@ export class LiveState {
   clearError(): void { this.error = ""; }
   /** The connection producing the current reply is gone: a shown primary line stays (interrupted), a draft is dropped. */
   endReply(): void {
+    this.withdrawing = false;
     if (this.current && !this.current.complete) this.retire();
   }
   /**
@@ -115,11 +118,22 @@ export class LiveState {
     // A held reply keeps its text on screen and only gains what arrives later (alternative, grounding, sources).
     if (this.heldReply?.id === reply.id) this.heldReply = reply;
   }
+  /** The content filter stopped this reply: none of its text stays, neither shown, held nor as an interrupted line. */
+  private withdraw(id: string): void {
+    if (this.current?.id === id) this.current = null;
+    if (this.shownReply?.id === id) this.shownReply = null;
+    if (this.heldReply?.id === id) this.heldReply = null;
+  }
 
   apply(e: ServerEvent): void {
     switch (e.type) {
       case "error":
         this.error = `${e.code}: ${e.message}${e.retryable ? " (You can retry.)" : ""}`;
+        // It concerns the reply being produced, which never completed; its response.cancelled follows.
+        if (e.code === "response_filtered") {
+          this.withdrawing = true;
+          if (this.current && !this.current.complete) this.withdraw(this.current.id);
+        }
         return;
       case "transcript.partial":
       case "transcript.final": {
@@ -135,6 +149,8 @@ export class LiveState {
         return;
       }
       case "response.started":
+        // The withdrawn reply's response.cancelled always comes before a new reply; without it nothing is left to withdraw.
+        this.withdrawing = false;
         if (this.suppressAll || this.suppressedTurn === e.turnId || this.seen.has(e.responseId!)) return;
         const target = this.turns.find(turn => turn.id === e.turnId);
         if (!target) return;
@@ -147,6 +163,8 @@ export class LiveState {
       case "response.delta":
       case "response.completed":
       case "response.cancelled": {
+        // Matched by id, even when this page had already stopped following the reply (a pause kept its line, interrupted).
+        if (e.type === "response.cancelled" && this.withdrawing) { this.withdrawing = false; this.withdraw(e.responseId!); return; }
         const current = this.current;
         if (!current || current.complete || this.suppressAll || this.suppressedTurn === e.turnId ||
           e.responseId !== current.id || e.turnId !== current.turnId) return;

@@ -11,8 +11,10 @@ export class ReplyState {
   private seen = new Set<string>();
   private suppressed: string | undefined;
   private paused = false;
+  /** A `response_filtered` error arrived: the `response.cancelled` that follows withdraws its reply. */
+  private withdrawing = false;
   get latest(): string | undefined { return this.turns.at(-1)?.id; }
-  reset(): void { this.turns = []; this.current = null; this.seen.clear(); this.suppressed = undefined; this.paused = false; this.error = ""; }
+  reset(): void { this.turns = []; this.current = null; this.seen.clear(); this.suppressed = undefined; this.paused = false; this.error = ""; this.withdrawing = false; }
   pin(): void { if (this.current) this.pinned = structuredClone(this.current); }
   cancel(): void { this.suppressed = this.latest; this.current = null; }
   request(): void { this.suppressed = undefined; this.error = ""; }
@@ -24,7 +26,18 @@ export class ReplyState {
     } else this.suppressed = undefined;
   }
   apply(e: ServerEvent): void {
-    if (e.type === "error") { this.error = `${e.code}: ${e.message}${e.retryable ? " You can retry." : ""}`; return; }
+    if (e.type === "error") {
+      this.error = `${e.code}: ${e.message}${e.retryable ? " You can retry." : ""}`;
+      // The content filter stopped the reply being produced: its text leaves the screen, a pinned copy included.
+      if (e.code === "response_filtered") {
+        this.withdrawing = true;
+        if (this.current && !this.current.complete) this.withdraw(this.current.id);
+      }
+      return;
+    }
+    // Matched by id, even when this page had already stopped following the reply.
+    if (e.type === "response.cancelled" && this.withdrawing) { this.withdrawing = false; this.withdraw(e.responseId!); return; }
+    if (e.type === "response.started") this.withdrawing = false;
     if (e.type === "transcript.partial" || e.type === "transcript.final") {
       const old = this.turns.find(t => t.id === e.turnId);
       if (old && (old.final || e.revision! < old.revision || e.revision === old.revision && e.type === "transcript.partial")) return;
@@ -46,6 +59,10 @@ export class ReplyState {
         responseRoute: e.responseRoute, retrievalPrefetched: e.retrievalPrefetched };
       if (e.type === "response.cancelled") this.current = null;
     }
+  }
+  private withdraw(id: string): void {
+    if (this.current?.id === id) this.current = null;
+    if (this.pinned?.id === id) this.pinned = null;
   }
 }
 function bounded(text: string): string {
