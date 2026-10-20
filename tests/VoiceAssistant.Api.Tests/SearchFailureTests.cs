@@ -259,6 +259,8 @@ internal sealed class FaultTransport : HttpMessageHandler
     private int searchCalls;
     private int embeddingCalls;
     public HttpStatusCode ChatStatus { get; init; } = HttpStatusCode.OK;
+    /// <summary>Streamed answer chunks; the newline starts the alternative line.</summary>
+    public string[] ChatChunks { get; init; } = ["A general reply for now.", "\nThe exact details still need to be confirmed."];
     public ConcurrentQueue<string> ChatBodies { get; } = new();
     public int SearchCalls => Volatile.Read(ref searchCalls);
     public int EmbeddingCalls => Volatile.Read(ref embeddingCalls);
@@ -341,8 +343,7 @@ internal sealed class FaultTransport : HttpMessageHandler
         if (ChatStatus != HttpStatusCode.OK) return Json(Error(ChatStatus), ChatStatus);
         if (!body.Contains("\"stream\":true", StringComparison.Ordinal))
             return Json("""{"id":"test","object":"chat.completion","created":1,"model":"test","choices":[{"index":0,"message":{"role":"assistant","content":"LISTEN"},"finish_reason":"stop"}]}""");
-        var chunks = new[] { "A general reply for now.", "\nThe exact details still need to be confirmed." };
-        var sse = string.Concat(chunks.Select(text => "data: " + JsonSerializer.Serialize(new
+        var sse = string.Concat(ChatChunks.Select(text => "data: " + JsonSerializer.Serialize(new
         {
             id = "test", @object = "chat.completion.chunk", created = 1, model = "test",
             choices = new[] { new { index = 0, delta = new { content = text }, finish_reason = (string?)null } }

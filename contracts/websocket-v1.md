@@ -108,7 +108,7 @@ For a clear individual/group introduction request with any confirmed profile fie
 | `session.updated` | `responseMode`, `replyKorean`: the effective values after a `session.update`. Sent in order with the other events, so it is known which reply started before or after it |
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
 | `response.started` | `responseId: string`, `turnId: string` |
-| `response.delta` | `responseId`, `turnId`, `text: string` (append) |
+| `response.delta` | `responseId`, `turnId`, `text: string` (append); `primaryDone: true` once per streamed reply when the primary line is complete (see below) |
 | `response.completed` | `responseId`, `turnId`, `text: string` (complete replacement), `suggestions: string[]` (1–2 English replies, primary first), `sources: [{title,url,updatedAt}]`, `grounding`, `responseRoute: transcript\|profile\|knowledge`, `retrievalPrefetched: boolean` |
 | `response.korean` | `responseId`, `turnId`, `index: 0\|1` (0 = primary reply, 1 = alternative), and either `korean: string` (1–400 characters, mainly Hangul) or `failed: true` with no `korean` property. Sent only to clients that opted in with `replyKorean` |
 | `response.cancelled` | `responseId`, `turnId` |
@@ -133,6 +133,17 @@ Korean translations are client enrichment, not part of this English API field; a
 receives them as separate `response.korean` events (below). Neither primary nor
 alternative is inserted into conversation history: only actual finalized recognition segments are context.
 No suggestion implies the participant spoke it or committed to an action.
+
+`primaryDone: true` on `response.delta` marks that the primary line (the first suggestion) is complete, so a client can show
+it before `response.completed`. It is sent exactly once per streamed reply: on the delta whose `text` ends the primary line,
+or, when the end is only known after the last primary text was sent (for example a single-line reply, which ends with the
+stream), on one extra delta with empty `text`. Empty `text` occurs only together with `primaryDone: true`, no further delta
+of that reply follows it, and deltas without the marker omit the property. The concatenated `text` of a reply's deltas equals
+`response.completed.text` and `suggestions[0]`; the server does not post-process the primary line. Profile replies carry the
+marker on their single delta. One exception: when a reply that was asked for without documents after a Search failure fails
+after it started streaming, the deterministic completion above replaces it, so clients must always replace the streamed text
+with `response.completed.text` when it arrives. `response.completed` timing is unchanged, and clients that ignore the
+property keep working.
 
 `response.korean` (only for clients that set `replyKorean`) delivers exactly one Korean line per suggestion line of every
 completed reply: `index` 0 for the primary, 1 for the alternative. Each is either a translation or `failed:true` when none could

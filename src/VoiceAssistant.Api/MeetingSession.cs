@@ -91,7 +91,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private readonly List<Task> retired = [];
     private readonly List<Task> translations = [];
     private KoreanScope? koreanScope;
-    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false);
+    private sealed record SessionEvent(string Kind, object? Value = null, int Generation = 0, long Timestamp = 0, bool ModelResponse = false,
+        bool PrimaryDone = false);
     private sealed record AudioMessage(byte[] Bytes);
     private sealed record WireMessage(byte[] Bytes, WebSocketMessageType Type);
     private sealed record Completion(string Text, string[] Suggestions, Source[] Sources, string Grounding, string ResponseRoute, bool RetrievalPrefetched, bool RespondNow = false);
@@ -244,8 +245,12 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         await SendAsync(koreanMessage, lifetime.Token);
                         break;
                     case "delta" when message.Generation == generationNumber && responseActive:
-                        await SendAsync(new { type = "response.delta", responseId, turnId = responseTurn, text = (string)message.Value! }, lifetime.Token);
-                        if (message.ModelResponse) responseMeasurement?.FirstDeltaSent();
+                        var deltaText = (string)message.Value!;
+                        // primaryDone marks, once per response, that the first line is complete; only that delta may be empty.
+                        await SendAsync(message.PrimaryDone
+                            ? new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText, primaryDone = true }
+                            : (object)new { type = "response.delta", responseId, turnId = responseTurn, text = deltaText }, lifetime.Token);
+                        if (message.ModelResponse && deltaText.Length > 0) responseMeasurement?.FirstDeltaSent();
                         break;
                     case "complete" when message.Generation == generationNumber && responseActive:
                         var completion = (Completion)message.Value!;
@@ -589,7 +594,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 cancellation.ThrowIfCancellationRequested();
                 var introduction = ProfileIntroduction.Compose(settings);
                 StartKorean(scope, 0, introduction, new TranslationContext(settings.Topic, settings.Phrases), lifetime);
-                await events.Writer.WriteAsync(new("delta", introduction, number), cancellation);
+                await events.Writer.WriteAsync(new("delta", introduction, number, PrimaryDone: true), cancellation);
                 await events.Writer.WriteAsync(new("complete",
                     new Completion(introduction, [introduction], [], "disabled", "profile", false), number), cancellation);
                 return;
@@ -621,6 +626,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 : new TranslationContext(settings.Topic, KoreanTranslation.Terms(settings, grounding));
             var text = new StringBuilder();
             string? alternative = null;
+            var primaryDoneSent = false;
             await foreach (var update in provider.AnswerWithSuggestionsAsync(history, grounding, settings, route, cancellation).WithCancellation(cancellation))
             {
                 cancellation.ThrowIfCancellationRequested();
@@ -628,13 +634,19 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 if (text.Length + delta.Length > 8000) throw new ProviderException("response_limit", "Response exceeded its size limit.");
                 text.Append(delta);
                 if (update.Alternative is not null) alternative = update.Alternative;
-                if (delta.Length > 0)
-                    await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse), cancellation);
+                // The delta that ends the first line carries primaryDone; an end found after that text was sent is an empty delta.
+                var primaryDone = update.PrimaryDone && !primaryDoneSent && text.Length > 0;
+                primaryDoneSent |= primaryDone;
+                if (delta.Length > 0 || primaryDone)
+                    await events.Writer.WriteAsync(new("delta", delta, number, ModelResponse: modelResponse, PrimaryDone: primaryDone), cancellation);
                 // The first line is final as soon as the second begins, so its translation overlaps the alternative.
                 if (update.PrimaryDone) StartKorean(scope, 0, text.ToString().Trim(), translation, lifetime);
             }
             cancellation.ThrowIfCancellationRequested();
             if (text.Length == 0) throw new ProviderException("empty_response", "The model returned no text. Please retry.");
+            // A single-line reply is known to be complete only when the stream ends.
+            if (!primaryDoneSent)
+                await events.Writer.WriteAsync(new("delta", "", number, ModelResponse: modelResponse, PrimaryDone: true), cancellation);
             var suggestions = ReplySuggestions.Complete(text.ToString(), alternative);
             for (var index = 0; index < suggestions.Length; index++)
                 StartKorean(scope, index, suggestions[index].Trim(), translation, lifetime);
