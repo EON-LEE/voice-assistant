@@ -337,9 +337,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'Azure__SearchEndpoint', value: 'https://${search.name}.search.windows.net' }
           { name: 'Azure__SearchIndex', value: searchIndexName }
           { name: 'Azure__SearchSemanticConfiguration', value: 'meeting-semantic' }
-          { name: 'Azure__SearchMinimumRerankerScore', value: '2.0' }
+          { name: 'Azure__SearchMinimumRerankerScore', value: '1.5' }
           { name: 'Session__MaxMinutes', value: string(sessionMaxMinutes) }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: enableDiagnostics ? insights!.properties.ConnectionString : '' }
+          { name: 'OTEL_SERVICE_NAME', value: appName }
           { name: 'Logging__LogLevel__Microsoft.AspNetCore', value: 'Warning' }
           { name: 'Logging__LogLevel__Azure', value: 'Warning' }
         ]

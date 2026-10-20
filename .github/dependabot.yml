@@ -9,6 +9,12 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # One PR for the test toolchain instead of one per test project and package.
+      test-frameworks:
+        patterns:
+          - "Microsoft.NET.Test.Sdk"
+          - "xunit*"
+          - "coverlet*"
       nuget-minor-and-patch:
         update-types: [minor, patch]
 
@@ -30,6 +36,11 @@ updates:
       - "/infra/private-ingestion"
     schedule:
       interval: weekly
+    # Base images stay on the runtime line the projects target (.NET 8 LTS, Node LTS).
+    # Moving to a new major runtime is a deliberate migration, not an automatic bump.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"

@@ -67,7 +67,17 @@ Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosni
 
 The optional shared demo login (`DemoLogin__Username`, `DemoLogin__Password`, `DemoLogin__ObjectId`, `DemoLogin__SigningKey`) issues bearer tokens for one fixed identity that are valid for `DemoLogin__TokenDays` days: default 7, allowed 1..30; any other value prevents startup. Such a token cannot be revoked except by rotating the signing key.
 
-`GET /health/live` indicates the process is running. `GET /health/ready` indicates validated configuration and a running HTTP pipeline, not external Azure dependency availability; neither endpoint performs billable calls or exposes credentials. Operational monitoring must separately check resource/RBAC availability.
+`GET /health/live` indicates only that the process is running; it never depends on Azure. `GET /health/ready` returns 200 `{"status":"ready"}` once a startup warm-up has completed, and 503 with `{"status":"warming"}` until then. Fake mode is ready at once. In Azure mode, the warm-up runs in the background:
+
+- It acquires the Cognitive Services token (Speech and Azure OpenAI share that audience) through the runtime credential, so the first session finds it cached.
+- It then opens a TLS connection to the Azure OpenAI endpoint through the client and shared transport the reply path uses. It also checks that the Speech endpoint (or the regional speech-to-text host) is reachable. The Speech SDK opens its own connection per session, so for Speech only DNS and TLS reachability are checked.
+- Readiness requires only those stages. Search is best-effort: a reply without it still works (it reports `grounding_unavailable`), so the Search token and connection are warmed beside them and readiness never waits for them. A failed Search attempt is logged (stage, exception type, HTTP status) and counted in `voiceassistant.warmup.failures`, then retried in the background with a 1-2-4-...-60 s backoff until it succeeds once.
+- Any HTTP status counts as reached. The requests are an endpoint-root GET and a Search document count: no model, speech or semantic-ranking call, and nothing billable.
+- Each stage is bounded to 10 s. A failed required attempt is retried with a 1-2-4-8-15 s backoff.
+- After 60 s of failures, the service logs one content-free error line (stage, exception type, HTTP status) and the endpoint reports `{"status":"not_ready"}`. Retries continue, and the replica becomes ready as soon as an attempt succeeds.
+- Once ready, the replica stays ready: a later transient token or network failure never removes it from rotation. Such failures surface on the reply path instead.
+
+Neither endpoint exposes credentials. Operational monitoring must still check resource and RBAC availability separately, because a 401/403 answer also counts as reached.
 
 ## Semantic relevance and no-match responses
 
@@ -137,6 +147,8 @@ experience to the user. Prompt-contract tests alone are not proof of model
 compliance; actual conversation acceptance runs also inspect this behavior.
 
 Audio exists only in bounded transient buffers and the live Speech SDK push stream; transcript/answer context is memory-only and cleared when the session ends. No application transcript/audio/query/body/credential logging or persistence is configured. Azure services still process submitted content under their service data policies: configure retention, network access and diagnostics to organizational requirements. Disable full request URL/query capture in Azure ingress, access logs, telemetry and reverse proxies because the upgrade URL carries a short-lived ticket.
+
+Metric export (optional, see [Content-free timing metrics](#content-free-timing-metrics)) sends only this app's content-free meter to the configured Application Insights resource. The exporter's own usage telemetry, Statsbeat, is switched off. Statsbeat would otherwise send exporter usage data to Microsoft-owned Application Insights resources and probe the instance metadata endpoint. When export is enabled and `APPLICATIONINSIGHTS_STATSBEAT_DISABLED` is unset, the app sets it to `true` before the exporter starts; an explicit value from the operator is kept.
 
 Errors are explicit safe messages; raw SDK exception details are suppressed. Startup, idle, response, write and session deadlines bound resource usage; 100 total sessions and one per identity, bounded queues, message/audio rates and bounded history prevent unbounded accumulation. A slow peer or overloaded recognizer is disconnected rather than silently dropping transcript/audio. Continuous partial/final speech does not abort an active reply: the latest final utterance is queued (intermediate queued utterances still enter recognized history) and starts after the active reply completes or fails. Manual regeneration/cancellation and session stop still invalidate obsolete generation immediately. Clients retain response/turn ownership and label replies to earlier questions accordingly.
 
@@ -272,17 +284,37 @@ For mixed introduction/history questions, confirmed name/role/project fields sup
 
 The answer prompt treats chronological STT segments as possible continuations of a preceding complete question. A short audience qualifier must not by itself trigger a clarification when a general benefits/mechanism question is already clear. This does not authorize invented private outcomes, customer commitments or personal history, nor revival of a superseded question. Four SDK prompt-contract cases cover: incremental-synchronization benefits + `For us.`, database-index mechanism + `For others.`, an unknown customer delivery commitment + `For us.`, and unknown personal history + `In your previous project.` These deterministic tests verify context ordering and policy transmission, not actual model answer quality. Routing and exact prefetch matching are unchanged; the three observed real comparison clips had zero prefetch hits, so no real prefetch latency benefit is claimed from them.
 
-The `VoiceAssistant.Api` .NET `Meter` exposes histograms in milliseconds:
+The `VoiceAssistant.Api` .NET `Meter` exposes these instruments. Durations are milliseconds and, per reply, are measured from that reply's own final STT callback unless stated otherwise:
 
-| Instrument | Meaning |
-| --- | --- |
-| `voiceassistant.stt_final_to_first_delta` | Final STT **callback** to first successfully sent response delta |
-| `voiceassistant.stt_final_to_completed` | Final STT callback to successfully sent model response completion |
-| `voiceassistant.retrieval_duration` | Retrieval call elapsed time, including disabled/no-match/error/cancellation paths |
+| Instrument | Type | Extra tags | Meaning |
+| --- | --- | --- | --- |
+| `voiceassistant.stt_final_to_first_delta` | histogram | reply tags | Final STT **callback** to first successfully sent model response delta |
+| `voiceassistant.stt_final_to_completed` | histogram | reply tags | Final STT callback to successfully sent model response completion |
+| `voiceassistant.reply.settle_wait` | histogram | reply tags without `grounding` | Final to the reply starting: the settle window plus any wait behind an active reply (manual: until the request) |
+| `voiceassistant.reply.retrieval_wait` | histogram | reply tags, `prefetched=true\|false` | Knowledge route only: how long the started reply still waited for its documents |
+| `voiceassistant.reply.first_token` | histogram | reply tags | Answer request sent to the first model text (not from the final) |
+| `voiceassistant.reply.final_to_primary_done` | histogram | reply tags | Final to the sent delta that carries `primaryDone` |
+| `voiceassistant.reply.classifier_wait` | histogram | reply tags, `outcome=respond\|listen\|timeout\|failed` | How long the finished answer waited for the turn classifier before `response.completed` |
+| `voiceassistant.reply.korean_ready` | histogram | reply tags, `line=primary\|alternative`, `outcome=translated\|failed` | Final to each sent `response.korean` |
+| `voiceassistant.retrieval_duration` | histogram | `provider`, `outcome` | Retrieval call elapsed time, including disabled/no-match/error/cancellation paths |
+| `voiceassistant.reply.prefetch` | counter | `result=hit\|miss` | Knowledge replies that reused a prefetched retrieval or started their own |
+| `voiceassistant.reply.grounding` | counter | reply tags | Completed replies (deterministic ones included) by final grounding status |
+| `voiceassistant.retrieval.failures` | counter | `class=transient\|permanent`, `kind`, `status_class=4xx\|5xx\|none\|...`, `retried=true\|false` | Retrievals that finally failed |
+| `voiceassistant.chat.throttled` | counter | `operation=answer\|classifier\|translation` | HTTP 429 answers to live chat calls |
+| `voiceassistant.chat.retries` | counter | `operation` | Live chat calls that were retried |
+| `voiceassistant.session.errors` | counter | `code` | `error` events sent to clients, by error code |
+| `voiceassistant.session.ended` | counter | `reason` | Ended sessions: `stopped`, `client_closed`, `superseded`, `overloaded`, `time_limit`, `aborted`, `ended`, `startup_timeout`, `transport_error`, `provider_unavailable` or the ending error code |
+| `voiceassistant.speech.restarts` | counter | `code=connection_failure\|service_timeout\|service_unavailable`, `outcome=restarted\|failed` | In-process speech recognizer restart attempts after a retryable cancellation |
+| `voiceassistant.warmup.failures` | counter | `stage`, `required=true\|false` | Failed startup warm-up attempts; `required=false` is the best-effort Search warm-up |
+| `voiceassistant.sessions.active` | observable gauge | none | Open meeting sessions |
 
-These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. A reply queued behind an active one is timed from its own final, so its wait in the queue is included and a later final that did not start a reply does not shorten it. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record `disabled`/`grounded`/`no_matches`/`unavailable` model paths; `no_matches` invokes the model using transcript-only context rather than returning a fixed clarification, and so does a failed search. The deterministic unavailable completion (used only when that model call also fails) remains excluded. Retrieval metrics still record all outcomes.
+Reply tags are `provider=Azure|Fake|TestDouble`, `trigger=automatic|manual`, `route=knowledge|transcript|profile`, `response_mode=balanced|grounded|conversation` and `grounding=grounded|no_matches|unavailable|disabled|pending`.
 
-Tags are bounded `provider=Azure|Fake|TestDouble`; response `trigger=automatic|manual`; retrieval `outcome=grounded|disabled|no_matches|unavailable|unknown|failed|cancelled`. No content, IDs, URLs or arbitrary error messages are metric tags. No exporter, persistence, or new WebSocket event is enabled; an approved operational `MeterListener`/OpenTelemetry configuration may subscribe. Never mix Fake/TestDouble observations with Azure measurements.
+These use monotonic timestamps. They are **not actual speech-end latency**: the API has no annotated client acoustic speech-end ground truth. Manual response metrics include the time between finalization and the manual request. A reply queued behind an active one is timed from its own final, so its wait in the queue is included and a later final that did not start a reply does not shorten it. Superseded/cancelled generation does not record subsequent delta/completion timings. Response histograms record `disabled`/`grounded`/`no_matches`/`unavailable` model paths; `no_matches` invokes the model using transcript-only context rather than returning a fixed clarification, and so does a failed search. The deterministic unavailable completion (used only when that model call also fails) and deterministic profile introductions remain excluded from the model timings; `reply.grounding` still counts them. Retrieval metrics still record all outcomes.
+
+Every tag value comes from a fixed vocabulary; an unexpected value is reported as `other`. No content, user IDs, URLs or arbitrary error messages are metric tags. Never mix Fake/TestDouble observations with Azure measurements.
+
+**Export.** Metrics are exported to Application Insights only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is non-empty. The exporter (`Azure.Monitor.OpenTelemetry.Exporter`) uses a `MeterProvider` limited to this meter: no ASP.NET Core/HTTP request tracing, request telemetry or log export is enabled, because WebSocket URLs carry one-use tickets and console logs already reach Log Analytics. Ingestion is authorized with Entra because Application Insights local authentication is disabled: the user-assigned managed identity from `AZURE_CLIENT_ID` in Azure (when the managed identity endpoint is present), `DefaultAzureCredential` elsewhere. The service name (Application Insights cloud role) is `OTEL_SERVICE_NAME`, or `voice-web` when unset. Offline retry storage is disabled, so a failed export is dropped and nothing is written to disk. With the connection string empty or unset nothing is exported. The exporter parses the connection string when it starts; a value it cannot parse turns export off with one content-free warning (the exception type only), and the app keeps running. Statsbeat, the exporter's own usage telemetry to Microsoft-owned resources, is switched off (see [Data handling and limits](#data-handling-and-limits)).
 
 Live recommendations and Korean enrichment share the chat deployment's quota.
 Ten requests/minute is insufficient for continuous speech plus1-2 reply translations;
@@ -293,9 +325,28 @@ Translation-only enrichment uses a short dedicated translation prompt and a1024-
 not the4096-token pronunciation/feedback budget. Upstream429 is surfaced as `busy` for enrichment
 and `model_busy` for meeting generation, with content-free failure diagnostics.
 
+**Live chat retry policy.** The live reply calls (the answer stream, the turn classifier and Korean lines) use their own chat client with `LiveChatRetryPolicy` instead of the SDK default. The default waits out `Retry-After` intervals of many seconds up to three times while the overlay stays silent. The live policy works as follows:
+
+- A throttled (429) or transiently failed (408, 5xx or network) call is retried **at most once**.
+- The retry happens only when the service asks for a wait of at most 1 s (`retry-after-ms`, `x-ms-retry-after-ms` or `Retry-After`), or 250 ms without a hint.
+- The call must also have at least 2 s of its deadline left after that wait. The answer and the classifier are bounded by the reply's own 30 s deadline, counted from the reply's start (`MeetingSession` passes it as an absolute timestamp where it creates the reply's cancellation), so time already spent on retrieval counts. The classifier also has its own 10 s budget. A Korean line has its own 10 s deadline.
+- Otherwise the failure surfaces at once through the existing paths: `model_busy` (429) or `response_unavailable` for the reply, `response.korean` `failed:true` for a Korean line, and no emphasis for the classifier.
+
+Every 429 is counted in `voiceassistant.chat.throttled`, and every retry in `voiceassistant.chat.retries`, both by `operation`. Practice, materials ingestion and other non-live calls keep the SDK default retries.
+
 The [live-provider acceptance probe](../../tools/VoiceAssistant.LiveProbe/README.md) directly exercises this same provider with an explicit opt-in original synthetic WAV and standard noninteractive `DefaultAzureCredential`. It separately reports content-free real service evidence or **BLOCKED**, never fake Azure success.
 
 The speech-stream contract separately exposes `CompleteInputAsync` for finite recordings: signal push-stream EOF and drain terminal recognition callbacks before disposal. The WebSocket session does not call it during live capture; silence and new utterances keep using the same continuous stream. Expected `EndOfStream`/`NoError` is normal only after explicit input completion; service errors remain explicit.
+
+**Speech recovery.** A recognizer cancelled with `ConnectionFailure`, `ServiceTimeout` or `ServiceUnavailable` is replaced in-process instead of ending the session. `MeetingSession` handles it as follows:
+
+- It disposes the failed recognizer and waits 0.5, 1, then 2 s on the session clock before each attempt.
+- It starts a new recognizer with the same options. The event loop keeps draining audio meanwhile and drops it. The conversation history is kept.
+- At most `MeetingSession.MaxSpeechRestarts` (3) attempts are made per session, and failed attempts count. After that, or for any other cancellation, the session ends with `speech_unavailable` as before.
+- Errors of a recognizer that was already replaced are ignored, using a per-recognizer number. A failure that a new recognizer reports before the loop takes it over is held, then handled like any other.
+- Each attempt is counted in `voiceassistant.speech.restarts`.
+
+Token renewal (every 5 minutes) no longer ends the session on the first failure. While the current token is still valid, it retries every 30 s, but never past the expiry. Only a token that expired without a successful renewal ends the session with `speech_authentication_failed`.
 
 ### Speech endpoint verification
 
