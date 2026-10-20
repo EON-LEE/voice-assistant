@@ -11,7 +11,7 @@ import type { Grounding, ServerEvent } from "./protocol.js";
 import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply,
   type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
-import { parseSettings, pendingUpdate, settingsKey, withDocumentSearch, withResponseMode, documentSearchOn,
+import { parseSettings, pendingUpdate, settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, documentSearchOn,
   type HostSources, type LiveSettings, type ResponseMode } from "./live-settings.js";
 import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
 import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, sourceNames, warningMessage, type LiveWarning,
@@ -25,6 +25,8 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   return value as T;
 };
 const panel = $("live-panel"), stage = $("live-stage"), menu = $("live-menu");
+const toggleButton = $<HTMLButtonElement>("live-toggle"), pauseButton = $<HTMLButtonElement>("live-pause");
+const smallerButton = $<HTMLButtonElement>("answer-smaller"), largerButton = $<HTMLButtonElement>("answer-larger");
 const settingsDialog = $<HTMLDialogElement>("settings");
 const micDevice = $<HTMLSelectElement>("mic-device"), responseMode = $<HTMLSelectElement>("response-mode");
 const topic = $<HTMLInputElement>("topic");
@@ -125,6 +127,16 @@ $("doc-off").addEventListener("click", () => changeSettings(withDocumentSearch(s
 $("toggle-captions").addEventListener("click", () => changeSettings({ ...settings, showCaptions: !settings.showCaptions }));
 $("toggle-korean").addEventListener("click", () => changeSettings({ ...settings, showKorean: !settings.showKorean }));
 responseMode.addEventListener("change", () => changeSettings(withResponseMode(settings, responseMode.value as ResponseMode)));
+
+/** A− / A+ step the English answer size. At the smallest or largest size the pressed button turns off, so focus moves to the other. */
+function resizeAnswer(step: -1 | 1): void {
+  const button = step < 0 ? smallerButton : largerButton;
+  const focused = button.ownerDocument.activeElement === button;
+  changeSettings({ ...settings, answerSize: stepAnswerSize(settings.answerSize, step) });
+  if (focused && button.disabled) (step < 0 ? largerButton : smallerButton).focus({ preventScroll: true });
+}
+smallerButton.addEventListener("click", () => resizeAnswer(-1));
+largerButton.addEventListener("click", () => resizeAnswer(1));
 
 /** Makes the connected session match the settings. A change reaches the next reply; a reply already under way keeps its own. */
 function syncSession(): void {
@@ -484,7 +496,7 @@ function render(): void {
     : live && paused ? `${sourceLabel} 일시정지 · 오디오 전송 중지`
     : live ? `듣는 중 · ${sourceLabel} · 영어`
     : phase === "starting" ? source === "display" ? "공유할 화면 선택 중…" : isHostSource(source) ? `${sourceLabel} 연결 중…` : "마이크 준비 중…"
-    : phase === "connecting" ? "연결 중…" : `${sourceLabel} 꺼짐 · 우클릭으로 설정 및 시작`);
+    : phase === "connecting" ? "연결 중…" : `${sourceLabel} 꺼짐 · 시작을 누르세요`);
   setHidden("live-level", !controller.isCapturing);
   setHidden("source-note", !(controller.active && settings.audioSource === "display" && controller.source !== "display"));
   const message = statusMessage();
@@ -495,7 +507,7 @@ function render(): void {
   renderQuick();
   renderConversation();
   renderSuggestions();
-  renderMenu();
+  renderControls();
 }
 
 function setPressed(id: string, pressed: boolean): void {
@@ -515,6 +527,11 @@ function renderQuick(): void {
   setHidden("answer-meaning", !settings.showKorean); setHidden("alternative-meaning", !settings.showKorean);
   setText("details-summary", settings.showCaptions ? "대화 · 대안 · 상세 근거" : "대안 · 상세 근거");
   if (responseMode.value !== settings.responseMode) responseMode.value = settings.responseMode;
+  // The default size sets no property, so the answer keeps exactly its stylesheet size.
+  const scale = settings.answerSize === 100 ? "" : String(settings.answerSize / 100);
+  if (panel.style.getPropertyValue("--answer-scale") !== scale) panel.style.setProperty("--answer-scale", scale);
+  smallerButton.disabled = stepAnswerSize(settings.answerSize, -1) === settings.answerSize;
+  largerButton.disabled = stepAnswerSize(settings.answerSize, 1) === settings.answerSize;
   setText("quick-note", quickNote);
   setHidden("quick-note", !quickNote);
 }
@@ -588,7 +605,7 @@ function renderSuggestions(): void {
       : generating ? display ? "새 답변 준비 중 · 아래는 이전 질문용 답변" : "답변 준비 중 · 완성되면 표시합니다"
         : display?.interrupted ? "답변 생성이 중단되었습니다 · 근거를 확인하지 못했습니다"
           : display ? "추천 문장입니다 · 내용 확인 후 사용하세요"
-            : controller.active ? "듣는 중 · 답변이 완성되면 표시합니다" : "우클릭으로 설정 / 라이브 시작");
+            : controller.active ? "듣는 중 · 답변이 완성되면 표시합니다" : "시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴");
   const hold = $<HTMLButtonElement>("hold-answer");
   hold.disabled = !display;
   setPressed("hold-answer", state.readingHeld);
@@ -610,14 +627,27 @@ function toggleReadingHold(): void {
 }
 $("hold-answer").addEventListener("click", toggleReadingHold);
 
-// ---------- Right-click session controls ----------
+// ---------- Session controls: header buttons and the right-click menu ----------
 
 const item = (action: string): HTMLButtonElement => menu.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!;
-function renderMenu(): void {
-  item("start").disabled = controller.active;
-  item("stop").disabled = !controller.active;
-  item("pause").disabled = item("retry").disabled = !controller.isReady;
+function setTitle(element: HTMLElement, title: string): void {
+  if (element.title !== title) element.title = title;
+}
+/** The menu, and the header's start/stop and pause buttons, which run the same actions with the same states as their items. */
+function renderControls(): void {
+  const active = controller.active, ready = controller.isReady;
+  item("start").disabled = active;
+  item("stop").disabled = !active;
+  item("pause").disabled = item("retry").disabled = !ready;
   write(item("pause"), paused ? "다시 듣기" : "내가 말할 동안 일시정지");
+  const command = active ? "stop" : "start";
+  if (toggleButton.dataset.command !== command) toggleButton.dataset.command = command;
+  write(toggleButton, active ? "종료" : "시작");
+  setTitle(toggleButton, item(command).textContent ?? "");
+  pauseButton.disabled = !ready;
+  if (pauseButton.dataset.paused !== String(paused)) pauseButton.dataset.paused = String(paused);
+  write(pauseButton, paused ? "다시 듣기" : "일시정지");
+  setTitle(pauseButton, item("pause").textContent ?? "");
   item("hold").disabled = !state.display;
   write(item("hold"), state.readingHeld
     ? state.hasNewerReply ? "새 답변 보기 / 화면 고정 해제" : "화면 고정 해제"
@@ -626,6 +656,21 @@ function renderMenu(): void {
   item("float").hidden = !("documentPictureInPicture" in window);
   write(item("float"), pipWindow ? "작은 창 닫고 페이지로 돌아가기" : "항상 위 작은 창으로 띄우기");
 }
+/** What a menu item or a header button does. Start runs inside the click, so a share picker may open. */
+function runAction(action: string): void {
+  if (action === "settings") openSettings();
+  if (action === "start") startLive();
+  if (action === "stop") void stopLive();
+  if (action === "pause") { paused = !paused; state.pause(paused); controller.pause(paused); render(); }
+  if (action === "hold") toggleReadingHold();
+  if (action === "retry") { state.beginRequest(); controller.request(); render(); }
+  if (action === "translate") retryTranslations();
+  if (action === "float") void toggleFloat();
+}
+// The toggle runs what its label says, even if the session changed in the frame before the label caught up.
+toggleButton.addEventListener("click", () => runAction(toggleButton.dataset.command === "stop" ? "stop" : "start"));
+pauseButton.addEventListener("click", () => runAction("pause"));
+
 function positionMenu(x: number, y: number): void {
   const bounds = panel.getBoundingClientRect();
   const left = Math.max(4, Math.min(x, bounds.width - menu.offsetWidth - 4));
@@ -636,7 +681,7 @@ new ResizeObserver(() => {
   if (!menu.hidden) positionMenu(parseFloat(menu.style.left), parseFloat(menu.style.top));
 }).observe(panel);
 function openMenu(x: number, y: number): void {
-  renderMenu();
+  renderControls();
   menu.hidden = false;
   const bounds = panel.getBoundingClientRect();
   positionMenu(x - bounds.left, y - bounds.top);
@@ -668,14 +713,7 @@ menu.addEventListener("click", event => {
   const action = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]")?.dataset.action;
   if (!action) return;
   closeMenu();
-  if (action === "settings") openSettings();
-  if (action === "start") startLive();
-  if (action === "stop") void stopLive();
-  if (action === "pause") { paused = !paused; state.pause(paused); controller.pause(paused); render(); }
-  if (action === "hold") toggleReadingHold();
-  if (action === "retry") { state.beginRequest(); controller.request(); render(); }
-  if (action === "translate") retryTranslations();
-  if (action === "float") void toggleFloat();
+  runAction(action);
 });
 
 // ---------- Settings dialog ----------

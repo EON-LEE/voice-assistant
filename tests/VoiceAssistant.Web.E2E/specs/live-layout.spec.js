@@ -454,7 +454,7 @@ async function assertLayout(page) {
   await expect(page.locator('#answer-korean')).toBeInViewport();
   await page.locator('#alternative-korean').scrollIntoViewIfNeeded();
   await expect(page.locator('#alternative-korean')).toBeInViewport();
-  for (const id of ['doc-on', 'doc-off', 'toggle-captions', 'toggle-korean']) {
+  for (const id of ['live-toggle', 'live-pause', 'doc-on', 'doc-off', 'toggle-captions', 'toggle-korean', 'answer-smaller', 'answer-larger']) {
     await page.locator(`#${id}`).scrollIntoViewIfNeeded();
     await expect(page.locator(`#${id}`)).toBeInViewport();
   }
@@ -544,4 +544,12 @@ test('open native menu remains reachable while the window shrinks and expands', 
   }
   await page.locator('[data-shell="minimize"]').click();
   expect(await page.evaluate(() => window.__shellMessages)).toEqual(['minimize']);
+});
+
+test('in the native shell the header buttons are pressed, while the rest of the header drags the window', async ({ page }) => {
+  await fixture(page, true);
+  for (const id of ['live-toggle', 'live-pause']) await page.locator(`#${id}`).dispatchEvent('mousedown', { button: 0 });
+  expect(await page.evaluate(() => window.__shellMessages)).toEqual([]);
+  await page.locator('#capture-status').dispatchEvent('mousedown', { button: 0 });
+  expect(await page.evaluate(() => window.__shellMessages)).toEqual(['drag']);
 });
