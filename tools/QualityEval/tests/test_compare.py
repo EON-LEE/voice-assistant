@@ -83,6 +83,15 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(allowed["exitCode"], 0)
         self.assertEqual(compare(result(), result(**{"session.options": {"responseMode": "balanced"}}))["exitCode"], 2)
 
+    def test_scorer_fingerprints_must_match_when_both_are_recorded_or_a_result_was_rescored(self):
+        first, second = result(scorer={"sha256": "s1"}), result(scorer={"sha256": "s2"})
+        self.assertEqual(compare(first, second)["problems"], ["scorer differs"])
+        self.assertEqual(compare(result(), first)["exitCode"], 0)
+        rescored = result(scorer={"sha256": "s1"}, rescore={"sourceRunId": "run-a", "scorerSha256": "s1"})
+        self.assertEqual(compare(rescored, first)["exitCode"], 0)
+        self.assertEqual(compare(result(), rescored)["problems"], ["scorer differs"])
+        self.assertEqual(compare(result(), rescored, Thresholds(allow_mismatch=True))["exitCode"], 0)
+
     def test_render_mentions_failures(self):
         text = render(compare(result(), result(**{"quality.passRate.value": 0.4})))
         self.assertIn("FAIL", text)

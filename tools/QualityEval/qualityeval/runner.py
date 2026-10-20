@@ -22,8 +22,8 @@ from .identity import FAKE_OWNER, IdentityError, guard, object_id
 from .judge import Judge, JudgeError
 from .privacy import safe_mkdir, safe_write_text
 from .report import RunRecord, aggregate
-from .scoring import score_answer, term_results
-from .session import Limits, run_session
+from .scoring import score_answer, scorer_sha256, term_results
+from .session import Limits, SessionOutcome, run_session
 from .wsclient import HandshakeError, WebSocketClient
 
 ABORT_AFTER_FAILURES = 3
@@ -118,6 +118,16 @@ def _short_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
+def score_run(item: Item, accent: str, repeat: int, outcome: SessionOutcome, titles: Mapping[str, str]) -> RunRecord:
+    """Score one session outcome. Live runs and rescoring share this, so their scores cannot drift apart."""
+    response = outcome.response or {}
+    score = score_answer(item, response.get("primary", ""), response.get("alternative", ""),
+                         response.get("grounding"), response.get("sources", []),
+                         [titles[source] for source in item.expected_sources if source in titles],
+                         answered=outcome.answered)
+    return RunRecord(item, accent, repeat, outcome, score, term_results(item, outcome.segment_finals))
+
+
 def _progress(number: int, total: int, record: RunRecord) -> str:
     timings = record.outcome.timings
     first = timings.get("speechEndToFirstDelta")
@@ -145,12 +155,7 @@ async def _execute(api: LiveCoachApi, credentials: Credentials, config: RunConfi
     for number, (item, accent, repeat) in enumerate(planned, 1):
         outcome = await run_session(connect, timelines[item.id, accent], config.options, pace=config.pace,
                                     limits=config.limits, details=config.write_details)
-        response = outcome.response or {}
-        score = score_answer(item, response.get("primary", ""), response.get("alternative", ""),
-                             response.get("grounding"), response.get("sources", []),
-                             [titles[source] for source in item.expected_sources if source in titles],
-                             answered=outcome.answered)
-        record = RunRecord(item, accent, repeat, outcome, score, term_results(item, outcome.segment_finals))
+        record = score_run(item, accent, repeat, outcome, titles)
         records.append(record)
         log(_progress(number, len(planned), record))
         broken = outcome.status.startswith(("handshake_", "start_error", "transport_error"))
@@ -223,6 +228,7 @@ def execute(api: LiveCoachApi, corpus: Corpus, item_set: ItemSet, config: RunCon
         "items": {"sha256": item_set.sha256, "selected": len(config.items),
                   "selectedIds": sorted(item.id for item in config.items),
                   "byCategory": dict(sorted(Counter(item.category for item in config.items).items()))},
+        "scorer": {"sha256": scorer_sha256()},
         "session": {"protocolVersion": 1, "options": config.options, "pace": config.pace},
         "audio": {"source": getattr(audio, "name", "unknown"), "accents": list(config.accents),
                   "voices": {accent: dict(audio.voices[accent]) for accent in config.accents}

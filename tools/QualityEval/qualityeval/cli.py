@@ -1,4 +1,4 @@
-"""Command line: validate, synthesize, materials, run, compare and summarize."""
+"""Command line: validate, synthesize, materials, run, rescore, compare and summarize."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from .identity import IdentityError
 from .judge import Judge, JudgeError, config_from_env
 from .privacy import CORPUS_DIR, DEFAULT_CACHE_DIR, DEFAULT_OUTPUT_DIR, PrivacyError, check_output_path, safe_write_text
 from .protocol import RESPONSE_MODES, live_ui_options
+from .report import QUALITY_METRICS
+from .rescore import rescore
 from .runner import RunConfig, RunError, cleanup_materials, execute, identity_hash, resolve_credentials, sync_materials
 from .session import Limits
 from .tts import DEFAULT_ACCENTS, DEFAULT_VOICES, AzureTts, ToneAudio, TtsAudio, TtsCache, TtsError, endpoint_from_env
@@ -28,9 +30,9 @@ def _csv(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def _load(args) -> tuple:
+def _load(args, items_path: str | None = None) -> tuple:
     corpus = load_corpus(args.corpus_dir)
-    items = load_items(Path(args.corpus_dir) / "items.json")
+    items = load_items(items_path or Path(args.corpus_dir) / "items.json")
     problems = validate(corpus, items)
     if problems:
         raise ValueError("Corpus/items validation failed:\n" + "\n".join(problems))
@@ -155,6 +157,23 @@ def summary(results: dict) -> str:
     return "\n".join(lines)
 
 
+def cmd_rescore(args) -> int:
+    check_output_path(args.output_dir)
+    corpus, items = _load(args, args.items_file)
+    results, before, path = rescore(args.source, corpus, items, Path(args.output_dir))
+
+    def value(document: dict, name: str):
+        return ((document.get("quality") or {}).get(name) or {}).get("value")
+
+    print(summary(results))
+    changes = [f"{name} {value(before, name)} -> {value(results, name)}" for name in QUALITY_METRICS
+               if value(before, name) != value(results, name)]
+    print("Changed by rescoring: " + (", ".join(changes) if changes else "no quality metric"))
+    print(f"Rescored {len(results['perItem'])} items, {results['runs']['completed']} runs of "
+          f"{results['rescore']['sourceRunId']} (items {items.sha256[:12]}): {path}")
+    return EXIT_OK
+
+
 def cmd_compare(args) -> int:
     if args.report:
         check_output_path(args.report)
@@ -228,6 +247,13 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--between-runs-ms", type=int, default=500)
     run.add_argument("--run-timeout-seconds", type=float, default=150.0)
 
+    rescore_parser = commands.add_parser("rescore", help="score a finished run again with the current scorer and items")
+    rescore_parser.add_argument("source", help="run folder written with --write-details, or its details.jsonl")
+    rescore_parser.add_argument("--items", dest="items_file",
+                                help="items file to score with (default: items.json in --corpus-dir)")
+    rescore_parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR),
+                                help="parent of the new run folder (ignored folder or outside the repo)")
+
     compare_parser = commands.add_parser("compare", help="gate a candidate result against a baseline")
     compare_parser.add_argument("baseline")
     compare_parser.add_argument("candidate")
@@ -246,7 +272,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     handlers = {"validate": cmd_validate, "synthesize": cmd_synthesize, "materials": cmd_materials, "run": cmd_run,
-                "compare": cmd_compare, "summarize": cmd_summarize}
+                "rescore": cmd_rescore, "compare": cmd_compare, "summarize": cmd_summarize}
     try:
         return handlers[args.command](args)
     except (PrivacyError, IdentityError) as error:

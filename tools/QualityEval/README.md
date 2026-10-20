@@ -35,8 +35,8 @@ Everything in this folder is **synthetic**. Kestrova Analytics, its people, prod
   Every other repository path, including `corpus/`, is refused, and existing outputs are not overwritten.
 - **Results hold aggregates only.** `results.json` contains numbers, synthetic item ids and synthetic key terms. It
   contains no audio, transcripts or reply text. The server origin and the identity's object ID appear only as SHA-256
-  prefixes. `--write-details` adds per-run synthetic transcripts and replies in `details.jsonl` in the same ignored
-  folder. Use it for debugging only.
+  prefixes. `--write-details` adds per-run synthetic transcripts and replies in `details.jsonl` in the same folder. Use
+  it for debugging, and for runs you may need to [rescore](#rescore-a-finished-run-offline) later.
 - **Credentials come from environment variables only.** They are never written to disk or logs. Redirects are refused, so
   a bearer token cannot be forwarded to another host.
 - **Use a dedicated synthetic identity, never your real account.** Uploading materials requires
@@ -137,7 +137,34 @@ Useful run options:
 - `--reply-korean`: push Korean replies, which counts the `response.korean` events.
 - `--cleanup-materials`: remove the corpus afterwards.
 - `--judge`: run the advisory LLM judge.
-- `--write-details`: write per-run transcripts and replies to `details.jsonl`.
+- `--write-details`: write per-run transcripts and replies to `details.jsonl`. A run needs it to be rescored later.
+
+## Rescore a finished run (offline)
+
+Scores depend on the scorer (`qualityeval/scoring.py`, `qualityeval/textnorm.py`) and on `corpus/items.json` at the time
+of the run. After either changes, rescore the older runs, so that `compare` sees the same scoring on both sides:
+
+```powershell
+python .\tools\QualityEval\quality_eval.py rescore C:\eval\baseline\run-20261021T090000Z-0a1b2c `
+  --output-dir C:\eval\rescored
+python .\tools\QualityEval\quality_eval.py rescore C:\eval\candidate\run-20261021T100000Z-3d4e5f\details.jsonl `
+  --output-dir C:\eval\rescored --items .\tools\QualityEval\corpus\items.json
+```
+
+- **Input:** a run folder written with `--write-details`, or its `details.jsonl`, with the run's `results.json` next to
+  it. The source files are only read.
+- **Scoring:** every run record is rebuilt from `details.jsonl` and scored again with the current scorer and the
+  `--items` file (default: `items.json` in `--corpus-dir`). Statuses, latency and the other outcome data are taken over
+  unchanged; the per-run response counts are recovered from the recorded events. Judge grades are carried over as
+  recorded. Nothing is sent anywhere: no network, Azure or TTS.
+- **Output:** a new folder `<source run id>-rescored-<time>-<random>` under `--output-dir` (default: the git-ignored
+  `out/`; a folder outside the repository also works) with `results.json` and `details.jsonl` in the same schema. The
+  run's bootstrap samples and seed are reused, so an unchanged scorer and items file reproduce the original aggregates.
+  The command prints the summary and the quality rates that changed.
+- **Metadata:** `items.sha256` and `scorer.sha256` describe the new scoring. The `rescore` block records the source run
+  id, its tool version and its items and scorer hashes, the items and scorer hashes used, and `rescoredAt`.
+- **Limits:** rescoring assumes that the items' spoken turns did not change. It refuses a run whose recorded turn count
+  no longer matches an item, or whose selected items are missing from the items file.
 
 ## What is measured
 
@@ -212,8 +239,12 @@ under `judge` and are advisory.
 
 - **0** when the candidate passes;
 - **1** when it regresses;
-- **2** when the two results are not comparable: a different corpus or items hash, item selection, session options,
-  accents or audio source. Use `--allow-mismatch` to compare anyway.
+- **2** when the two results are not comparable: a different corpus or items hash, scorer, item selection, session
+  options, accents or audio source. Use `--allow-mismatch` to compare anyway.
+
+Results record a fingerprint of the scorer source (`scorer.sha256`). Results written before it existed have none and
+skip that check, except against a rescored result, which is comparable only with results scored by the same scorer. To
+compare runs scored at different times, [rescore](#rescore-a-finished-run-offline) both with the same items file.
 
 | Rule | Default |
 | --- | --- |
