@@ -1,0 +1,4 @@
+# Reviewed false positives only. Each line is a gitleaks fingerprint (commit:file:rule:line).
+# apiClientId is a public Entra application (client) ID, not a credential.
+70721ce3de21468d9f915364d558f2801690b84b:tests/acceptance-results/native-entra-configuration-2026-10-06.json:generic-api-key:5
+cafb5f6e0152efb72ceb5b9911a6e2d783c02b93:tests/acceptance-results/native-entra-configuration-2026-10-06.json:generic-api-key:5
