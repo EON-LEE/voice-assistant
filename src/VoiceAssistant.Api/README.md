@@ -67,7 +67,16 @@ Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosni
 
 The optional shared demo login (`DemoLogin__Username`, `DemoLogin__Password`, `DemoLogin__ObjectId`, `DemoLogin__SigningKey`) issues bearer tokens for one fixed identity that are valid for `DemoLogin__TokenDays` days: default 7, allowed 1..30; any other value prevents startup. Such a token cannot be revoked except by rotating the signing key.
 
-`GET /health/live` indicates the process is running. `GET /health/ready` indicates validated configuration and a running HTTP pipeline, not external Azure dependency availability; neither endpoint performs billable calls or exposes credentials. Operational monitoring must separately check resource/RBAC availability.
+`GET /health/live` indicates only that the process is running; it never depends on Azure. `GET /health/ready` returns 200 `{"status":"ready"}` once a startup warm-up has completed, and 503 with `{"status":"warming"}` until then. Fake mode is ready at once. In Azure mode, the warm-up runs in the background:
+
+- It acquires the Cognitive Services token (Speech and Azure OpenAI share that audience) and, when Search is configured, the Search token, through the runtime credential, so the first session finds them cached.
+- It then opens TLS connections to the Azure OpenAI and Search endpoints through the clients and shared transports the reply path uses. It also checks that the Speech endpoint (or the regional speech-to-text host) is reachable. The Speech SDK opens its own connection per session, so for Speech only DNS and TLS reachability are checked.
+- Any HTTP status counts as reached. The requests are an endpoint-root GET and a Search document count: no model, speech or semantic-ranking call, and nothing billable.
+- Each stage is bounded to 10 s. A failed attempt is retried with a 1-2-4-8-15 s backoff.
+- After 60 s of failures, the service logs one content-free error line (stage, exception type, HTTP status) and the endpoint reports `{"status":"not_ready"}`. Retries continue, and the replica becomes ready as soon as an attempt succeeds.
+- Once ready, the replica stays ready: a later transient token or network failure never removes it from rotation. Such failures surface on the reply path instead.
+
+Neither endpoint exposes credentials. Operational monitoring must still check resource and RBAC availability separately, because a 401/403 answer also counts as reached.
 
 ## Semantic relevance and no-match responses
 

@@ -29,6 +29,14 @@ namespace VoiceAssistant.Api
             builder.Services.AddSingleton<TicketStore>();
             builder.Services.AddSingleton<SessionSlots>();
             builder.Services.AddSingleton<AzureServiceClients>();
+            // Azure mode takes traffic only after the dependencies a reply needs were warmed once; Fake mode is ready at once.
+            builder.Services.AddSingleton(new Readiness(ready: settings.Fake));
+            if (!settings.Fake)
+            {
+                builder.Services.TryAddSingleton<IDependencyWarmup>(services =>
+                    new AzureDependencyWarmup(settings, services.GetRequiredService<AzureServiceClients>()));
+                builder.Services.AddHostedService<StartupWarmup>();
+            }
             builder.Services.TryAddSingleton<IMeetingProvider>(services => settings.Fake
                 ? new FakeMeetingProvider()
                 : new AzureMeetingProvider(settings, services.GetRequiredService<AzureServiceClients>()));
@@ -106,7 +114,9 @@ namespace VoiceAssistant.Api
             app.UseAuthentication();
             app.UseAuthorization();
             app.MapGet("/health/live", () => Results.Ok(new { status = "live" }));
-            app.MapGet("/health/ready", () => Results.Ok(new { status = "ready" }));
+            app.MapGet("/health/ready", (Readiness readiness) => readiness.IsReady
+                ? Results.Ok(new { status = "ready" })
+                : Results.Json(new { status = readiness.Status }, statusCode: StatusCodes.Status503ServiceUnavailable));
             app.MapGet("/api/client-config", () => Results.Ok(new
             {
                 clientId = settings.ClientId,
