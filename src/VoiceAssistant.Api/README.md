@@ -66,12 +66,20 @@ Each switch changes one behavior so it can be A/B tested on staging with the qua
 | `Azure__ChatReasoningEffort` | unset \| `minimal` \| `low` \| `medium` (unset) | Sends `reasoning_effort` with the live answer request. Unset sends no `reasoning_effort` (the deployment default). |
 | `Azure__ChatAuxiliaryReasoningEffort` | unset \| `minimal` \| `low` \| `medium` (unset) | The same, for the turn classifier and the Korean translation requests. |
 | `Azure__ChatApiVersion` | unset \| a dated version such as `2025-04-01-preview` (unset) | The `api-version` of the live chat requests (answer, classifier, translation). Unset keeps the pinned SDK's default (`2024-10-21`). Set it only if the deployment rejects `reasoning_effort` under the default. |
+| `Session__EarlyStartAtFinal` | `true` \| `false` (`false`) | With `replySettleMs` > 0, a final that makes the gathered speech a complete question or request (the rule that picks the 300 ms settle) starts its reply at once instead of after the settle. |
 
 How the reasoning switches work:
 
 - The pinned SDK has no reasoning-effort option. A configured effort is read into the same SDK property bag that carries `max_completion_tokens` and is sent as the wire property `reasoning_effort`. Offline tests check the actual request JSON, with and without the switch.
 - If the deployment rejects a value (HTTP 400), nothing falls back silently. The reply fails with `response_unavailable` and the log line `Meeting response failed ... HTTP status 400`. A rejected classifier logs `Turn classifier failed: ..., HTTP status 400`, and a rejected Korean line logs `Reply translation failed: HTTP 400`.
 - Practice and materials calls never send a reasoning effort.
+
+How early start works (`Session__EarlyStartAtFinal`):
+
+- The settle timer still runs. When it fires, the early reply stands unless the speech gathered after it changed the target. Backchannels such as `Yeah.` never change the target.
+- If the target changed, the whole gathered speech is answered and replaces the early reply, exactly as a superseding request does today (`response.cancelled`, then `response.started`). A second complete question in the same window replaces it at its own final.
+- An early start happens only when no reply is active, or to replace this window's own early reply. A reply still answering an earlier window keeps holding and queueing the next question as before.
+- `voiceassistant.reply.settle_wait` shows the effect: about 0 ms for early replies.
 
 Chat requests explicitly use `max_completion_tokens`, not legacy `max_tokens`, and omit custom temperature. The pinned Azure.AI.OpenAI2.1 requires its documented `SetNewMaxCompletionTokensPropertyEnabled` extension to prevent rewriting the token property. Options use the public SDK model reader to initialize the property bag required by that extension; an offline transport test verifies the actual request JSON. A bounded live GPT-5 diagnostic reproduced HTTP400 `unsupported_parameter` for `max_tokens` before this correction and streamed output afterward.
 

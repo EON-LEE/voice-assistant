@@ -59,9 +59,10 @@ public sealed class SessionLease(CancellationToken superseded, Action release) :
 }
 
 public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, string objectId, ILogger logger,
-    int maxSessionMinutes = 30, TimeProvider? timeProvider = null)
+    int maxSessionMinutes = 30, TimeProvider? timeProvider = null, MeetingFeatures? meetingFeatures = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private readonly MeetingFeatures features = meetingFeatures ?? MeetingFeatures.Off;
     // Session duration, settle timers and reply timing all use this clock, so tests can drive them without sleeping.
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly Channel<SessionEvent> events = Channel.CreateBounded<SessionEvent>(
@@ -83,6 +84,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private long pendingResponseTimestamp;
     private readonly List<string> pendingSpeech = [];
     private long pendingSince;
+    /// <summary>A reply started early at a final (experiment): its generation and how many gathered segments it covered.</summary>
+    private (int Generation, int Segments)? earlyReply;
     private int settleNumber;
     private int overflow;
     private SessionOptions options = SessionOptions.Legacy;
@@ -216,10 +219,16 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                                 pendingSpeech.Add(transcript.Text);
                                 // Gathered speech that already left the bounded history can no longer be a reply target.
                                 if (pendingSpeech.Count > conversation.Count)
-                                    pendingSpeech.RemoveRange(0, pendingSpeech.Count - conversation.Count);
+                                {
+                                    var dropped = pendingSpeech.Count - conversation.Count;
+                                    pendingSpeech.RemoveRange(0, dropped);
+                                    if (earlyReply is { } covered) earlyReply = (covered.Generation, Math.Max(0, covered.Segments - dropped));
+                                }
                                 // The reply waits out the settle window anyway, so retrieve for this final in the meantime.
                                 prefetch!.Update(transcript, earlierTranscripts.With(conversation.GetRange(0, conversation.Count - 1)));
                                 ScheduleSettle(lifetime, afterFinal: true);
+                                // Experiment: a complete question or request is answered now; the settle above only checks it later.
+                                if (features.EarlyStartAtFinal && CanStartEarly()) await StartEarlyReplyAsync(lifetime.Token);
                             }
                             else if (responseActive)
                             {
@@ -237,6 +246,19 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }
                         break;
                     case "settle" when message.Generation == settleNumber && pendingSpeech.Count > 0:
+                        if (earlyReply is { } started)
+                        {
+                            // The reply started at the final stands unless later speech in the window changed its target; then
+                            // the whole gathered speech is answered, superseding it like a newer request.
+                            earlyReply = null;
+                            var gathered = pendingSpeech.Count;
+                            var changed = TargetChangedSince(started);
+                            pendingSpeech.Clear();
+                            if (!changed) break;
+                            if (responseActive && started.Generation != generationNumber) PreparePendingResponse(gathered);
+                            else await StartResponseAsync(lifetime.Token, manual: false, gathered);
+                            break;
+                        }
                         var decision = ReplyTrigger.Evaluate(pendingSpeech);
                         if (decision == ReplyDecision.Wait) break;
                         var currentSegments = pendingSpeech.Count;
@@ -253,13 +275,13 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         else if (lastTurn is null) await ErrorAsync("no_transcript", "Wait for a finalized utterance.", true, lifetime.Token);
                         else
                         {
-                            pendingSpeech.Clear(); settleNumber++;
+                            pendingSpeech.Clear(); settleNumber++; earlyReply = null;
                             await StartResponseAsync(lifetime.Token, manual: true, currentSegments: 1);
                         }
                         break;
                     case "response.cancel":
                         prefetch?.Cancel();
-                        pendingSpeech.Clear(); settleNumber++;
+                        pendingSpeech.Clear(); settleNumber++; earlyReply = null;
                         await CancelResponseAsync(lifetime.Token);
                         break;
                     case "session.update":
@@ -547,7 +569,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         if (pendingSpeech.Count > 0 && clock.GetElapsedTime(pendingSince) > MaxGatherTime)
             // A long-running gathered statement is answered as soon as the speaker pauses briefly.
             delay = TimeSpan.FromMilliseconds(CompleteSettleMs);
-        else if (afterFinal && ReplyTrigger.InvitesReply(pendingSpeech) && ReplyTrigger.LooksComplete(pendingSpeech))
+        else if (afterFinal && CompleteQuestionOrRequest())
             // New speech re-arms the full window, so a continuation still merges into one reply.
             delay = TimeSpan.FromMilliseconds(Math.Min(options.ReplySettleMs, CompleteSettleMs));
         // Enqueued inline when the timer fires (a non-blocking TryWrite), so the settle is ordered before any later speech.
@@ -565,6 +587,31 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             Interlocked.Exchange(ref overflow, 1);
             lifetime.Cancel();
         }
+    }
+
+    /// <summary>The gathered speech ends with a question or request that looks finished: the rule that picks the short settle.</summary>
+    private bool CompleteQuestionOrRequest() => ReplyTrigger.InvitesReply(pendingSpeech) && ReplyTrigger.LooksComplete(pendingSpeech);
+
+    /// <summary>Speech gathered after an early reply started, unless it is only backchannels, changes what it should answer.</summary>
+    private bool TargetChangedSince((int Generation, int Segments) early) =>
+        pendingSpeech.Count > early.Segments &&
+        ReplyTrigger.Evaluate(pendingSpeech.Skip(early.Segments).ToArray()) != ReplyDecision.Discard;
+
+    private bool CanStartEarly()
+    {
+        if (!CompleteQuestionOrRequest() || ReplyTrigger.Evaluate(pendingSpeech) != ReplyDecision.Reply) return false;
+        // Within one window a new early start needs a changed target (a backchannel never is) and replaces only its own reply.
+        if (earlyReply is { } early) return TargetChangedSince(early) && (!responseActive || early.Generation == generationNumber);
+        // Otherwise only when nothing else is answering: an active reply keeps today's hold-and-queue through the settle.
+        return !responseActive;
+    }
+
+    private async Task StartEarlyReplyAsync(CancellationToken lifetime)
+    {
+        var segments = pendingSpeech.Count;
+        // Like a superseding request, this cancels the window's earlier early reply if it is still running.
+        await StartResponseAsync(lifetime, manual: false, segments);
+        earlyReply = (generationNumber, segments);
     }
 
     private async Task ReceiveLoopAsync(CancellationToken cancellation)

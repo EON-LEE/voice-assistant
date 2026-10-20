@@ -95,10 +95,11 @@ namespace VoiceAssistant.Api
             }));
 
             var app = builder.Build();
+            var features = new MeetingFeatures { EarlyStartAtFinal = settings.EarlyStartAtFinal };
             // Content-free: which experiment switches this process runs with, so a rejected request can be traced to one.
             app.Logger.LogInformation("Live reply switches: answer reasoning effort {AnswerEffort}, classifier/translation reasoning effort " +
-                "{AuxiliaryEffort}, chat api-version {ApiVersion}.", settings.ChatReasoningEffort ?? "unset",
-                settings.ChatAuxiliaryReasoningEffort ?? "unset", settings.ChatApiVersion ?? "sdk default");
+                "{AuxiliaryEffort}, chat api-version {ApiVersion}, early start at final {EarlyStart}.", settings.ChatReasoningEffort ?? "unset",
+                settings.ChatAuxiliaryReasoningEffort ?? "unset", settings.ChatApiVersion ?? "sdk default", features.EarlyStartAtFinal);
             var strictTransport = !app.Environment.IsDevelopment();
             app.Use(async (context, next) =>
             {
@@ -154,7 +155,7 @@ namespace VoiceAssistant.Api
                 if (slot is null) { context.Response.StatusCode = 429; return; }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
                 await new MeetingSession(socket, provider, objectId, app.Logger, settings.MaxSessionMinutes,
-                    context.RequestServices.GetRequiredService<TimeProvider>()).RunAsync(context.RequestAborted, slot.Superseded);
+                    context.RequestServices.GetRequiredService<TimeProvider>(), features).RunAsync(context.RequestAborted, slot.Superseded);
             });
             app.MapKnowledge(settings);
             app.MapPractice(settings);

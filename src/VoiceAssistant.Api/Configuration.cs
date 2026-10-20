@@ -26,6 +26,8 @@ public sealed class ServiceSettings
     public string SearchSemanticConfiguration { get; init; } = "meeting-semantic";
     public double SearchMinimumRerankerScore { get; init; } = 2.0;
     public string[] AllowedOrigins { get; init; } = [];
+    /// <summary>Experiment: start the reply at a final that is a complete question or request, instead of after the settle.</summary>
+    public bool EarlyStartAtFinal { get; init; }
     public bool Fake => Mode == "Fake";
     public bool SearchEnabled => !string.IsNullOrEmpty(SearchEndpoint);
 
@@ -54,7 +56,8 @@ public sealed class ServiceSettings
             SearchIndex = Get("Azure:SearchIndex"),
             SearchSemanticConfiguration = config["Azure:SearchSemanticConfiguration"] ?? "meeting-semantic",
             SearchMinimumRerankerScore = ReadMinimumRerankerScore(config),
-            AllowedOrigins = config.GetSection("Security:AllowedOrigins").Get<string[]>() ?? []
+            AllowedOrigins = config.GetSection("Security:AllowedOrigins").Get<string[]>() ?? [],
+            EarlyStartAtFinal = ReadSwitch(config, "Session:EarlyStartAtFinal")
         };
         if (settings.Mode is not ("Azure" or "Fake") || (settings.Fake && !environment.IsDevelopment()))
             throw new InvalidOperationException("Fake requires Development; Provider:Mode must be Azure or Fake.");
@@ -104,6 +107,16 @@ public sealed class ServiceSettings
         return effort is "minimal" or "low" or "medium"
             ? effort
             : throw new InvalidOperationException($"{key} must be minimal, low or medium when set.");
+    }
+
+    /// <summary>An optional experiment switch: unset is off; <c>true</c> or <c>false</c> in any case; anything else prevents startup.</summary>
+    public static bool ReadSwitch(IConfiguration config, string key)
+    {
+        var value = config[key];
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return bool.TryParse(value.Trim(), out var enabled)
+            ? enabled
+            : throw new InvalidOperationException($"{key} must be true or false when set.");
     }
 
     /// <summary>An optional dated Azure OpenAI api-version (yyyy-MM-dd, optionally -preview) for the live chat requests.</summary>

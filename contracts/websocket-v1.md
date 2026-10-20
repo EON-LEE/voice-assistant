@@ -77,6 +77,14 @@ from the reply target (and a remainder of only backchannels is discarded), never
 While the server waits it already retrieves for the latest final. `response.request` replies at once. `0` keeps one reply per
 final utterance.
 
+A server may run with the early-start experiment switched on (server configuration `Session:EarlyStartAtFinal`, off by default;
+no client option). Then a final that makes the gathered speech a question or request that ends like a finished sentence starts
+its reply at once instead of after the shortened wait. The wait still runs. If more speech in it changes the target (anything
+but backchannels), that reply is replaced like a newer request: `response.cancelled`, then `response.started` for the whole
+gathered speech. Otherwise the reply stands, and no second reply follows. A reply that is already answering an earlier window
+still holds a new question back until it completes, exactly as without the switch. Clients need no change: every event is one
+they already handle.
+
 Optional `replyKorean` (boolean, default false, JSON null is not an omission) asks the server to translate every reply line into
 Korean and push it as `response.korean`, so the client needs no second HTTP request after `response.completed`. `session.ready`
 then carries `"replyKorean":true`. A client that did not opt in receives neither that field nor `response.korean` events, and
