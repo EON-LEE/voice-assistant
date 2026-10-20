@@ -329,7 +329,7 @@ and `model_busy` for meeting generation, with content-free failure diagnostics.
 
 - A throttled (429) or transiently failed (408, 5xx or network) call is retried **at most once**.
 - The retry happens only when the service asks for a wait of at most 1 s (`retry-after-ms`, `x-ms-retry-after-ms` or `Retry-After`), or 250 ms without a hint.
-- The call must also have at least 2 s of its deadline left after that wait. The deadlines are 30 s for the answer and 10 s for the classifier and for a Korean line.
+- The call must also have at least 2 s of its deadline left after that wait. The answer and the classifier are bounded by the reply's own 30 s deadline, counted from the reply's start (`MeetingSession` passes it as an absolute timestamp where it creates the reply's cancellation), so time already spent on retrieval counts. The classifier also has its own 10 s budget. A Korean line has its own 10 s deadline.
 - Otherwise the failure surfaces at once through the existing paths: `model_busy` (429) or `response_unavailable` for the reply, `response.korean` `failed:true` for a Korean line, and no emphasis for the classifier.
 
 Every 429 is counted in `voiceassistant.chat.throttled`, and every retry in `voiceassistant.chat.retries`, both by `operation`. Practice, materials ingestion and other non-live calls keep the SDK default retries.

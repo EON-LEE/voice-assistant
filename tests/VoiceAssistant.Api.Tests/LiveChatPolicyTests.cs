@@ -107,6 +107,26 @@ public sealed class LiveChatPolicyTests
         Assert.Equal(3, transport.ChatCalls);
     }
 
+    [Fact]
+    public void TheReplyDeadlineBoundsTheAnswerAndClassifierButNotKoreanLines()
+    {
+        var clock = new ManualClock();
+        using (LiveChatCall.WithinReplyDeadline(clock.GetTimestamp() + 30 * clock.TimestampFrequency, clock))
+        {
+            // Retrieval took 29 of the reply's 30 seconds before the answer request.
+            clock.Advance(TimeSpan.FromSeconds(29));
+            using (var answer = LiveChatCall.Begin("answer", AzureMeetingProvider.AnswerBudget, clock, withinReply: true))
+                Assert.Equal(TimeSpan.FromSeconds(1), answer.Remaining);
+            using (var classifier = LiveChatCall.Begin("classifier", AzureMeetingProvider.ClassifierBudget, clock, withinReply: true))
+                Assert.Equal(TimeSpan.FromSeconds(1), classifier.Remaining);
+            // A Korean line has its own deadline, even when it is started from within the reply.
+            using (var translation = LiveChatCall.Begin("translation", AzureMeetingProvider.TranslationBudget, clock))
+                Assert.Equal(AzureMeetingProvider.TranslationBudget, translation.Remaining);
+        }
+        using var outside = LiveChatCall.Begin("answer", AzureMeetingProvider.AnswerBudget, clock, withinReply: true);
+        Assert.Equal(AzureMeetingProvider.AnswerBudget, outside.Remaining);
+    }
+
     [Theory]
     [InlineData("retry-after-ms", "250", 250)]
     [InlineData("x-ms-retry-after-ms", "1500", 1500)]
@@ -156,6 +176,42 @@ public sealed class LiveChatPolicyTests
 
 public sealed partial class ApiTests
 {
+    [Theory]
+    [InlineData(29, false)]
+    [InlineData(1, true)]
+    public async Task ThrottledAnswerIsRetriedOnlyWhenRetrievalLeftTheReplyEnoughTime(int retrievalSeconds, bool retried)
+    {
+        var clock = new ManualClock();
+        // Retrieval takes most (or little) of the 30-second reply deadline on the session clock; the answer is then throttled
+        // with a zero Retry-After, so only the reply's remaining time decides whether it is retried.
+        using var transport = new FaultTransport { OnSearch = () => clock.Advance(TimeSpan.FromSeconds(retrievalSeconds)) }
+            .Answer(HttpStatusCode.TooManyRequests, retryAfterMs: "0").Answer(HttpStatusCode.OK);
+        using var http = new HttpClient(transport);
+        var provider = new AzureBackedProvider(FaultTransport.Provider(http));
+        await using var host = await Host.StartAsync(provider: provider, clock: clock);
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "grounded" }));
+        Assert.Equal("session.ready", TypeOf(await Receive(socket)));
+
+        provider.Emit(new("question", 1, "What is our delivery plan for the rollout?", true));
+        var messages = await ReceiveUntilAsync(socket, found =>
+            found.Any(message => TypeOf(message) is "response.completed" or "response.cancelled"));
+
+        var answers = transport.ChatBodies.Count(body => body.Contains("\"stream\":true", StringComparison.Ordinal));
+        if (retried)
+        {
+            Assert.Equal(2, answers);
+            Assert.DoesNotContain(messages, message => TypeOf(message) == "error");
+            Assert.Equal("grounded", messages.Single(message => TypeOf(message) == "response.completed").GetProperty("grounding").GetString());
+        }
+        else
+        {
+            Assert.Equal(1, answers);
+            Assert.Equal("model_busy", Assert.Single(messages, message => TypeOf(message) == "error").GetProperty("code").GetString());
+        }
+        await Send(socket, """{"type":"session.stop"}""");
+    }
+
     [Fact]
     public async Task ThrottledLiveAnswerShowsModelBusyAtOnceInsteadOfWaitingOutRetryAfter()
     {

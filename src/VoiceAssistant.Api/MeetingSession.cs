@@ -92,6 +92,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     private readonly List<Task> retired = [];
     private readonly List<Task> translations = [];
     private KoreanScope? koreanScope;
+    /// <summary>How long one reply may take, retrieval and model included (the protocol's response deadline).</summary>
+    internal static readonly TimeSpan ResponseDeadline = TimeSpan.FromSeconds(30);
     /// <summary>Recognizer restarts allowed per session after retryable cancellations; a failed restart attempt counts too.</summary>
     internal const int MaxSpeechRestarts = 3;
     private const string SpeechUnavailableMessage = "Speech recognition ended unexpectedly. Reconnect to continue.";
@@ -712,7 +714,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         await CancelResponseAsync(lifetime);
         generation?.Dispose();
         generation = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
-        generation.CancelAfter(TimeSpan.FromSeconds(30));
+        generation.CancelAfter(ResponseDeadline);
+        // The same deadline as an absolute session-clock timestamp, so a model retry only happens while the reply has time left.
+        var deadline = clock.GetTimestamp() + (long)(ResponseDeadline.TotalSeconds * clock.TimestampFrequency);
         responseId = Guid.NewGuid().ToString("N");
         responseTurn = preparedTurn ?? lastTurn;
         // The reply keeps the settings it starts with, even when the client changes them while it generates.
@@ -737,7 +741,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
         var token = generation.Token;
         var route = responseRoute;
-        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, scope, settings, measurement, token, lifetime));
+        generationTask = Task.Run(() => GenerateAsync(number, history, route, prefetched, scope, settings, measurement, deadline, token, lifetime));
     }
 
     private async Task CancelResponseAsync(CancellationToken cancellation)
@@ -756,9 +760,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     }
 
     private async Task GenerateAsync(int number, ConversationTurn[] history, string route, Task<RetrievalOutcome>? prefetched,
-        KoreanScope? scope, SessionOptions settings, MeetingMetrics.ResponseMeasurement measurement, CancellationToken cancellation,
-        CancellationToken lifetime)
+        KoreanScope? scope, SessionOptions settings, MeetingMetrics.ResponseMeasurement measurement, long deadline,
+        CancellationToken cancellation, CancellationToken lifetime)
     {
+        // Model calls of this reply (answer, classifier) see the time it really has left, after any retrieval wait.
+        using var replyDeadline = LiveChatCall.WithinReplyDeadline(deadline, clock);
         var groundingUnavailable = false;
         try
         {

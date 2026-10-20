@@ -6,33 +6,65 @@ namespace VoiceAssistant.Api;
 /// <summary>
 /// The live reply chat call running on this async flow (answer, classifier or translation) and its deadline, read by
 /// <see cref="LiveChatRetryPolicy"/>. The provider opens one around each live call; disposing it restores the previous one.
+/// A call that serves the reply being generated (answer, classifier) is also bounded by that reply's absolute deadline,
+/// which the session sets with <see cref="WithinReplyDeadline"/> where it creates the reply's cancellation.
 /// </summary>
 internal sealed class LiveChatCall : IDisposable
 {
     private static readonly AsyncLocal<LiveChatCall?> Active = new();
+    private static readonly AsyncLocal<ReplyDeadline?> Reply = new();
     private readonly LiveChatCall? previous;
     private readonly TimeProvider clock;
     private readonly long started;
     private readonly TimeSpan budget;
+    private readonly ReplyDeadline? reply;
 
-    private LiveChatCall(string operation, TimeSpan budget, TimeProvider clock)
+    private LiveChatCall(string operation, TimeSpan budget, TimeProvider clock, bool withinReply)
     {
         Operation = operation;
         this.budget = budget;
         this.clock = clock;
         started = clock.GetTimestamp();
+        reply = withinReply ? Reply.Value : null;
         previous = Active.Value;
         Active.Value = this;
     }
 
     public static LiveChatCall? Current => Active.Value;
     public string Operation { get; }
-    public TimeSpan Remaining => budget - clock.GetElapsedTime(started);
 
-    public static LiveChatCall Begin(string operation, TimeSpan budget, TimeProvider? clock = null) =>
-        new(operation, budget, clock ?? TimeProvider.System);
+    /// <summary>The call's own budget left, or the time until the reply's deadline when that comes first.</summary>
+    public TimeSpan Remaining
+    {
+        get
+        {
+            var own = budget - clock.GetElapsedTime(started);
+            if (reply is null) return own;
+            var untilDeadline = reply.Clock.GetElapsedTime(reply.Clock.GetTimestamp(), reply.Timestamp);
+            return untilDeadline < own ? untilDeadline : own;
+        }
+    }
+
+    /// <param name="withinReply">True when the call is part of the reply being generated, so the reply's deadline bounds it too.</param>
+    public static LiveChatCall Begin(string operation, TimeSpan budget, TimeProvider? clock = null, bool withinReply = false) =>
+        new(operation, budget, clock ?? TimeProvider.System, withinReply);
+
+    /// <summary>Sets, for this async flow, the absolute deadline of the reply being generated as a timestamp of <paramref name="clock"/>.</summary>
+    public static IDisposable WithinReplyDeadline(long deadlineTimestamp, TimeProvider clock)
+    {
+        var outer = Reply.Value;
+        Reply.Value = new(deadlineTimestamp, clock);
+        return new RestoreReply(outer);
+    }
 
     public void Dispose() => Active.Value = previous;
+
+    private sealed record ReplyDeadline(long Timestamp, TimeProvider Clock);
+
+    private sealed class RestoreReply(ReplyDeadline? outer) : IDisposable
+    {
+        public void Dispose() => Reply.Value = outer;
+    }
 }
 
 /// <summary>

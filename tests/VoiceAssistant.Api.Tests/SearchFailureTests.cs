@@ -274,6 +274,7 @@ internal sealed class FaultTransport : HttpMessageHandler
     private readonly Queue<(HttpStatusCode Status, string Body)> search = new();
     private readonly Queue<HttpStatusCode> embeddings = new();
     private readonly Queue<(HttpStatusCode Status, string? RetryAfter, string? RetryAfterMs)> chats = new();
+    private readonly Queue<(HttpStatusCode Status, string? RetryAfter, string? RetryAfterMs)> answers = new();
     private int searchCalls;
     private int embeddingCalls;
     private int chatCalls;
@@ -281,6 +282,8 @@ internal sealed class FaultTransport : HttpMessageHandler
     public HttpStatusCode ChatStatus { get; init; } = HttpStatusCode.OK;
     /// <summary>A <c>Retry-After</c> header (seconds) sent with every failing <see cref="ChatStatus"/>.</summary>
     public string? ChatRetryAfter { get; init; }
+    /// <summary>Runs as each Search request arrives, for example to let a test clock show a slow retrieval.</summary>
+    public Action? OnSearch { get; init; }
     /// <summary>Streamed answer chunks; the newline starts the alternative line.</summary>
     public string[] ChatChunks { get; init; } = ["A general reply for now.", "\nThe exact details still need to be confirmed."];
     public ConcurrentQueue<string> ChatBodies { get; } = new();
@@ -304,6 +307,13 @@ internal sealed class FaultTransport : HttpMessageHandler
     public FaultTransport Chat(HttpStatusCode status, string? retryAfter = null, string? retryAfterMs = null)
     {
         lock (gate) chats.Enqueue((status, retryAfter, retryAfterMs));
+        return this;
+    }
+
+    /// <summary>Like <see cref="Chat"/>, but only for the streamed answer request, so the classifier keeps succeeding.</summary>
+    public FaultTransport Answer(HttpStatusCode status, string? retryAfter = null, string? retryAfterMs = null)
+    {
+        lock (gate) answers.Enqueue((status, retryAfter, retryAfterMs));
         return this;
     }
 
@@ -356,6 +366,7 @@ internal sealed class FaultTransport : HttpMessageHandler
         if (request.RequestUri!.Host.Contains("search.windows.net", StringComparison.Ordinal))
         {
             Interlocked.Increment(ref searchCalls);
+            OnSearch?.Invoke();
             var (status, json) = Next(search, (HttpStatusCode.OK, Scored(3.2)));
             return Json(json, status);
         }
@@ -372,7 +383,11 @@ internal sealed class FaultTransport : HttpMessageHandler
         }
         ChatBodies.Enqueue(body);
         Interlocked.Increment(ref chatCalls);
-        var (chatStatus, retryAfter, retryAfterMs) = Next(chats, (ChatStatus, ChatRetryAfter, null));
+        var streamed = body.Contains("\"stream\":true", StringComparison.Ordinal);
+        bool queuedAnswer;
+        lock (gate) queuedAnswer = streamed && answers.Count > 0;
+        var (chatStatus, retryAfter, retryAfterMs) = queuedAnswer ? Next(answers, (HttpStatusCode.OK, null, null))
+            : Next(chats, (ChatStatus, ChatRetryAfter, null));
         if (chatStatus != HttpStatusCode.OK)
         {
             var failure = Json(Error(chatStatus), chatStatus);
@@ -380,7 +395,7 @@ internal sealed class FaultTransport : HttpMessageHandler
             if (retryAfterMs is not null) failure.Headers.TryAddWithoutValidation("retry-after-ms", retryAfterMs);
             return failure;
         }
-        if (!body.Contains("\"stream\":true", StringComparison.Ordinal))
+        if (!streamed)
             return Json("""{"id":"test","object":"chat.completion","created":1,"model":"test","choices":[{"index":0,"message":{"role":"assistant","content":"LISTEN"},"finish_reason":"stop"}]}""");
         var sse = string.Concat(ChatChunks.Select(text => "data: " + JsonSerializer.Serialize(new
         {

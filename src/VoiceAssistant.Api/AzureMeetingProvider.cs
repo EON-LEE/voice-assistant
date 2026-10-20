@@ -265,7 +265,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
     {
         var transcript = string.Join("\n", conversation.TakeLast(8).Select(turn => "- " + turn.Text.ReplaceLineEndings(" ")));
         var options = CreateChatOptions(new ServiceSettings { ChatMaxOutputTokens = 1024 });
-        using var call = LiveChatCall.Begin("classifier", ClassifierBudget);
+        using var call = LiveChatCall.Begin("classifier", ClassifierBudget, withinReply: true);
         var result = await openAI.GetChatClient(settings.ChatDeployment).CompleteChatAsync(
             [new SystemChatMessage(TurnPrompt), new UserChatMessage("Recent meeting speech (oldest first, speakers unknown):\n" + transcript)],
             options, cancellation);
@@ -465,7 +465,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 Documents = grounding.Status == "grounded" ? grounding.Documents : Array.Empty<Evidence>()
             })));
         // The request (and its single allowed retry) is sent within this scope, on the first step of the stream.
-        using var call = LiveChatCall.Begin("answer", AnswerBudget);
+        using var call = LiveChatCall.Begin("answer", AnswerBudget, withinReply: true);
         await foreach (var update in openAI.GetChatClient(settings.ChatDeployment)
             .CompleteChatStreamingAsync(messages, CreateChatOptions(settings), cancellation))
         {
