@@ -70,6 +70,8 @@ speech, and new speech re-arms the wait, so a question split across several fina
 and a statement is answered once it reaches 12 words; a shorter statement keeps waiting for more context. The wait shortens to
 `min(replySettleMs, 300)` ms when the gathered speech is a question or request that ends like a finished sentence (it does not
 end on a preposition, auxiliary, article or conjunction), and to 300 ms once speech has been gathered for more than 12 seconds.
+Gathered speech is bounded by the same 12-turn history the model sees: a waiting segment that leaves that history is dropped
+from the reply target (and a remainder of only backchannels is discarded), never an error.
 While the server waits it already retrieves for the latest final. `response.request` replies at once. `0` keeps one reply per
 final utterance.
 

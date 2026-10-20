@@ -62,6 +62,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     int maxSessionMinutes = 30, TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // Session duration, settle timers and reply timing all use this clock, so tests can drive them without sleeping.
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly Channel<SessionEvent> events = Channel.CreateBounded<SessionEvent>(
         new BoundedChannelOptions(64) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
     private readonly List<ConversationTurn> conversation = [];
@@ -109,7 +111,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     public async Task RunAsync(CancellationToken requestAborted, CancellationToken superseded = default)
     {
-        using var duration = new CancellationTokenSource(TimeSpan.FromMinutes(maxSessionMinutes), timeProvider ?? TimeProvider.System);
+        using var duration = new CancellationTokenSource(TimeSpan.FromMinutes(maxSessionMinutes), clock);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, duration.Token, superseded);
         using var receiving = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
         ISpeechStream? speech = null;
@@ -126,7 +128,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             if (!options.TranscribeOnly) prefetch = new(provider, objectId, options, lifetime.Token);
             speech = await provider.StartSpeechAsync(
                 options,
-                transcript => EnqueueCallback(new("transcript", transcript, Timestamp: TimeProvider.System.GetTimestamp()), lifetime),
+                transcript => EnqueueCallback(new("transcript", transcript, Timestamp: clock.GetTimestamp()), lifetime),
                 error => EnqueueCallback(new("fatal", error), lifetime), startup.Token);
             // The client learns which optional features this socket has: pushed Korean lines, and settings changes while running.
             var ready = new Dictionary<string, object> { ["type"] = "session.ready", ["protocolVersion"] = 1 };
@@ -168,6 +170,9 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             {
                                 if (pendingSpeech.Count == 0) pendingSince = message.Timestamp;
                                 pendingSpeech.Add(transcript.Text);
+                                // Gathered speech that already left the bounded history can no longer be a reply target.
+                                if (pendingSpeech.Count > conversation.Count)
+                                    pendingSpeech.RemoveRange(0, pendingSpeech.Count - conversation.Count);
                                 // The reply waits out the settle window anyway, so retrieve for this final in the meantime.
                                 prefetch!.Update(transcript, earlierTranscripts.With(conversation.GetRange(0, conversation.Count - 1)));
                                 ScheduleSettle(lifetime, afterFinal: true);
@@ -183,7 +188,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             prefetch!.Update(transcript, earlierTranscripts.With(conversation));
                             // Ongoing speech postpones the reply, except a question or request already waiting too long.
                             if (options.ReplySettleMs > 0 && pendingSpeech.Count > 0 &&
-                                !(TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.InvitesReply(pendingSpeech)))
+                                !(clock.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.InvitesReply(pendingSpeech)))
                                 ScheduleSettle(lifetime);
                         }
                         break;
@@ -385,16 +390,17 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
     {
         var number = ++settleNumber;
         var delay = TimeSpan.FromMilliseconds(options.ReplySettleMs);
-        if (pendingSpeech.Count > 0 && TimeProvider.System.GetElapsedTime(pendingSince) > MaxGatherTime)
+        if (pendingSpeech.Count > 0 && clock.GetElapsedTime(pendingSince) > MaxGatherTime)
             // A long-running gathered statement is answered as soon as the speaker pauses briefly.
             delay = TimeSpan.FromMilliseconds(CompleteSettleMs);
         else if (afterFinal && ReplyTrigger.InvitesReply(pendingSpeech) && ReplyTrigger.LooksComplete(pendingSpeech))
             // New speech re-arms the full window, so a continuation still merges into one reply.
             delay = TimeSpan.FromMilliseconds(Math.Min(options.ReplySettleMs, CompleteSettleMs));
-        _ = Task.Delay(delay, lifetime.Token).ContinueWith(task =>
+        // Enqueued inline when the timer fires (a non-blocking TryWrite), so the settle is ordered before any later speech.
+        _ = Task.Delay(delay, clock, lifetime.Token).ContinueWith(task =>
         {
             if (task.IsCompletedSuccessfully) EnqueueCallback(new("settle", Generation: number), lifetime);
-        }, TaskScheduler.Default);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private void EnqueueCallback(SessionEvent message, CancellationTokenSource lifetime)
@@ -506,9 +512,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     private ConversationTurn[] CreateFocusedHistory(int currentSegments)
     {
-        if (currentSegments < 1 || currentSegments > conversation.Count)
-            throw new InvalidOperationException("Current response segments must identify recent conversation turns.");
-        var focusStart = conversation.Count - currentSegments;
+        // Only segments still in the bounded history can be targeted; older gathered speech is dropped, never an error.
+        var focusStart = conversation.Count - Math.Clamp(currentSegments, 1, Math.Max(1, conversation.Count));
         var focusedConversation = conversation.Select((turn, index) =>
             turn with { CurrentResponseTarget = index >= focusStart }).ToArray();
         return earlierTranscripts.With(focusedConversation);
@@ -535,7 +540,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         var prefetched = prefetch?.Take(responseTurn!, targetText, responseRoute, prior);
         retrievalPrefetched = prefetched is not null;
         responseActive = true;
-        responseMeasurement = new(lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual);
+        responseMeasurement = new(lastFinalTimestamp, MeetingMetrics.ProviderMode(provider), manual, clock);
         var number = ++generationNumber;
         await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
         if (!generationTask.IsCompleted) retired.Add(generationTask);
