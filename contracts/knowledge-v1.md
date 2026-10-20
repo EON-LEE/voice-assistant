@@ -81,5 +81,6 @@ should additionally say retrieved documents may be the user's own prior notes, a
 uncited fact as coming from them.
 
 ## Runtime requirements
-The API runtime identity needs **Search Index Data Contributor** (currently Reader). Embedding uses the existing OpenAI
+The API runtime identity has **Search Index Data Contributor** on the Search service (`infra/main.bicep`); there is no
+separate Reader assignment. Embedding uses the existing OpenAI
 embedding deployment. Fake mode (Development only) gets an in-memory store so the browser UI and tests work without Azure.

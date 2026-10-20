@@ -57,18 +57,48 @@ browser-readable citation links.
 
 ## Prerequisites and deployment
 
+### Local release target (`infra/release.local.json`)
+
+Environment identifiers stay out of Git. Copy `infra/release.example.json` to
+`infra/release.local.json` (ignored by `*.local.json`) and fill in:
+
+| Field | Used by | Meaning |
+| --- | --- | --- |
+| `version` | all | Always `1` |
+| `subscriptionId`, `tenantId` | every online script | The only subscription/tenant the scripts may touch (the subscription lock) |
+| `projectId` | `Prepare-Azure.ps1`, Az.Accounts adapter | GUID in the `projectId` ownership tag on bootstrap resources; generate one with `[guid]::NewGuid()` for a new environment |
+| `resourceGroup`, `registryName`, `imageRepository` | `scripts/release/Release.ps1` | Production resource group, existing ACR name (without `.azurecr.io`), image repository (`voice-assistant`) |
+| `productionApp`, `stagingApp` | `scripts/release/Release.ps1` | Container App names; optional `stagingResourceGroup` when staging lives elsewhere |
+
+`Deploy.ps1` (online modes), `Prepare-Azure.ps1`, `Import-Knowledge.ps1`,
+`Update-SemanticIndex.ps1` and the Az.Accounts adapter read the subscription,
+tenant and ownership tag only from this file. A missing file, a placeholder or a
+mismatching `-SubscriptionId`/`-TenantId` stops them before any Azure request;
+errors name the field, never its value. Set `VOICE_ASSISTANT_RELEASE_CONFIG` to
+use another path (the offline tests point it at a synthetic fixture). Offline
+modes (the defaults) do not need the file.
+
+### Releasing a new image
+
+`scripts/release/Release.ps1` builds the clean `origin/main` commit in ACR, deploys
+the digest to the staging app, checks health and security headers, runs an optional
+smoke test and, only with `-Production`, promotes the same digest and prints the
+rollback commands. See [scripts/release/README.md](../scripts/release/README.md) and
+the [release and rollback runbook](../docs/runbooks/release-and-rollback.md).
+
 ### Readiness and optional dedicated-project bootstrap
 
 `scripts\infra\Prepare-Azure.ps1` closes the resource-group/ACR prerequisite
-without adopting unrelated resources. It is locked to subscription
-`b0af194e-77a5-4471-bb43-67e78295b5c8`, tenant
-`2573db8c-dfe5-4805-9e28-a0859692e705`. Default **Plan** is offline; **Check**
+without adopting unrelated resources. It is locked to the subscription and tenant
+in your git-ignored `infra/release.local.json` (see
+[Local release target](#local-release-target-inforeleaselocaljson)); without that
+file every online check fails closed. Default **Plan** is offline; **Check**
 is bounded/read-only; **Apply** requires valid concrete configuration, a recent
 documented positive cost estimate, explicit `-CostApproved`, and an existing
 authorized identity. Never use synthetic fixture prices as a real cost review.
 
 Copy `bootstrap.example.json` to ignored `bootstrap.local.json`, then supply a
-dedicated resource group (for example `rg-voice-assistant-web`), approved region,
+dedicated resource group (for example `rg-<project>`), approved region,
 globally unique registry name and SKU. `estimatedMonthlyCostUsd` covers the
 planned scope; `estimateDateUtc` must be UTC `yyyy-MM-dd` within 30 days and
 `pricingReference` must identify the actual cost review. Set `costScope` to
@@ -98,7 +128,7 @@ evidence, not an automated price quote, cap or resource budget.
 The report directory must exist. The report is initialized before any mutation
 so a failed/interrupted run does not leave a previous success report in place.
 Groups/registries are tagged `managedBy=voice-assistant-bootstrap` and
-`projectId=ff8f97b4-5db4-458e-99de-0d63cfc96a4a`. Repeated runs reuse matching
+`projectId=<projectId from infra/release.local.json>`. Repeated runs reuse matching
 resources unchanged; unowned/untagged resources, location/SKU mismatches,
 admin-enabled registries and incompatible ABAC mode fail instead of being
 retagged or altered. Serialize bootstrap ownership with other operators; a
@@ -189,9 +219,9 @@ names, request URLs with tokens, or credentials.
 
 ### Main application prerequisites
 
-1. Sign in separately with Azure CLI. Target subscription:
-   `ME-M365CPI74210306-eonlee-1`
-   (`b0af194e-77a5-4471-bb43-67e78295b5c8`). Scripts pass `--subscription`
+1. Sign in separately with Azure CLI. The target subscription and tenant are the
+   `subscriptionId` and `tenantId` in your git-ignored `infra/release.local.json`.
+   Scripts pass `--subscription`
    explicitly, check enabled state/tenant, and never call `az account set` or
    change workstation defaults. Alternatively use the verified existing
    Az.Accounts path above; no new login is needed if that identity is usable.
@@ -243,28 +273,30 @@ names, request URLs with tokens, or credentials.
 They are public identity metadata, **not secrets**: API audience is the API
 application/client GUID in a v2 token's `aud`; SPA client GUID is different;
 scope is the complete exposed `api://.../Meeting.Access` URI.
-`GET /api/client-config` returns only `{clientId, authority, scope}`, with a full
-tenant authority. No Azure keys, connection strings or bearer tokens are exposed.
+`GET /api/client-config` returns `{clientId, authority, scope, mode, login, webSocketPath}`
+with a full tenant authority; `login` is `demo` when the optional demo login below is
+enabled (outside Fake mode), otherwise `entra`. No Azure keys, connection strings or bearer tokens are exposed.
 `AZURE_CLIENT_ID` selects the assigned runtime identity for `DefaultAzureCredential`.
 Speech region, custom endpoint and full `SpeechResourceId` are wired separately.
 
-From repository root, edit the paths/group before executing:
+From repository root, edit the paths/group before executing. Online modes read the
+subscription and tenant from `infra/release.local.json`; an explicit
+`-SubscriptionId` may only restate it:
 
 ```powershell
 $bicep = 'C:\tools\bicep.exe'
 $parameters = '.\infra\parameters.local.json'
-$subscription = 'b0af194e-77a5-4471-bb43-67e78295b5c8'
 $group = '<existing-resource-group>'
 
 # Offline compile + fail-fast parameter checks only (the default).
 .\scripts\infra\Deploy.ps1 -ParametersFile $parameters -BicepPath $bicep
 
 # Explicit online ARM checks, no deployment.
-.\scripts\infra\Deploy.ps1 -ParametersFile $parameters -BicepPath $bicep -SubscriptionId $subscription -ResourceGroup $group -Validate
-.\scripts\infra\Deploy.ps1 -ParametersFile $parameters -BicepPath $bicep -SubscriptionId $subscription -ResourceGroup $group -WhatIf
+.\scripts\infra\Deploy.ps1 -ParametersFile $parameters -BicepPath $bicep -ResourceGroup $group -Validate
+.\scripts\infra\Deploy.ps1 -ParametersFile $parameters -BicepPath $bicep -ResourceGroup $group -WhatIf
 
 # Only after approval of resource cost, role grants and the reviewed change.
-.\scripts\infra\Deploy.ps1 -ParametersFile $parameters -BicepPath $bicep -SubscriptionId $subscription -ResourceGroup $group -Apply
+.\scripts\infra\Deploy.ps1 -ParametersFile $parameters -BicepPath $bicep -ResourceGroup $group -Apply
 ```
 
 What-if output is deliberately limited to resource IDs/change types; full diffs
@@ -273,6 +305,35 @@ ARM validation cannot prove quota, image pull, consent or data-plane connectivit
 The deterministic default-domain browser origin is computed from app name and
 environment domain and configured as the backend's exact allowed origin; update
 Entra's SPA redirect after deployment. Custom domains are not configured.
+
+### Optional demo login (`POST /api/demo/login`)
+
+For demos without Entra accounts, one shared username/password can issue bearer
+tokens for one fixed identity. Entra tokens stay accepted. `main.bicep` does not set
+these values; configure them on the Container App, with the password and signing key
+as Container Apps secrets (`secretref:`), never in Git:
+
+| Setting | Meaning |
+| --- | --- |
+| `DemoLogin__Username` | Enables the endpoint when non-empty |
+| `DemoLogin__Password` | Shared password (secret) |
+| `DemoLogin__ObjectId` | GUID used as the token's `oid`; uploaded materials belong to it |
+| `DemoLogin__SigningKey` | Base64 HMAC key of at least 32 bytes (secret) |
+| `DemoLogin__TokenDays` | Token lifetime in days: default **7**, allowed 1-30; any other value prevents startup |
+
+`POST /api/demo/login` takes `{"username":"...","password":"..."}` and returns
+`{token, username, expiresAt}`. Outside Fake mode the request must carry an `Origin`
+header equal to the app's browser origin (scripts must send it too). It answers 400
+for a malformed body, 401 for wrong credentials, 403 for a missing or other Origin,
+413 for a body over 1 KB and 429 (with `Retry-After: 600`) after 10 failed attempts
+from one client address in 10 minutes.
+The token is an HS256 JWT (issuer/audience `voice-assistant-demo`, scope
+`Meeting.Access`). It cannot be revoked: rotate `DemoLogin__SigningKey` to invalidate
+all issued tokens. Anyone with the password acts as that one identity and sees its
+materials, so use a dedicated synthetic identity, never a real person's object ID.
+A template deployment (`Deploy.ps1 -Apply`) replaces the container environment
+list, so re-apply these settings afterwards. The evaluation harness can sign in
+through this endpoint (see [quality baseline](../docs/runbooks/quality-baseline.md)).
 
 ### One replica is intentional, not high availability
 
@@ -309,8 +370,8 @@ ownership/permissions from a local file and does not claim to sync them.
 .\scripts\infra\Import-Knowledge.ps1 -ManifestPath C:\approved\manifest.json -ContentRoot C:\approved
 
 # Only during an approved maintenance window with the app stopped/drained.
+# Subscription and tenant come from infra/release.local.json.
 .\scripts\infra\Import-Knowledge.ps1 -ManifestPath C:\approved\manifest.json -ContentRoot C:\approved `
-  -SubscriptionId b0af194e-77a5-4471-bb43-67e78295b5c8 -TenantId '<tenant-guid>' `
   -ResourceGroup '<existing-resource-group>' -SearchName '<deployed-search-name>' `
   -OpenAIName '<deployed-openai-name>' -StorageAccountName '<deployed-storage-name>' `
   -EmbeddingDeployment meeting-embedding -CreateIndex -ConfirmExclusiveMaintenance -Apply
@@ -405,10 +466,9 @@ the migration command:
 .\scripts\infra\Update-SemanticIndex.ps1 -SchemaFile C:\approved-artifacts\search-index-metadata.json
 
 # Explicit, metadata-only apply against the owned Search service.
+# Subscription and tenant come from infra/release.local.json.
 .\scripts\infra\Update-SemanticIndex.ps1 -Apply -AuthProvider AzPowerShell `
-  -SubscriptionId b0af194e-77a5-4471-bb43-67e78295b5c8 `
-  -TenantId 2573db8c-dfe5-4805-9e28-a0859692e705 `
-  -ResourceGroup rg-voice-assistant-web -SearchName voice-search-2cmx22yjxadpg `
+  -ResourceGroup <existing-resource-group> -SearchName <deployed-search-name> `
   -IndexName meeting-knowledge
 ```
 
@@ -464,7 +524,12 @@ The metric alert checks
 otherwise alerts are portal-only. Missing metric series are not a reliable
 outage signal. `/health/live` and `/health/ready` are process/configuration checks,
 not billable Speech/OpenAI/Search dependency probes. Verify those dependencies
-separately with approved synthetic data and inspect platform metrics. Provider
+separately with approved synthetic data and inspect platform metrics.
+**Upcoming (next API wave, not in this revision):** in Azure mode `/health/ready`
+will return 200 only after an Azure warm-up of the Speech/OpenAI/Search paths,
+shipping together with telemetry, so a new revision is not marked ready while
+still cold. Until then a 200 from `/health/ready` proves only that the process
+started with valid configuration. Provider
 content-processing/abuse-monitoring policies still apply; this template does not
 override service retention policy or disable model content filtering.
 
@@ -480,10 +545,11 @@ because a script's default is dry-run.
 
 Local evidence: Bicep **v0.47.16**, official `bicep-win-x64.exe` SHA256
 `3f343ab1ce41feac156464adee3dc499cb6c197366fc731aed276192011d867c`,
-compiled without diagnostics. The **57 infrastructure/ingestion checks**, **77
-readiness/bootstrap/adapter checks**, **30 private-ingestion checks**, and **35
-semantic metadata migration checks** passed on Windows PowerShell 5.1, including
-the integrated backend Search contract:
+compiles without diagnostics. The infrastructure/ingestion, readiness/bootstrap/
+adapter, private-ingestion and semantic-metadata checks run on Windows PowerShell
+5.1 and PowerShell 7, including the integrated backend Search contract. CI runs them
+as the `infrastructure-offline-tests` stage of `scripts/verify-release.ps1`; the
+current counts are in each run's log and its `verification-evidence` artifact.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\infra\tests\Test-Offline.ps1 `
@@ -495,10 +561,12 @@ run independently. Its authentication/resource requests use isolated fixtures,
 including a synthetic Az.Accounts module; it never provisions cloud resources.
 The test suite requires no Azure account or real uploads. It checks compiled
 security/hosting settings, parameter rejection, mocked validation/what-if/apply
-subscription gates, offline defaults, ACLs, chunking, Unicode, index/vector
+subscription gates (including the fail-closed local release target), offline
+defaults, ACLs, chunking, Unicode, index/vector
 compatibility, mocked embeddings/uploads, stale versions, deletions, lease
 exclusion and partial-failure recovery. Omitting `BackendSchemaPath` skips the
-one cross-component schema comparison.
+one cross-component schema comparison. The tests point `VOICE_ASSISTANT_RELEASE_CONFIG`
+at the synthetic `scripts/infra/tests/fixtures/release.fixture.json`.
 
 **Follow-up read-only Azure evidence:** an existing Az.Accounts identity acquired
 an ARM token and read the approved enabled subscription/tenant successfully.
