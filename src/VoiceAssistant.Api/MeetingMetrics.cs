@@ -44,6 +44,8 @@ public static class MeetingMetrics
     private static readonly Counter<long> Ended = Count("voiceassistant.session.ended", "{session}", "Ended meeting sessions, by reason.");
     private static readonly Counter<long> SpeechRestarts = Count("voiceassistant.speech.restarts", "{restart}",
         "In-process speech recognizer restarts after a retryable cancellation.");
+    private static readonly Counter<long> WarmupFailures = Count("voiceassistant.warmup.failures", "{attempt}",
+        "Failed startup warm-up attempts, by stage and whether readiness requires it.");
     static MeetingMetrics() => Meter.CreateObservableGauge(
         "voiceassistant.sessions.active", () => Volatile.Read(ref activeSessions), "{session}", "Open meeting sessions.");
 
@@ -104,6 +106,9 @@ public static class MeetingMetrics
 
     public static void SpeechRestarted(string code, bool restarted) => SpeechRestarts.Add(1,
         new KeyValuePair<string, object?>("code", Bounded(code)), new KeyValuePair<string, object?>("outcome", restarted ? "restarted" : "failed"));
+
+    public static void WarmupFailed(string stage, bool required) => WarmupFailures.Add(1,
+        new KeyValuePair<string, object?>("stage", Bounded(stage)), new KeyValuePair<string, object?>("required", required ? "true" : "false"));
 
     public static void SessionStarted() => Interlocked.Increment(ref activeSessions);
 

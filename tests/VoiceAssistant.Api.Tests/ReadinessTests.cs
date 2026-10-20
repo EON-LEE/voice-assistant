@@ -21,20 +21,36 @@ internal sealed class InstantWarmup : IDependencyWarmup
     public Task WarmAsync(CancellationToken cancellation) => Task.CompletedTask;
 }
 
-/// <summary>A warm-up that waits for its gate (when given), then fails with the cause until <see cref="Succeed"/> is set.</summary>
+/// <summary>
+/// A warm-up that waits for its gate (when given), then fails with the cause until <see cref="Succeed"/> is set. Its optional
+/// (Search) part likewise waits for <see cref="OptionalGate"/> and fails with <see cref="OptionalFailure"/> until
+/// <see cref="OptionalSucceed"/> is set.
+/// </summary>
 internal sealed class ScriptedWarmup(Exception? failure = null) : IDependencyWarmup
 {
     private readonly Exception cause = failure ?? new InvalidOperationException("Synthetic warm-up failure.");
     private int attempts;
+    private int optionalAttempts;
     public int Attempts => Volatile.Read(ref attempts);
+    public int OptionalAttempts => Volatile.Read(ref optionalAttempts);
     public volatile bool Succeed = failure is null;
+    public volatile bool OptionalSucceed;
     public TaskCompletionSource? Gate { get; init; }
+    public TaskCompletionSource? OptionalGate { get; init; }
+    public Exception? OptionalFailure { get; init; }
 
     public async Task WarmAsync(CancellationToken cancellation)
     {
         Interlocked.Increment(ref attempts);
         if (Gate is not null) await Gate.Task.WaitAsync(cancellation);
         if (!Succeed) throw cause;
+    }
+
+    public async Task WarmOptionalAsync(CancellationToken cancellation)
+    {
+        Interlocked.Increment(ref optionalAttempts);
+        if (OptionalGate is not null) await OptionalGate.Task.WaitAsync(cancellation);
+        if (OptionalFailure is not null && !OptionalSucceed) throw OptionalFailure;
     }
 }
 
@@ -48,7 +64,8 @@ public sealed class ReadinessTests
         var clock = new ManualClock();
         var readiness = new Readiness();
         var logger = new ListLogger();
-        var warmup = new ScriptedWarmup(new WarmupException("search_connection", new RequestFailedException(503, PrivateDetail)));
+        var warmup = new ScriptedWarmup(new WarmupException("speech_connection",
+            new HttpRequestException(PrivateDetail, null, HttpStatusCode.ServiceUnavailable)));
         using var service = new StartupWarmup(warmup, readiness, clock, logger);
         await service.StartAsync(CancellationToken.None);
         await clock.WaitForTimersAsync(1);
@@ -68,7 +85,7 @@ public sealed class ReadinessTests
         Assert.Equal("not_ready", readiness.Status);
         var report = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
         Assert.Contains("not completed after 60 s", report.Message);
-        Assert.Contains("stage search_connection, RequestFailedException, HTTP status 503", report.Message);
+        Assert.Contains("stage speech_connection, HttpRequestException, HTTP status 503", report.Message);
         Assert.Equal(7, logger.Entries.Count(entry => entry.Level == LogLevel.Warning));
         Assert.DoesNotContain(logger.Entries, entry => entry.Message.Contains(PrivateDetail, StringComparison.Ordinal));
 
@@ -86,7 +103,47 @@ public sealed class ReadinessTests
     }
 
     [Fact]
-    public async Task AzureWarmupAcquiresBothTokensAndReachesEveryEndpointWhateverTheStatus()
+    public async Task SearchWarmupFailuresNeverDelayReadinessAndAreRetriedInTheBackground()
+    {
+        using var capture = new MetricCapture();
+        var clock = new ManualClock();
+        var readiness = new Readiness();
+        var logger = new ListLogger();
+        var warmup = new ScriptedWarmup
+        {
+            OptionalFailure = new WarmupException("search_connection", new RequestFailedException(0, PrivateDetail))
+        };
+        using var service = new StartupWarmup(warmup, readiness, clock, logger);
+
+        await service.StartAsync(CancellationToken.None);
+
+        // Ready as soon as the required part succeeded, although Search is still failing.
+        await WaitAsync(() => readiness.IsReady);
+        await clock.WaitForTimersAsync(1);
+        Assert.Equal(1, warmup.OptionalAttempts);
+        var timers = clock.TimersCreated;
+        clock.Advance(StartupWarmup.FirstDelay);
+        await clock.WaitForTimersAsync(timers + 1);
+        Assert.Equal(2, warmup.OptionalAttempts);
+        warmup.OptionalSucceed = true;
+        clock.Advance(StartupWarmup.FirstDelay * 2);
+        await WaitAsync(() => warmup.OptionalAttempts == 3);
+        clock.Advance(TimeSpan.FromMinutes(5));
+
+        Assert.Equal(3, warmup.OptionalAttempts);
+        Assert.Equal(1, warmup.Attempts);
+        Assert.True(readiness.IsReady);
+        Assert.Equal(2, capture.Named("voiceassistant.warmup.failures").Count(measurement =>
+            measurement.Tags.Contains(new("stage", "search_connection")) && measurement.Tags.Contains(new("required", "false"))));
+        Assert.Equal(2, logger.Entries.Count(entry => entry.Level == LogLevel.Warning &&
+            entry.Message.Contains("stage search_connection, RequestFailedException, HTTP status none; readiness does not wait", StringComparison.Ordinal)));
+        Assert.DoesNotContain(logger.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.DoesNotContain(logger.Entries, entry => entry.Message.Contains(PrivateDetail, StringComparison.Ordinal));
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RequiredWarmupNeverTouchesSearchWhileTheOptionalWarmupDoes()
     {
         var credential = new ScopeCredential();
         using var transport = new EndpointRecorder(HttpStatusCode.NotFound);
@@ -96,10 +153,15 @@ public sealed class ReadinessTests
         await warmup.WarmAsync(CancellationToken.None);
 
         Assert.Contains(AzureDependencyWarmup.CognitiveServicesScope, credential.Scopes);
-        Assert.Contains(AzureDependencyWarmup.SearchScope, credential.Scopes);
         Assert.Contains("example.openai.azure.com", transport.Hosts);
-        Assert.Contains("example.search.windows.net", transport.Hosts);
         Assert.Contains("koreacentral.stt.speech.microsoft.com", transport.Hosts);
+        Assert.DoesNotContain(AzureDependencyWarmup.SearchScope, credential.Scopes);
+        Assert.DoesNotContain("example.search.windows.net", transport.Hosts);
+
+        await warmup.WarmOptionalAsync(CancellationToken.None);
+
+        Assert.Contains(AzureDependencyWarmup.SearchScope, credential.Scopes);
+        Assert.Contains("example.search.windows.net", transport.Hosts);
         // The OpenAI and Search requests go through the authenticated client pipelines, warming their token caches too.
         Assert.All(transport.Requests.Where(request => !request.Host.Contains("speech", StringComparison.Ordinal)),
             request => Assert.True(request.Authorized, request.Host));
@@ -111,8 +173,10 @@ public sealed class ReadinessTests
         var credential = new ScopeCredential();
         using var transport = new EndpointRecorder(HttpStatusCode.Forbidden);
         using var http = new HttpClient(transport);
+        var warmup = Warmup(credential, http, search: false);
 
-        await Warmup(credential, http, search: false).WarmAsync(CancellationToken.None);
+        await warmup.WarmAsync(CancellationToken.None);
+        await warmup.WarmOptionalAsync(CancellationToken.None);
 
         Assert.DoesNotContain(AzureDependencyWarmup.SearchScope, credential.Scopes);
         Assert.DoesNotContain("example.search.windows.net", transport.Hosts);
@@ -120,20 +184,40 @@ public sealed class ReadinessTests
     }
 
     [Fact]
-    public async Task AnUnreachableEndpointOrAMissingTokenFailsTheWarmupNamingOnlyTheStage()
+    public async Task OnlyRequiredStagesFailTheWarmupAndEveryFailureNamesOnlyItsStage()
     {
-        using var transport = new EndpointRecorder(HttpStatusCode.NotFound) { Unreachable = "example.search.windows.net" };
-        using var http = new HttpClient(transport);
-        var unreachable = await Assert.ThrowsAsync<WarmupException>(() =>
-            Warmup(new ScopeCredential(), http, search: true).WarmAsync(CancellationToken.None));
-        Assert.Equal("search_connection", unreachable.Stage);
-        Assert.Equal(("search_connection", nameof(RequestFailedException), "none"), StartupWarmup.Describe(unreachable));
+        // Search unreachable, or its token missing: the required warm-up still succeeds; only the optional one fails.
+        using (var transport = new EndpointRecorder(HttpStatusCode.NotFound) { Unreachable = "example.search.windows.net" })
+        using (var http = new HttpClient(transport))
+        {
+            var warmup = Warmup(new ScopeCredential(), http, search: true);
+            await warmup.WarmAsync(CancellationToken.None);
+            var unreachable = await Assert.ThrowsAsync<WarmupException>(() => warmup.WarmOptionalAsync(CancellationToken.None));
+            Assert.Equal(("search_connection", nameof(RequestFailedException), "none"), StartupWarmup.Describe(unreachable));
+        }
+        using (var transport = new EndpointRecorder(HttpStatusCode.NotFound))
+        using (var http = new HttpClient(transport))
+        {
+            var warmup = Warmup(new ScopeCredential { FailScope = AzureDependencyWarmup.SearchScope }, http, search: true);
+            await warmup.WarmAsync(CancellationToken.None);
+            var noSearchToken = await Assert.ThrowsAsync<WarmupException>(() => warmup.WarmOptionalAsync(CancellationToken.None));
+            Assert.Equal(("search_token", nameof(CredentialUnavailableException), "none"), StartupWarmup.Describe(noSearchToken));
+        }
 
-        var noToken = await Assert.ThrowsAsync<WarmupException>(() =>
-            Warmup(new ScopeCredential { Failure = new CredentialUnavailableException(PrivateDetail) }, http, search: true)
-                .WarmAsync(CancellationToken.None));
-        Assert.Equal(("speech_openai_token", nameof(CredentialUnavailableException), "none"), StartupWarmup.Describe(noToken));
-        Assert.DoesNotContain(PrivateDetail, noToken.Message);
+        // Speech unreachable or no Cognitive Services token: readiness has to wait.
+        using (var transport = new EndpointRecorder(HttpStatusCode.NotFound) { Unreachable = "koreacentral.stt.speech.microsoft.com" })
+        using (var http = new HttpClient(transport))
+        {
+            var unreachable = await Assert.ThrowsAsync<WarmupException>(() =>
+                Warmup(new ScopeCredential(), http, search: true).WarmAsync(CancellationToken.None));
+            Assert.Equal(("speech_connection", nameof(HttpRequestException), "none"), StartupWarmup.Describe(unreachable));
+
+            var noToken = await Assert.ThrowsAsync<WarmupException>(() =>
+                Warmup(new ScopeCredential { FailScope = AzureDependencyWarmup.CognitiveServicesScope }, http, search: true)
+                    .WarmAsync(CancellationToken.None));
+            Assert.Equal(("speech_openai_token", nameof(CredentialUnavailableException), "none"), StartupWarmup.Describe(noToken));
+            Assert.DoesNotContain(PrivateDetail, noToken.Message);
+        }
     }
 
     [Fact]
@@ -177,11 +261,12 @@ public sealed class ReadinessTests
     private sealed class ScopeCredential : TokenCredential
     {
         public ConcurrentQueue<string> Scopes { get; } = new();
-        public Exception? Failure { get; init; }
+        /// <summary>The one scope whose token cannot be acquired.</summary>
+        public string? FailScope { get; init; }
 
         public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
         {
-            if (Failure is not null) throw Failure;
+            if (FailScope is not null && requestContext.Scopes.Contains(FailScope)) throw new CredentialUnavailableException(PrivateDetail);
             foreach (var scope in requestContext.Scopes) Scopes.Enqueue(scope);
             return new("test-only", DateTimeOffset.UtcNow.AddHours(1));
         }
@@ -218,6 +303,27 @@ public sealed class ReadinessTests
 
 public sealed partial class ApiTests
 {
+    [Fact]
+    public async Task AzureModeIsReadyWhileTheSearchWarmupIsStillPending()
+    {
+        // The optional (Search) warm-up never finishes here; readiness only needs the token, Azure OpenAI and Speech.
+        var warmup = new ScriptedWarmup { OptionalGate = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        await using var host = await Host.StartAsync(azure: true, warmup: warmup);
+        using var client = host.Client;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        HttpStatusCode status;
+        do
+        {
+            using var response = await client.GetAsync("/health/ready");
+            status = response.StatusCode;
+            if (status != HttpStatusCode.OK) await Task.Delay(10);
+        } while (status != HttpStatusCode.OK && DateTime.UtcNow < deadline);
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal(1, warmup.Attempts);
+        Assert.Equal(1, warmup.OptionalAttempts);
+    }
+
     [Fact]
     public async Task FakeModeIsReadyAtOnceAndLivenessNeverDependsOnWarmup()
     {

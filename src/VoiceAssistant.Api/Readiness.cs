@@ -27,10 +27,15 @@ public sealed class Readiness(bool ready = false)
     internal bool MarkOverdue() => Interlocked.CompareExchange(ref state, Overdue, Warming) == Warming;
 }
 
-/// <summary>One warm-up pass over the dependencies a reply needs; throws a <see cref="WarmupException"/> when one is unreachable.</summary>
+/// <summary>
+/// The dependency warm-up. <see cref="WarmAsync"/> covers what readiness requires and throws a <see cref="WarmupException"/>
+/// when one is unreachable; <see cref="WarmOptionalAsync"/> covers best-effort dependencies that readiness never waits for.
+/// </summary>
 public interface IDependencyWarmup
 {
     Task WarmAsync(CancellationToken cancellation);
+
+    Task WarmOptionalAsync(CancellationToken cancellation) => Task.CompletedTask;
 }
 
 /// <summary>A failed warm-up stage. Its message names only the stage, never service, URL or credential detail.</summary>
@@ -40,9 +45,11 @@ public sealed class WarmupException(string stage, Exception inner) : Exception($
 }
 
 /// <summary>
-/// Azure-mode startup warm-up: acquires the Cognitive Services token (Speech and Azure OpenAI share its audience) and the
-/// Search token, then opens TLS connections to the configured endpoints through the same clients and shared transports the
-/// live reply path uses. Any HTTP status counts as reached; none of the requests is a billable model, speech or ranking call.
+/// Azure-mode startup warm-up through the same clients and shared transports the live reply path uses. Readiness requires
+/// the Cognitive Services token (Speech and Azure OpenAI share its audience) and TLS connections to Azure OpenAI and Speech.
+/// Search is best-effort: a reply without it still works (it reports grounding unavailable), so its token and connection are
+/// warmed separately and readiness never waits for them. Any HTTP status counts as reached; none of the requests is a
+/// billable model, speech or ranking call.
 /// </summary>
 internal sealed class AzureDependencyWarmup : IDependencyWarmup
 {
@@ -78,16 +85,19 @@ internal sealed class AzureDependencyWarmup : IDependencyWarmup
 
     public async Task WarmAsync(CancellationToken cancellation)
     {
-        // Tokens first, so the connection requests below (and the first live calls) find them cached in the credential.
-        await Task.WhenAll(
-            StageAsync("speech_openai_token", token => credential.GetTokenAsync(new([CognitiveServicesScope]), token).AsTask(), cancellation),
-            search is null ? Task.CompletedTask
-                : StageAsync("search_token", token => credential.GetTokenAsync(new([SearchScope]), token).AsTask(), cancellation));
+        // The token first, so the connection requests below (and the first live calls) find it cached in the credential.
+        await StageAsync("speech_openai_token", token => credential.GetTokenAsync(new([CognitiveServicesScope]), token).AsTask(), cancellation);
         await Task.WhenAll(
             StageAsync("openai_connection", OpenAIAsync, cancellation),
-            search is null ? Task.CompletedTask : StageAsync("search_connection", SearchAsync, cancellation),
             // The Speech SDK opens its own connection per session, so for Speech this checks reachability (DNS and TLS) only.
             StageAsync("speech_connection", SpeechAsync, cancellation));
+    }
+
+    public async Task WarmOptionalAsync(CancellationToken cancellation)
+    {
+        if (search is null) return;
+        await StageAsync("search_token", token => credential.GetTokenAsync(new([SearchScope]), token).AsTask(), cancellation);
+        await StageAsync("search_connection", SearchAsync, cancellation);
     }
 
     private async Task OpenAIAsync(CancellationToken cancellation)
@@ -122,9 +132,10 @@ internal sealed class AzureDependencyWarmup : IDependencyWarmup
 }
 
 /// <summary>
-/// Runs the dependency warm-up in the background until it succeeds once, then marks the replica ready. It never blocks
-/// startup or <c>/health/live</c>; after <see cref="ReportAfter"/> of failures it reports not-ready with one content-free
-/// log line and keeps retrying with a capped backoff.
+/// Runs the dependency warm-up in the background until the required part succeeds once, then marks the replica ready. It
+/// never blocks startup or <c>/health/live</c>; after <see cref="ReportAfter"/> of failures it reports not-ready with one
+/// content-free log line and keeps retrying with a capped backoff. The optional part (Search) runs beside it with its own
+/// backoff until it succeeds once; its failures are logged and counted but never affect readiness.
 /// </summary>
 internal sealed class StartupWarmup(IDependencyWarmup warmup, Readiness readiness, TimeProvider clock, ILogger<StartupWarmup> logger)
     : BackgroundService
@@ -132,8 +143,16 @@ internal sealed class StartupWarmup(IDependencyWarmup warmup, Readiness readines
     internal static readonly TimeSpan ReportAfter = TimeSpan.FromSeconds(60);
     internal static readonly TimeSpan FirstDelay = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(15);
+    internal static readonly TimeSpan MaxOptionalDelay = TimeSpan.FromSeconds(60);
 
     protected override async Task ExecuteAsync(CancellationToken stopping)
+    {
+        var optional = WarmOptionalAsync(stopping);
+        await WarmRequiredAsync(stopping);
+        await optional;
+    }
+
+    private async Task WarmRequiredAsync(CancellationToken stopping)
     {
         var started = clock.GetTimestamp();
         var delay = FirstDelay;
@@ -151,6 +170,7 @@ internal sealed class StartupWarmup(IDependencyWarmup warmup, Readiness readines
             catch (Exception exception)
             {
                 var (stage, type, status) = Describe(exception);
+                MeetingMetrics.WarmupFailed(stage, required: true);
                 if (clock.GetElapsedTime(started) >= ReportAfter && readiness.MarkOverdue())
                     logger.LogError("Startup warm-up has not completed after {Seconds} s; /health/ready reports not ready until it does. " +
                         "Last failure: stage {Stage}, {ExceptionType}, HTTP status {Status}.",
@@ -162,6 +182,31 @@ internal sealed class StartupWarmup(IDependencyWarmup warmup, Readiness readines
             try { await Task.Delay(delay, clock, stopping); }
             catch (OperationCanceledException) { return; }
             delay = delay * 2 < MaxDelay ? delay * 2 : MaxDelay;
+        }
+    }
+
+    private async Task WarmOptionalAsync(CancellationToken stopping)
+    {
+        var delay = FirstDelay;
+        for (var attempt = 1; !stopping.IsCancellationRequested; attempt++)
+        {
+            try
+            {
+                await warmup.WarmOptionalAsync(stopping);
+                if (attempt > 1) logger.LogInformation("Optional warm-up completed after {Attempts} attempts.", attempt);
+                return;
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested) { return; }
+            catch (Exception exception)
+            {
+                var (stage, type, status) = Describe(exception);
+                MeetingMetrics.WarmupFailed(stage, required: false);
+                logger.LogWarning("Optional warm-up attempt {Attempt} failed: stage {Stage}, {ExceptionType}, HTTP status {Status}; " +
+                    "readiness does not wait for it.", attempt, stage, type, status);
+            }
+            try { await Task.Delay(delay, clock, stopping); }
+            catch (OperationCanceledException) { return; }
+            delay = delay * 2 < MaxOptionalDelay ? delay * 2 : MaxOptionalDelay;
         }
     }
 

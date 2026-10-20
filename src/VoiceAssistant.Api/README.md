@@ -69,10 +69,11 @@ The optional shared demo login (`DemoLogin__Username`, `DemoLogin__Password`, `D
 
 `GET /health/live` indicates only that the process is running; it never depends on Azure. `GET /health/ready` returns 200 `{"status":"ready"}` once a startup warm-up has completed, and 503 with `{"status":"warming"}` until then. Fake mode is ready at once. In Azure mode, the warm-up runs in the background:
 
-- It acquires the Cognitive Services token (Speech and Azure OpenAI share that audience) and, when Search is configured, the Search token, through the runtime credential, so the first session finds them cached.
-- It then opens TLS connections to the Azure OpenAI and Search endpoints through the clients and shared transports the reply path uses. It also checks that the Speech endpoint (or the regional speech-to-text host) is reachable. The Speech SDK opens its own connection per session, so for Speech only DNS and TLS reachability are checked.
+- It acquires the Cognitive Services token (Speech and Azure OpenAI share that audience) through the runtime credential, so the first session finds it cached.
+- It then opens a TLS connection to the Azure OpenAI endpoint through the client and shared transport the reply path uses. It also checks that the Speech endpoint (or the regional speech-to-text host) is reachable. The Speech SDK opens its own connection per session, so for Speech only DNS and TLS reachability are checked.
+- Readiness requires only those stages. Search is best-effort: a reply without it still works (it reports `grounding_unavailable`), so the Search token and connection are warmed beside them and readiness never waits for them. A failed Search attempt is logged (stage, exception type, HTTP status) and counted in `voiceassistant.warmup.failures`, then retried in the background with a 1-2-4-...-60 s backoff until it succeeds once.
 - Any HTTP status counts as reached. The requests are an endpoint-root GET and a Search document count: no model, speech or semantic-ranking call, and nothing billable.
-- Each stage is bounded to 10 s. A failed attempt is retried with a 1-2-4-8-15 s backoff.
+- Each stage is bounded to 10 s. A failed required attempt is retried with a 1-2-4-8-15 s backoff.
 - After 60 s of failures, the service logs one content-free error line (stage, exception type, HTTP status) and the endpoint reports `{"status":"not_ready"}`. Retries continue, and the replica becomes ready as soon as an attempt succeeds.
 - Once ready, the replica stays ready: a later transient token or network failure never removes it from rotation. Such failures surface on the reply path instead.
 
@@ -302,6 +303,7 @@ The `VoiceAssistant.Api` .NET `Meter` exposes these instruments. Durations are m
 | `voiceassistant.session.errors` | counter | `code` | `error` events sent to clients, by error code |
 | `voiceassistant.session.ended` | counter | `reason` | Ended sessions: `stopped`, `client_closed`, `superseded`, `overloaded`, `time_limit`, `aborted`, `ended`, `startup_timeout`, `transport_error`, `provider_unavailable` or the ending error code |
 | `voiceassistant.speech.restarts` | counter | `code=connection_failure\|service_timeout\|service_unavailable`, `outcome=restarted\|failed` | In-process speech recognizer restart attempts after a retryable cancellation |
+| `voiceassistant.warmup.failures` | counter | `stage`, `required=true\|false` | Failed startup warm-up attempts; `required=false` is the best-effort Search warm-up |
 | `voiceassistant.sessions.active` | observable gauge | none | Open meeting sessions |
 
 Reply tags are `provider=Azure|Fake|TestDouble`, `trigger=automatic|manual`, `route=knowledge|transcript|profile`, `response_mode=balanced|grounded|conversation` and `grounding=grounded|no_matches|unavailable|disabled|pending`.
