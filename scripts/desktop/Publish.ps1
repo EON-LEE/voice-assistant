@@ -36,5 +36,8 @@ start "" "%~dp0VoiceAssistant.Desktop.exe" --demo
 '@
 [IO.File]::WriteAllText((Join-Path $output 'Preview-Offline.cmd'), $demoLauncher, [Text.Encoding]::ASCII)
 Write-Output "Published: $executable"
+if (-not (Test-Path -LiteralPath (Join-Path $output 'appsettings.local.json'))) {
+    Write-Output 'No appsettings.local.json was published. Copy src\VoiceAssistant.Desktop\appsettings.local.example.json next to the exe as appsettings.local.json and fill in the deployment values; until then only Preview-Offline.cmd works.'
+}
 Write-Output "Double-click Open-Meeting-Coach.cmd in $output. Launching does not grant microphone consent."
 Write-Output 'Preview-Offline.cmd opens clearly labeled canned previews without sign-in, network, or microphone capture.'

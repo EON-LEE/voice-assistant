@@ -90,9 +90,9 @@ redeploy the same commit after a failed attempt.
 
 Timeouts: `-BuildTimeoutMinutes` (45), `-ReadyTimeoutSeconds` (600) and `-PollSeconds` (15).
 
-`/health/ready` currently proves only that the process started with valid configuration; the next API wave makes it
-wait for an Azure warm-up (see [infra/README.md](../../infra/README.md)). Until then the smoke test is the only
-end-to-end check before production.
+In Azure mode `/health/ready` returns 200 only after the startup warm-up (credential, Azure OpenAI and Speech; Search is
+best-effort), so the health wait also covers a cold revision. It does not prove that grounded answers work: that is
+what the smoke test is for (see [infra/README.md](../../infra/README.md)).
 
 ## Troubleshooting
 

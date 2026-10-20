@@ -145,6 +145,11 @@ try {
         $_.properties.roleDefinitionId -eq "[variables('metricsPublisherRole')]" })
     Assert-True ($publisher.Count -eq 1 -and $publisher[0].condition -eq "[parameters('enableDiagnostics')]" -and
         $template.variables.metricsPublisherRole -match '3913510d-42f4-4e42-8a64-420c390055eb') 'Runtime identity may only publish metrics to Application Insights'
+    Assert-True ((@($env | Where-Object name -EQ 'OTEL_SERVICE_NAME')[0].value -eq "[variables('appName')]") -and
+        (@($env | Where-Object name -EQ 'APPLICATIONINSIGHTS_CONNECTION_STRING')[0].value -match "^\[if\(parameters\('enableDiagnostics'\)")) 'Metric export names the app as its service and is off without diagnostics'
+    $probes = @($app.properties.template.containers[0].probes)
+    Assert-True (@($probes | Where-Object { $_.type -eq 'Readiness' -and $_.httpGet.path -eq '/health/ready' }).Count -eq 1 -and
+        @($probes | Where-Object { $_.type -in @('Startup', 'Liveness') -and $_.httpGet.path -eq '/health/live' }).Count -eq 2) 'Readiness waits for the warm-up; startup and liveness never depend on Azure'
     $container = $app.properties.template.containers[0]
     Assert-True ($template.parameters.containerCpu.defaultValue -eq '2' -and
         $container.resources.cpu -eq "[json(parameters('containerCpu'))]" -and

@@ -444,7 +444,10 @@ the version ledger.
 Hybrid nearest-neighbor results alone are not proof that a document is relevant.
 The coordinated API uses semantic reranking with explicit
 `Azure__SearchSemanticConfiguration=meeting-semantic` and
-`Azure__SearchMinimumRerankerScore=2.0`; ACL prefiltering remains mandatory.
+`Azure__SearchMinimumRerankerScore=1.5`; ACL prefiltering remains mandatory.
+The template sets 1.5 since the October 2026 synthetic evaluation (pass 0.98 and
+retrieval hit 0.99 against 0.88 and 0.84 at 2.0, see the
+[quality baseline](../docs/runbooks/quality-baseline.md)); the API's own default is 2.0.
 The index's `meeting-semantic` configuration prioritizes `title` as title and
 `content` as content. The Bicep parameter `searchSemanticSearch` allows `free`
 or `standard`, default `standard`. The free plan has a monthly query quota; once it
@@ -513,7 +516,16 @@ With `enableDiagnostics=true` (the default) the container environment sends
 **console and system logs only** to a dedicated 30-day, Entra-only Log Analytics
 workspace (`${namePrefix}-logs`), and an Entra-only Application Insights resource
 (`${namePrefix}-insights`) receives content-free metrics through the runtime identity's
-Monitoring Metrics Publisher role. There is no request/body capture and no request
+Monitoring Metrics Publisher role. The template sets `APPLICATIONINSIGHTS_CONNECTION_STRING`
+(empty when `enableDiagnostics=false`, which turns export off) and `OTEL_SERVICE_NAME`
+(the app name, `${namePrefix}-web`, shown as the Application Insights cloud role).
+Export is **metrics-only**: the API's own content-free `VoiceAssistant.Api` meter
+(per-stage reply timings, retrieval and warm-up failures, sessions), authorized with Entra
+through the runtime identity, with no request tracing, no log export and no offline retry
+storage. Statsbeat, the exporter's own usage telemetry, is switched off
+(`APPLICATIONINSIGHTS_STATSBEAT_DISABLED=true` unless set explicitly). Instrument names:
+[content-free timing metrics](../src/VoiceAssistant.Api/README.md#content-free-timing-metrics).
+There is no request/body capture and no request
 diagnostic category. The API logs no transcript, answer, query text or request URL:
 ASP.NET request logs stay at `Warning`. Do not later enable full URL/query logging at
 ingress, proxies or telemetry: WebSocket upgrade URLs carry one-use tickets (single use,
@@ -522,14 +534,20 @@ destination (an empty `appLogsConfiguration`; the ARM API rejects the literal `"
 The metric alert checks
 `Replicas < 1`; an optional pre-existing `alertActionGroupId` routes notifications,
 otherwise alerts are portal-only. Missing metric series are not a reliable
-outage signal. `/health/live` and `/health/ready` are process/configuration checks,
-not billable Speech/OpenAI/Search dependency probes. Verify those dependencies
-separately with approved synthetic data and inspect platform metrics.
-**Upcoming (next API wave, not in this revision):** in Azure mode `/health/ready`
-will return 200 only after an Azure warm-up of the Speech/OpenAI/Search paths,
-shipping together with telemetry, so a new revision is not marked ready while
-still cold. Until then a 200 from `/health/ready` proves only that the process
-started with valid configuration. Provider
+outage signal.
+
+The container probes use `/health/live` for startup and liveness and `/health/ready`
+for readiness, so a new revision takes traffic only once it is ready. In Azure mode
+`/health/ready` answers 503 (`warming`) until a startup warm-up has succeeded **once**:
+the Cognitive Services token that Speech and Azure OpenAI share (through the runtime
+identity), then a TLS connection to Azure OpenAI and a Speech reachability check, each
+bounded to 10 s and retried with backoff. After 60 s of failures it reports `not_ready`
+and logs one content-free error line. The Search warm-up is **best-effort**: it retries in
+the background and never delays readiness. Once ready, a replica stays ready for the life
+of the process; Fake mode is ready at once. No warm-up request is a billable model, speech
+or ranking call, and any HTTP answer (including 401/403) counts as reached, so verify RBAC
+and data-plane access separately with approved synthetic data. Details:
+[API health endpoints](../src/VoiceAssistant.Api/README.md). Provider
 content-processing/abuse-monitoring policies still apply; this template does not
 override service retention policy or disable model content filtering.
 

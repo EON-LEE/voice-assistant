@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace VoiceAssistant.Desktop;
@@ -7,13 +8,17 @@ public enum ConnectionMode { Demo, Development, Production }
 
 public sealed record ClientSettings
 {
+    /// <summary>Git-ignored file next to the app that holds the deployment's endpoint, origin and Entra IDs.</summary>
+    public const string LocalFileName = "appsettings.local.json";
+    private const string Placeholder = "YOUR-";
+
     public ConnectionMode Mode { get; init; } = ConnectionMode.Demo;
-    public string Endpoint { get; init; } = "wss://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io/api/meeting";
-    public string Origin { get; init; } = "https://voice-web.gentlesky-d6ba12c8.koreacentral.azurecontainerapps.io";
+    public string Endpoint { get; init; } = "wss://YOUR-APP-HOST/api/meeting";
+    public string Origin { get; init; } = "https://YOUR-APP-HOST";
     public string Authority { get; init; } = "https://login.microsoftonline.com";
-    public string TenantId { get; init; } = "2573db8c-dfe5-4805-9e28-a0859692e705";
-    public string ClientId { get; init; } = "6c67aee7-0c67-48aa-9dce-40db347c5a7f";
-    public string Scope { get; init; } = "api://4546bd70-1872-4a1d-bdcd-d09377e365e4/Meeting.Access";
+    public string TenantId { get; init; } = "YOUR-TENANT-ID";
+    public string ClientId { get; init; } = "YOUR-DESKTOP-CLIENT-ID";
+    public string Scope { get; init; } = "api://YOUR-API-CLIENT-ID/Meeting.Access";
     public string ResponseMode { get; init; } = "grounded";
     public int EndSilenceMs { get; init; } = 1100;
     public bool SemanticSegmentation { get; init; } = true;
@@ -24,12 +29,31 @@ public sealed record ClientSettings
     public bool ProfileConfirmed { get; init; }
     public bool TranscribeOnly { get; init; }
 
-    public static ClientSettings Load(string path) =>
-        JsonSerializer.Deserialize<ClientSettings>(File.ReadAllText(path), new JsonSerializerOptions
-        {
-            Converters = { new JsonStringEnumConverter() },
-            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
-        }) ?? throw new InvalidDataException("Settings file is empty.");
+    private static readonly JsonSerializerOptions Options = new()
+    {
+        Converters = { new JsonStringEnumConverter() },
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+    };
+
+    /// <summary>
+    /// Reads the settings file, then lets the values in <paramref name="localPath"/> (when that file exists) replace
+    /// individual settings. Both files use the same strict schema.
+    /// </summary>
+    public static ClientSettings Load(string path, string? localPath = null)
+    {
+        var settings = ReadObject(path);
+        if (localPath is not null && File.Exists(localPath))
+            foreach (var (name, value) in ReadObject(localPath))
+                settings[name] = value?.DeepClone();
+        return settings.Deserialize<ClientSettings>(Options) ?? throw new InvalidDataException("Settings file is empty.");
+    }
+
+    private static JsonObject ReadObject(string path) =>
+        JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? throw new InvalidDataException("Settings must be a JSON object.");
+
+    /// <summary>True while the endpoint, origin or Entra IDs still hold the shipped YOUR-... placeholders.</summary>
+    public bool ContainsPlaceholders() => new[] { Endpoint, Origin, TenantId, ClientId, Scope }
+        .Any(value => value.Contains(Placeholder, StringComparison.OrdinalIgnoreCase));
 
     public Uri Validate()
     {
@@ -44,6 +68,9 @@ public sealed record ClientSettings
             throw new InvalidOperationException("Unauthenticated Development mode is restricted to loopback endpoints.");
         if (Mode == ConnectionMode.Production)
         {
+            if (ContainsPlaceholders())
+                throw new InvalidOperationException(
+                    $"Production settings still contain YOUR-... placeholders. Put the deployment's Endpoint, Origin, TenantId, ClientId and Scope in {LocalFileName} next to the app (see appsettings.local.example.json).");
             if (endpoint.Scheme != "wss")
                 throw new InvalidOperationException("Production requires a secure wss:// endpoint.");
             if (!Uri.TryCreate(Authority, UriKind.Absolute, out var authority) || authority.Scheme != "https" ||

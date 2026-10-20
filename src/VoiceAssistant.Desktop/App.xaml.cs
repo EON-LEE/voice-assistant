@@ -10,14 +10,17 @@ public partial class App : Application
         try
         {
             string path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            // Deployment values (endpoint, origin, Entra IDs) live in a git-ignored file next to the app.
+            string? localPath = Path.Combine(AppContext.BaseDirectory, ClientSettings.LocalFileName);
             bool demo = e.Args.Length == 1 && e.Args[0] == "--demo";
             if (e.Args.Length != 0 && !demo)
             {
                 if (e.Args.Length != 2 || e.Args[0] != "--settings")
                     throw new ArgumentException("Usage: VoiceAssistant.Desktop.exe [--demo | --settings <nonsecret-settings.json>]");
                 path = Path.GetFullPath(e.Args[1]);
+                localPath = null;
             }
-            var settings = ClientSettings.Load(path);
+            var settings = ClientSettings.Load(path, localPath);
             if (demo) settings = settings with { Mode = ConnectionMode.Demo };
             settings.Validate();
             var identity = new VoiceAssistant.Desktop.Protocol.NativeIdentity(settings);
@@ -26,7 +29,7 @@ public partial class App : Application
             MainWindow = controller;
             controller.ShowPrimaryOverlay();
         }
-        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or ArgumentException or InvalidOperationException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException or ArgumentException or InvalidOperationException)
         {
             MessageBox.Show($"The assistant could not start. No audio was captured.\n\n{ex.Message}",
                 "Configuration error", MessageBoxButton.OK, MessageBoxImage.Error);

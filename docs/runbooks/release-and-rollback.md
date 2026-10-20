@@ -88,7 +88,7 @@ ACR for analysis, and fix forward with a new prefix.
 - `Release.ps1` changes only the image (and revision suffix). `scripts/infra/Deploy.ps1 -Apply` redeploys the whole
   template, which replaces the container's environment variables; re-apply manual settings such as `DemoLogin__*`
   afterwards.
-- `/health/ready` currently proves only that the process started with valid configuration. The next API wave makes it
-  wait for an Azure warm-up; until then rely on the smoke test or the quality baseline.
+- In Azure mode `/health/ready` waits once for the credential, Azure OpenAI and Speech warm-up (Search is best-effort),
+  so a cold revision gets no traffic. It does not prove grounded answers; use the smoke test or the quality baseline.
 - Script failures and their fixes: see the troubleshooting table in
   [scripts/release/README.md](../../scripts/release/README.md#troubleshooting).

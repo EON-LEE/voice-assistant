@@ -23,7 +23,7 @@ public sealed class PracticeDemoPreviewTests
                 AuthenticatedApiClient? api = null;
                 try
                 {
-                    var settings = new ClientSettings { Mode = ConnectionMode.Production };
+                    var settings = TestSettings.Production;
                     var identity = new NativeIdentity(settings);
                     api = new AuthenticatedApiClient(settings, identity);
                     main = new MainWindow(settings, identity, api);

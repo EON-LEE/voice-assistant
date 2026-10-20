@@ -1,9 +1,32 @@
 # Quality baseline: QualityEval against staging
 
-QualityEval (`tools/QualityEval`, added with the evaluation-harness change; its README is the full reference) speaks a
-fictional company's questions with Azure AI Speech, streams them through the real WebSocket protocol of a deployed Live
-Coach, and scores replies (required facts, forbidden claims, abstention, readability, recognized key terms) and
-per-stage latency. A baseline plus `compare` turns that into a release gate.
+QualityEval ([`tools/QualityEval`](../../tools/QualityEval/README.md), the full reference) speaks a fictional company's
+questions with Azure AI Speech, streams them through the real WebSocket protocol of a deployed Live Coach, and scores
+replies (required facts, forbidden claims, abstention, readability, recognized key terms) and per-stage latency. A
+baseline plus `compare` turns that into a release gate.
+
+## Reference numbers (staging, October 2026)
+
+108 synthetic runs (36 items x 3 repeats, three accents) against staging with the template's reranker threshold 1.5,
+scored after the #30 scorer fix (declined commitments count as abstaining):
+
+| Metric | Value |
+| --- | --- |
+| `passRate` | 0.98 |
+| `factRecall` | 0.98 |
+| `abstainRate` (not-covered and commitment items) | 1.00 |
+| `forbiddenRate` | 0 |
+| `retrievalHitRate` (materials-required items) | 0.99 |
+
+| Latency from speech end | p50 | p95 |
+| --- | --- | --- |
+| Final transcript (`speechEndToFinal`) | about 1.0 s | about 1.2 s |
+| First line | about 2.43 s | about 2.84 s |
+| Completed reply (`speechEndToCompleted`) | about 2.48 s | about 2.88 s |
+
+The same items at the previous threshold 2.0 scored `passRate` 0.88 and `retrievalHitRate` 0.84, which is why the
+template now sets 1.5. These rounded numbers show the expected range; gate on `compare` against a full baseline file
+that you keep outside the repository.
 
 ## Rules
 
