@@ -14,6 +14,26 @@ export function answers(reply: LiveReply | null): string[] {
   return reply.suggestions ?? (reply.text.trim() ? [reply.text] : []);
 }
 
+export const meaningTexts = {
+  waiting: "영어 추천 답변의 한국어 뜻이 함께 표시됩니다.",
+  preparing: "한국어 번역 준비 중…",
+  interrupted: "답변이 중단되어 한국어 뜻이 없습니다 · 우클릭 → 한국어 번역 재시도",
+} as const;
+/**
+ * The Korean meaning under the primary line: the translation when there is one, else a line the server already pushed
+ * for a reply that has not completed. An interrupted reply never completes, so it gets a final label instead of "preparing".
+ */
+export function primaryMeaning(display: LiveReply | null, translated: string | undefined, pushed: string | null | undefined): string {
+  if (!display) return meaningTexts.waiting;
+  if (translated !== undefined) return translated;
+  if (!display.complete && typeof pushed === "string") return pushed;
+  return display.interrupted ? meaningTexts.interrupted : meaningTexts.preparing;
+}
+/** A reply line the user can ask to translate: a completed reply, or a primary line that stayed after an interruption. */
+export function translatable(reply: LiveReply | null): reply is LiveReply {
+  return !!reply && (reply.complete || !!reply.interrupted);
+}
+
 const maxText = 32768;
 function bounded(text: string): string {
   if (text.length > maxText) throw new Error("Transcript or reply exceeds the 32 KiB text limit.");
@@ -68,6 +88,21 @@ export class LiveState {
   }
   beginRequest(): void { this.suppressedTurn = undefined; this.error = ""; }
   clearError(): void { this.error = ""; }
+  /** The connection producing the current reply is gone: a shown primary line stays (interrupted), a draft is dropped. */
+  endReply(): void {
+    if (this.current && !this.current.complete) this.retire();
+  }
+  /**
+   * A new live session starts. Starting fresh clears everything. Continuing (다시 공유 / 다시 시작) keeps the conversation,
+   * but never an old pause or a reply the previous session was still producing, either of which would hide new replies.
+   */
+  restart(keepConversation: boolean): void {
+    if (!keepConversation) { this.resetSession(); return; }
+    this.suppressAll = false;
+    this.suppressedTurn = undefined;
+    this.error = "";
+    this.endReply();
+  }
 
   /** A reply that ends after its primary line was shown keeps that line readable, marked as interrupted. */
   private retire(): void {

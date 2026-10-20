@@ -4,6 +4,7 @@ import { DisplayAudioSource, type AudioSource, type CaptureSourceKind } from "..
 import { CodedError } from "../../src/VoiceAssistant.Web/src/errors.js";
 import { LiveController, SilenceWatch, liveLimits, type LiveClock, type LiveNetwork, type SourceHooks } from "../../src/VoiceAssistant.Web/src/live-controller.js";
 import { liveMessage, type Classified } from "../../src/VoiceAssistant.Web/src/live-errors.js";
+import { LiveState } from "../../src/VoiceAssistant.Web/src/live-state.js";
 import { defaultOptions } from "../../src/VoiceAssistant.Web/src/options.js";
 import type { ServerEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 import { maxAudioMessageBytes, type Transport } from "../../src/VoiceAssistant.Web/src/transport.js";
@@ -79,7 +80,8 @@ class FakeSource implements AudioSource {
   frame(value = 1): void { this.emit(new Int16Array(320).fill(value).buffer); }
 }
 
-function harness(createSource?: (kind: CaptureSourceKind, hooks: SourceHooks) => AudioSource) {
+function harness(createSource?: (kind: CaptureSourceKind, hooks: SourceHooks) => AudioSource,
+  listen: { onEvent?(event: ServerEvent): void; onDisconnect?(reason: Classified): void } = {}) {
   const clock = new FakeClock(), network = new FakeNetwork();
   const transports: FakeTransport[] = [], events: ServerEvent[] = [], disconnects: Classified[] = [], sources: FakeSource[] = [];
   let hooks: SourceHooks | undefined;
@@ -97,8 +99,8 @@ function harness(createSource?: (kind: CaptureSourceKind, hooks: SourceHooks) =>
       return transport;
     },
     options: () => defaultOptions(),
-    onEvent: event => events.push(event),
-    onDisconnect: reason => disconnects.push(reason),
+    onEvent: event => { events.push(event); listen.onEvent?.(event); },
+    onDisconnect: reason => { disconnects.push(reason); listen.onDisconnect?.(reason); },
     onChange: () => {},
     clock, network,
   });
@@ -259,7 +261,24 @@ test("grounding_unavailable is a notice: the session stays connected and the rep
   assert.equal(h.controller.notice, null, "the next reply clears the notice");
 });
 
-test("Reconnect backlog keeps the newest four seconds and flushes within the server's burst, rate and message limits", async () => {
+/**
+ * The server's audio budget (MeetingSession: 128 KB burst, refilled at 64 KB/s, charged on ARRIVAL) replayed against what
+ * the client sent. Everything sent within `bunchMs` of the flush start arrives together at its end, as a stalled network
+ * would deliver it. Returns the lowest budget seen; below zero the server would reject the audio as `invalid_audio`.
+ */
+function lowestServerBudget(sends: { at: number; bytes: Uint8Array }[], start: number, bunchMs: number): number {
+  let budget = 128000, previous = start, lowest = budget;
+  for (const send of sends) {
+    const arrival = Math.max(send.at, start + bunchMs);
+    budget = Math.min(128000, budget + (arrival - previous) * 64);
+    previous = arrival;
+    budget -= send.bytes.byteLength;
+    lowest = Math.min(lowest, budget);
+  }
+  return lowest;
+}
+
+test("Reconnect backlog keeps the newest four seconds and flushes gently: at most 64 KB at once, then at most 48 KB/s, in order", async () => {
   const h = harness();
   await live(h);
   const source = h.sources[0]!;
@@ -268,25 +287,125 @@ test("Reconnect backlog keeps the newest four seconds and flushes within the ser
   assert.equal(h.controller.stats.droppedFrames, 100);
   h.clock.advance(300);
   await flush();
-  const transport = h.latest();
-  transport.bufferedAmount = 0;
+  const transport = h.latest(), start = h.clock.now();
   transport.ready();
-  for (let i = 0; i < 200; i++) { h.clock.advance(20); source.frame(251); }
+  const burst = transport.binary.filter(item => item.at === start).reduce((total, item) => total + item.bytes.byteLength, 0);
+  assert.ok(burst <= 64000, `first burst ${burst}`);
+  for (let i = 0; i < 300; i++) { h.clock.advance(20); source.frame(251); } // live audio keeps coming meanwhile
   const frames = transport.binary.flatMap(item => Array.from({ length: item.bytes.byteLength / 640 }, (_, i) => item.bytes[i * 640]!));
-  assert.equal(frames.length, 400);
-  assert.deepEqual(frames.slice(0, 200), Array.from({ length: 200 }, (_, i) => (i + 100) % 250 + 1), "newest four seconds, in order");
+  assert.equal(frames.length, 500);
+  assert.deepEqual(frames.slice(0, 200), Array.from({ length: 200 }, (_, i) => (i + 100) % 250 + 1), "newest four seconds first, in order");
+  assert.ok(frames.slice(200).every(value => value === 251), "then live audio, in order");
   assert.ok(transport.binary.every(item => item.bytes.byteLength <= maxAudioMessageBytes));
-  // Replay against the server's token bucket: 128 KB burst, 64 KB/s refill, never negative.
-  let budget = 128000, previous = transport.binary[0]!.at;
-  for (const item of transport.binary) {
-    budget = Math.min(128000, budget + (item.at - previous) * 64);
-    previous = item.at;
-    budget -= item.bytes.byteLength;
-    assert.ok(budget >= 0, `budget ${budget} at ${item.at}`);
+  for (let second = 1; second * 1000 <= h.clock.now() - start; second++) {
+    const sent = transport.binary.filter(item => item.at <= start + second * 1000).reduce((total, item) => total + item.bytes.byteLength, 0);
+    assert.ok(sent <= 64000 + 48000 * second, `${sent} bytes within ${second} s`);
   }
-  assert.ok(transport.binary.filter(item => item.at === transport.binary[0]!.at).reduce((total, item) => total + item.bytes.byteLength, 0)
-    <= liveLimits.burstBytes);
+  for (const bunchMs of [0, 150, 300]) {
+    const lowest = lowestServerBudget(transport.binary, start, bunchMs);
+    assert.ok(lowest >= 0, `server budget ${lowest} with ${bunchMs} ms of bunching`);
+  }
+  // The previous 120 KB / 60 KB/s client bucket left so little room that 150 ms of bunching broke the server's limit.
+  const old = [{ at: start, bytes: new Uint8Array(120000) }, { at: start + 150, bytes: new Uint8Array(9000) }];
+  assert.ok(lowestServerBudget(old, start, 150) < 0);
 });
+
+test("An audio-rate rejection right after a backlog flush reconnects with the same source; without a flush it stops", async () => {
+  const h = harness();
+  await live(h);
+  const source = h.sources[0]!;
+  h.latest().onError(new CodedError("socket_closed", "dropped"));
+  for (let i = 0; i < 50; i++) source.frame(1);
+  h.clock.advance(300); await flush();
+  h.latest().ready(); // starts by flushing the backlog
+  h.latest().onEvent({ type: "error", code: "invalid_audio", message: "Audio must be bounded, even-length PCM16LE at real-time speed.", retryable: true });
+  assert.equal(h.controller.phase, "live", "the close that follows decides");
+  h.latest().onError(new CodedError("server_closed", "The server ended this session."));
+  assert.deepEqual(h.disconnects.at(-1), { code: "invalid_audio", disposition: "transient" });
+  assert.equal(h.controller.phase, "reconnecting");
+  h.clock.advance(3000); await flush();
+  h.latest().ready();
+  assert.equal(h.controller.phase, "live");
+  assert.equal(source.prepared, 1); assert.equal(source.stopped, 0);
+  h.latest().onEvent({ type: "error", code: "invalid_audio", message: "x", retryable: true });
+  assert.equal(h.controller.phase, "stopped", "a connection that sent no backlog has no such excuse");
+  assert.equal(h.controller.failure?.code, "invalid_audio");
+});
+
+test("A rollover whose next connection fails shows the attempts, the network wait or the sign-in instead", async () => {
+  const h = harness();
+  await live(h);
+  const limit = (): void => h.latest().onEvent({ type: "error", code: "session_time_limit", message: "limit", retryable: false });
+  limit();
+  assert.equal(h.controller.rollingOver, true);
+  h.latest().onError(new CodedError("socket_error", "failed"));
+  assert.equal(h.controller.rollingOver, false);
+  assert.equal(h.controller.attempt, 1);
+  h.clock.advance(300); await flush(); h.latest().ready();
+  limit();
+  h.network.up = false;
+  h.latest().onError(new CodedError("socket_closed", "failed"));
+  assert.equal(h.controller.offline, true);
+  assert.equal(h.controller.rollingOver, false);
+  h.network.restore(); await flush(); h.latest().ready();
+  h.onTransport(transport => { transport.failConnect = new CodedError("signin_required", "Sign-in expired."); });
+  limit();
+  await flush();
+  assert.equal(h.controller.needsSignIn, true);
+  assert.equal(h.controller.rollingOver, false);
+});
+
+test("A stop in the middle of a reply ends that reply, so nothing looks as if it were still being generated", async () => withMediaStream(async () => {
+  const media = displayMedia(), state = new LiveState();
+  const h = harness(() => media.create(), { onEvent: event => state.apply(event), onDisconnect: () => state.endReply() });
+  await live(h, "display");
+  const transport = h.latest();
+  transport.onEvent({ type: "transcript.final", turnId: "t1", revision: 1, text: "When can we ship?" });
+  transport.onEvent({ type: "response.started", turnId: "t1", responseId: "r1" });
+  transport.onEvent({ type: "response.delta", turnId: "t1", responseId: "r1", text: "Ready by Friday.", primaryDone: true });
+  assert.equal(state.generating, true);
+  transport.onEvent({ type: "error", code: "session_superseded", message: "Live started elsewhere.", retryable: false });
+  assert.equal(h.controller.phase, "stopped");
+  assert.equal(state.generating, false);
+  assert.equal(state.display?.text, "Ready by Friday.", "the finished line stays");
+  assert.equal(state.display?.interrupted, true);
+  // The same through a share that ends while a draft is still coming.
+  h.controller.start("display");
+  await flush();
+  h.latest().ready();
+  h.latest().onEvent({ type: "transcript.final", turnId: "t2", revision: 1, text: "Who owns it?" });
+  h.latest().onEvent({ type: "response.started", turnId: "t2", responseId: "r2" });
+  h.latest().onEvent({ type: "response.delta", turnId: "t2", responseId: "r2", text: "Alex" });
+  media.tracks.filter(track => track.kind === "audio").at(-1)!.onended!();
+  await flush();
+  assert.equal(h.controller.failure?.capture?.kind, "ended");
+  assert.equal(state.generating, false);
+  assert.equal(state.current, null);
+}));
+
+test("Paused, stopped by the share ending, then 다시 공유: new replies show again", async () => withMediaStream(async () => {
+  const media = displayMedia(), state = new LiveState();
+  const h = harness(() => media.create(), { onEvent: event => state.apply(event), onDisconnect: () => state.endReply() });
+  await live(h, "display");
+  h.latest().onEvent({ type: "transcript.final", turnId: "t1", revision: 1, text: "First?" });
+  h.latest().onEvent({ type: "response.started", turnId: "t1", responseId: "r1" });
+  h.latest().onEvent({ type: "response.completed", turnId: "t1", responseId: "r1", text: "First answer.", sources: [] });
+  state.pause(true); h.controller.pause(true); // what the page does on "내가 말할 동안 일시정지"
+  media.tracks.find(track => track.kind === "audio")!.onended!();
+  await flush();
+  assert.equal(h.controller.phase, "stopped");
+  state.restart(true); h.controller.start("display"); // what the page does on 다시 공유
+  await flush();
+  h.latest().ready();
+  assert.equal(h.controller.paused, false);
+  h.latest().onEvent({ type: "transcript.final", turnId: "t2", revision: 1, text: "Second?" });
+  h.latest().onEvent({ type: "response.started", turnId: "t2", responseId: "r2" });
+  h.latest().onEvent({ type: "response.delta", turnId: "t2", responseId: "r2", text: "Second answer.", primaryDone: true });
+  assert.equal(state.display?.id, "r2");
+  h.latest().onEvent({ type: "response.completed", turnId: "t2", responseId: "r2", text: "Second answer.", sources: [] });
+  assert.equal(state.display?.complete, true);
+  assert.equal(state.turns.length, 2, "the conversation continues");
+}));
 
 test("Time offline does not count as reconnect attempts", async () => {
   const h = harness();

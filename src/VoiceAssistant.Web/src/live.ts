@@ -7,7 +7,8 @@ import { SocketTransport, asError } from "./transport.js";
 import { defaultOptions, type SessionOptions } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
 import type { Grounding, ServerEvent } from "./protocol.js";
-import { LiveState, answers, translationChunks, type LiveReply, type LiveTurn } from "./live-state.js";
+import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply,
+  type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
 import { parseSettings, pendingUpdate, settingsKey, withDocumentSearch, withResponseMode, documentSearchOn,
   type LiveSettings, type ResponseMode } from "./live-settings.js";
@@ -212,7 +213,8 @@ function startLive(resume = false): void {
   }
   // Without a signed-in account, sign in from this click first; a share picker then needs a click of its own.
   if (auth.configured && !auth.isFake && !auth.signedIn) { void signInFirst(resume); return; }
-  if (!resume) resetConversation();
+  // Continuing keeps the conversation, but an old pause or an unfinished reply would hide every new reply.
+  if (resume) state.restart(true); else resetConversation();
   paused = false; pushing = false; resetUpdate();
   liveChannel?.postMessage("started");
   controller.start(kind);
@@ -269,14 +271,14 @@ $("live-action").addEventListener("click", () => {
 /** A dropped or replaced connection: replies in flight end, the next `session.ready` restates the capabilities. */
 function onDisconnect(): void {
   pushing = false; pushes.expire(); resetUpdate();
-  if (state.current && !state.current.complete) state.cancelCurrent();
+  state.endReply();
   state.clearError();
   schedule();
 }
 
 function onEvent(e: ServerEvent): void {
   // With Korean off nothing is recorded, even while the server has not yet stopped sending it.
-  if (e.type === "response.korean") { if (settings.showKorean) pushes.record(e); return; }
+  if (e.type === "response.korean") { if (settings.showKorean) { pushes.record(e); schedule(); } return; }
   state.apply(e);
   if (e.type === "session.ready") {
     pushing = e.replyKorean === true; canUpdate = e.sessionUpdate === true; updating = false;
@@ -361,7 +363,7 @@ async function replyLine(responseId: string, index: number, english: string, ret
 function retryTranslations(): void {
   if (!settings.showKorean) return;
   const display = state.display;
-  if (display?.complete) void translateReply(display, true);
+  if (translatable(display)) void translateReply(display, true);
   if (settings.showCaptions) for (const [turnId, text] of failedTurns) void translateTurn(turnId, text);
 }
 
@@ -374,7 +376,7 @@ function dropKorean(): void {
 /** Turning Korean (or captions) on translates what is already on screen, so the meanings do not wait for the next reply. */
 function translateOnScreen(): void {
   const display = state.display;
-  if (display?.complete && !replyKo.has(display.id)) void translateReply(display, true);
+  if (translatable(display) && !replyKo.has(display.id)) void translateReply(display, true);
   if (!settings.showCaptions) return;
   for (const turn of state.turns.filter(value => value.final).slice(-recentTranslatedTurns))
     if (!requestedTurns.has(turn.id)) void translateTurn(turn.id, turn.text);
@@ -509,8 +511,8 @@ function renderSuggestions(): void {
   const ko = display ? replyKo.get(display.id) ?? [] : [];
   setText("answer-text", values[0] ?? "답변이 완성되면 여기에 표시됩니다.");
   if (settings.showKorean) {
-    setText("answer-korean", ko[0] ?? (display ? "한국어 번역 준비 중…" : "영어 추천 답변의 한국어 뜻이 함께 표시됩니다."));
-    setText("alternative-korean", ko[1] ?? "한국어 번역 준비 중…");
+    setText("answer-korean", primaryMeaning(display, ko[0], display ? pushes.peek(display.id, 0) : undefined));
+    setText("alternative-korean", ko[1] ?? meaningTexts.preparing);
   }
   setHidden("alternative-card", values.length < 2);
   setText("alternative-text", values[1] ?? "");
@@ -566,7 +568,7 @@ function renderMenu(): void {
   write(item("hold"), state.readingHeld
     ? state.hasNewerReply ? "새 답변 보기 / 화면 고정 해제" : "화면 고정 해제"
     : "읽는 동안 답변 고정 (오디오는 계속 듣기)");
-  item("translate").disabled = !settings.showKorean || !state.display?.complete && failedTurns.size === 0;
+  item("translate").disabled = !settings.showKorean || !translatable(state.display) && failedTurns.size === 0;
   item("float").hidden = !("documentPictureInPicture" in window);
   write(item("float"), pipWindow ? "작은 창 닫고 페이지로 돌아가기" : "항상 위 작은 창으로 띄우기");
 }
