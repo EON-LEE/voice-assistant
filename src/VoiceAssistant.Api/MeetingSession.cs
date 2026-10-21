@@ -9,6 +9,14 @@ public sealed class SessionSlots
 {
     private readonly Dictionary<string, Slot> active = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// How long a reconnect waits (real time) for the superseded session of the same user to release its slot before it is
+    /// refused with HTTP 429. That session may first spend up to 2 s telling its client it was superseded, then at most
+    /// <see cref="MeetingSession.ShutdownBudget"/> tearing down, so even its worst case ends well inside this wait. The live page
+    /// allows 15 s for a connection.
+    /// </summary>
+    internal static readonly TimeSpan SupersedeWait = TimeSpan.FromSeconds(8);
+
     /// <summary>Acquires the identity's single meeting slot, superseding a stale session of the same identity.</summary>
     public async Task<SessionLease?> AcquireAsync(string objectId, CancellationToken cancellation)
     {
@@ -18,9 +26,10 @@ public sealed class SessionSlots
             if (!active.TryGetValue(objectId, out previous) && active.Count >= 100) return null;
             if (previous is null) return Register(objectId);
         }
-        // A reconnect after a network drop can arrive before the old socket notices the drop.
+        // A reconnect after a network drop can arrive before the old socket notices the drop. The old session's teardown is
+        // bounded (MeetingSession.ShutdownBudget), so it releases the slot well within this wait even when its cleanup hangs.
         previous.Supersede.Cancel();
-        try { await previous.Released.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellation); }
+        try { await previous.Released.Task.WaitAsync(SupersedeWait, cancellation); }
         catch (TimeoutException) { return null; }
         lock (active)
             return active.ContainsKey(objectId) ? null : Register(objectId);
@@ -290,6 +299,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, duration.Token, superseded);
         using var receiving = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
         ISpeechStream? speech = null;
+        // A recognizer start this session stopped waiting for; see DisposeWhenStartedAsync.
+        Task abandonedStart = Task.CompletedTask;
         Task receiver = Task.CompletedTask;
         // A fixed vocabulary of end reasons (stopped, client_closed, time_limit, an error code...) for the session metric.
         var endReason = "ended";
@@ -305,7 +316,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 options = json.RootElement.TryGetProperty("options", out var input) ? SessionOptions.Parse(input) : SessionOptions.Legacy;
             if (!options.TranscribeOnly) prefetch = new(provider, objectId, options, lifetime.Token);
             speechOptions = await SpeechOptionsAsync(startup.Token);
-            speech = await StartSpeechAsync(speechOptions, new SpeechAttempt(delivered: true), lifetime, startup.Token);
+            var starting = StartSpeechAsync(speechOptions, new SpeechAttempt(delivered: true), lifetime, startup.Token);
+            try { speech = await starting.WaitAsync(startup.Token); }
+            catch (OperationCanceledException)
+            {
+                // A cancelled start disposes what it set up, and stopping a stalled recognizer can block: that must not hold this
+                // user's next session back either, so it finishes in the background.
+                abandonedStart = DisposeWhenStartedAsync(starting);
+                throw;
+            }
             // The client learns which optional features this socket has: pushed Korean lines, and settings changes while running.
             var ready = new Dictionary<string, object> { ["type"] = "session.ready", ["protocolVersion"] = 1 };
             if (options.ReplyKorean) ready["replyKorean"] = true;
@@ -525,9 +544,16 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         }
         finally
         {
+            // Bounded (real time): this session's slot is released when RunAsync returns, and a reconnect of the same user waits
+            // for that. Cleanup that hangs finishes in the background, observed; see ShutdownBudget.
+            var shutdown = System.Diagnostics.Stopwatch.GetTimestamp();
             lifetime.Cancel();
             // A speculative reply still waiting for its final ends with the session, unseen (experiment).
             DiscardSpeculation("cancelled");
+            // Nothing feeds the recognizer once the event loop has ended, so it is stopped now, beside the close handshake: a slow
+            // one gets the whole shutdown to finish, and a stalled one cannot hold this user's next session back.
+            var speechDisposal = new TeardownStep(speech is null ? abandonedStart : StartSpeechDisposal(speech), shutdown);
+            speech = null;
             // Send the close frame, then give the client's close (a browser answers at once) the rest of the budget to end the
             // receive loop before cancelling it. Cancelling a pending receive aborts the socket, and since ASP.NET Core 9 that
             // aborts the whole connection, which can discard the close frame and show the client a reset instead.
@@ -542,20 +568,45 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 catch (Exception exception) when (exception is WebSocketException or OperationCanceledException)
                 { logger.LogInformation("Meeting transport closed before shutdown completed."); }
             }
+            var closeMs = (long)System.Diagnostics.Stopwatch.GetElapsedTime(shutdown).TotalMilliseconds;
             receiving.Cancel();
             generation?.Cancel();
-            if (prefetch is not null) await prefetch.DisposeAsync();
+            var prefetchStep = new TeardownStep(prefetch is null ? Task.CompletedTask : prefetch.DisposeAsync().AsTask(),
+                System.Diagnostics.Stopwatch.GetTimestamp());
             events.Writer.TryComplete();
+            // A recognizer restarted just as the session ended was never taken over by the loop.
+            var orphans = new List<Task>();
+            while (events.Reader.TryRead(out var leftover))
+                if (leftover.Value is RestartedSpeech orphan) orphans.Add(StartSpeechDisposal(orphan.Stream));
+            if (orphans.Count > 0) speechDisposal = new TeardownStep(Task.WhenAll(orphans.Append(speechDisposal.Task)), shutdown);
             Task[] pendingTranslations;
             lock (translations) pendingTranslations = translations.ToArray();
-            await ObserveCleanupAsync(Task.WhenAll(retired.Concat(pendingTranslations).Append(receiver).Append(generationTask)
-                .Append(speechRestart)));
-            generation?.Dispose();
-            // A recognizer restarted just as the session ended was never taken over by the loop.
-            while (events.Reader.TryRead(out var leftover))
-                if (leftover.Value is RestartedSpeech orphan) await DisposeSpeechAsync(orphan.Stream);
-            if (speech is not null) await DisposeSpeechAsync(speech);
+            var cleanupStep = new TeardownStep(Task.WhenAll(retired.Concat(pendingTranslations).Append(receiver).Append(generationTask)
+                .Append(speechRestart)), System.Diagnostics.Stopwatch.GetTimestamp());
+            ObserveFailure(prefetchStep.Task, "prefetch");
+            ObserveFailure(cleanupStep.Task, "cleanup");
+            var remaining = System.Diagnostics.Stopwatch.GetElapsedTime(System.Diagnostics.Stopwatch.GetTimestamp(),
+                shutdown + (long)(ShutdownBudget.TotalSeconds * System.Diagnostics.Stopwatch.Frequency));
+            var steps = Task.WhenAll(prefetchStep.Task, cleanupStep.Task, speechDisposal.Task);
+            // Each step's failure is observed and logged where it happens; this only marks the combined task as observed too.
+            _ = steps.ContinueWith(task => _ = task.Exception, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            // Timed out or failed: both are reported below.
+            try { await steps.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero); }
+            catch (Exception) { }
+            // Its cancellation source is released once the reply that uses it has ended.
+            if (generationTask.IsCompleted) generation?.Dispose();
+            else if (generation is { } stillUsed)
+                _ = generationTask.ContinueWith(_ => stillUsed.Dispose(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
             MeetingMetrics.SessionEnded(endReason);
+            var totalMs = (long)System.Diagnostics.Stopwatch.GetElapsedTime(shutdown).TotalMilliseconds;
+            var running = new[] { ("prefetch", prefetchStep), ("cleanup", cleanupStep), ("speech", speechDisposal) }
+                .Where(step => !step.Item2.Task.IsCompleted).Select(step => step.Item1).ToArray();
+            if (totalMs > SlowShutdown.TotalMilliseconds || running.Length > 0)
+                logger.LogWarning("Meeting session shutdown took {TotalMs} ms: close {CloseMs} ms, prefetch {PrefetchMs} ms, cleanup {CleanupMs} ms, " +
+                    "speech dispose {SpeechMs} ms; still running in the background: {Running}.", totalMs, closeMs, prefetchStep.Milliseconds,
+                    cleanupStep.Milliseconds, speechDisposal.Milliseconds, running.Length == 0 ? "none" : string.Join(", ", running));
         }
     }
 
@@ -659,8 +710,84 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     private async Task DisposeSpeechAsync(ISpeechStream stream)
     {
-        try { await stream.DisposeAsync(); }
-        catch (Exception) { logger.LogWarning("Speech cleanup failed; sensitive error detail suppressed."); }
+        var disposal = StartSpeechDisposal(stream);
+        try { await disposal.WaitAsync(SpeechDisposeWait); }
+        catch (TimeoutException)
+        {
+            logger.LogWarning("Speech cleanup is still running after {WaitMs} ms; it continues in the background.",
+                (long)SpeechDisposeWait.TotalMilliseconds);
+        }
+        // A failure is observed and logged by the disposal itself.
+        catch (Exception) { }
+    }
+
+    /// <summary>How long a recognizer's disposal is awaited (real time) before it is left to finish in the background.</summary>
+    internal static readonly TimeSpan SpeechDisposeWait = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// How long a session's teardown may take (real time) before it returns and its slot is released. A reconnect of the same
+    /// user waits for that release (at most <see cref="SessionSlots.SupersedeWait"/>), so cleanup that hangs, such as a stalled
+    /// recognizer or a search or model call that ignores cancellation, must not hold it: what still runs then finishes in the
+    /// background, observed.
+    /// </summary>
+    internal static readonly TimeSpan ShutdownBudget = TimeSpan.FromMilliseconds(2500);
+
+    /// <summary>A teardown slower than this is logged, content-free, with the time each phase took.</summary>
+    internal static readonly TimeSpan SlowShutdown = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Starts disposing a recognizer on the thread pool, because stopping a stalled native recognizer can block the calling
+    /// thread. Its failure is always observed and logged without detail; a disposal that ends late is logged with its duration.
+    /// </summary>
+    private Task StartSpeechDisposal(ISpeechStream stream)
+    {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var disposal = Task.Run(() => stream.DisposeAsync().AsTask());
+        _ = disposal.ContinueWith(task =>
+        {
+            if (task.Exception is not null) logger.LogWarning("Speech cleanup failed; sensitive error detail suppressed.");
+            else if (System.Diagnostics.Stopwatch.GetElapsedTime(started) is var took && took > SpeechDisposeWait)
+                logger.LogInformation("Speech cleanup finished after {ElapsedMs} ms.", (long)took.TotalMilliseconds);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return disposal;
+    }
+
+    /// <summary>
+    /// The rest of a recognizer start the session stopped waiting for: a recognizer it still returns is disposed at once. A start
+    /// that fails (it was cancelled) has disposed what it set up; its failure is observed here and says nothing more.
+    /// </summary>
+    private async Task DisposeWhenStartedAsync(Task<ISpeechStream> starting)
+    {
+        ISpeechStream stream;
+        try { stream = await starting; }
+        catch (Exception) { return; }
+        await StartSpeechDisposal(stream);
+    }
+
+    /// <summary>Observes a teardown step's failure whenever it happens and logs only its type, so nothing is left unobserved.</summary>
+    private void ObserveFailure(Task step, string name) => _ = step.ContinueWith(task =>
+            logger.LogWarning("Meeting shutdown step {Step} failed with {ExceptionType}; sensitive detail suppressed.", name,
+                task.Exception?.InnerException?.GetType().Name ?? "unknown"),
+        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+    /// <summary>One step of a session's teardown: how long it took from its start (real time), or has taken so far while it runs.</summary>
+    private sealed class TeardownStep
+    {
+        private readonly long started;
+        private long finished;
+
+        public TeardownStep(Task task, long started)
+        {
+            this.started = started;
+            Task = task;
+            _ = task.ContinueWith(_ => Interlocked.Exchange(ref finished, System.Diagnostics.Stopwatch.GetTimestamp()), CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+
+        public Task Task { get; }
+
+        public long Milliseconds => (long)System.Diagnostics.Stopwatch.GetElapsedTime(started,
+            Interlocked.Read(ref finished) is var end and not 0 ? end : System.Diagnostics.Stopwatch.GetTimestamp()).TotalMilliseconds;
     }
 
     /// <summary>Statements wait for more context, but never longer than this before a reply is offered.</summary>
@@ -1417,11 +1544,5 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         try { await ErrorAsync(code, message, retryable, timeout.Token); }
         catch (Exception exception) when (exception is WebSocketException or OperationCanceledException)
         { logger.LogInformation("Meeting error could not be delivered to disconnected client."); }
-    }
-    private async Task ObserveCleanupAsync(Task task)
-    {
-        try { await task.WaitAsync(TimeSpan.FromSeconds(5)); }
-        catch (OperationCanceledException) { }
-        catch (Exception) { logger.LogWarning("Meeting cleanup did not complete normally; sensitive detail suppressed."); }
     }
 }
