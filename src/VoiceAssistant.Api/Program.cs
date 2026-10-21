@@ -28,6 +28,7 @@ namespace VoiceAssistant.Api
             builder.Services.TryAddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<TicketStore>();
             builder.Services.AddSingleton<SessionSlots>();
+            builder.Services.AddSingleton<ResumableConversations>();
             builder.Services.AddSingleton<AzureServiceClients>();
             // Azure mode takes traffic only after the dependencies a reply needs were warmed once; Fake mode is ready at once.
             builder.Services.AddSingleton(new Readiness(ready: settings.Fake));
@@ -149,7 +150,8 @@ namespace VoiceAssistant.Api
                 if (ticket is not null) features.PhraseHints?.Warm(objectId);
                 return ticket is null ? Results.StatusCode(429) : Results.Ok(ticket);
             }).RequireAuthorization("Meeting");
-            app.Map("/api/meeting", async (HttpContext context, TicketStore store, IMeetingProvider provider, SessionSlots slots) =>
+            app.Map("/api/meeting", async (HttpContext context, TicketStore store, IMeetingProvider provider, SessionSlots slots,
+                ResumableConversations conversations) =>
             {
                 if (!context.WebSockets.IsWebSocketRequest) { context.Response.StatusCode = 400; return; }
                 if (!OriginPolicy.Allows(context, settings)) { context.Response.StatusCode = 403; return; }
@@ -165,8 +167,11 @@ namespace VoiceAssistant.Api
                 using var slot = await slots.AcquireAsync(objectId, context.RequestAborted);
                 if (slot is null) { context.Response.StatusCode = 429; return; }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                // The slot is released only after RunAsync returned, and a session keeps its conversation before that, so a
+                // reconnect of the same user (which waits for the slot) always finds it.
                 await new MeetingSession(socket, provider, objectId, app.Logger, settings.MaxSessionMinutes,
-                    context.RequestServices.GetRequiredService<TimeProvider>(), features).RunAsync(context.RequestAborted, slot.Superseded);
+                    context.RequestServices.GetRequiredService<TimeProvider>(), features, conversations).RunAsync(context.RequestAborted,
+                    slot.Superseded);
             });
             app.MapKnowledge(settings);
             app.MapPractice(settings);

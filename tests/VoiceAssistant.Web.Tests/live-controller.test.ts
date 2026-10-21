@@ -379,6 +379,63 @@ test("A rollover whose next connection fails shows the attempts, the network wai
   assert.equal(h.controller.rollingOver, false);
 });
 
+/** What each connection's session.start said about resuming the conversation; "none sent" when it sent no start. */
+function resumeFlags(h: ReturnType<typeof harness>): (boolean | undefined | "none sent")[] {
+  return h.transports.map(transport => {
+    const start = transport.sent.find(message => message.type === "session.start") as { options?: { resumeConversation?: boolean } } | undefined;
+    return start ? start.options?.resumeConversation : "none sent";
+  });
+}
+
+test("Reconnects, rollovers and a sign-in resume of a live session that was ready ask the server to resume its conversation", async () => {
+  const h = harness();
+  h.controller.start("microphone");
+  await flush();
+  // A first connection that never became ready is retried as the fresh start it was.
+  h.latest().onError(new CodedError("socket_closed", "dropped before ready"));
+  h.clock.advance(300); await flush();
+  h.latest().ready();
+  // An automatic reconnect after a drop.
+  h.latest().onError(new CodedError("socket_closed", "dropped"));
+  h.clock.advance(3000); await flush();
+  h.latest().ready();
+  // The rollover at the server's session time limit.
+  h.latest().onEvent({ type: "error", code: "session_time_limit", message: "limit", retryable: false });
+  await flush();
+  h.latest().ready();
+  // A reconnect once the network is back.
+  h.network.up = false;
+  h.latest().onError(new CodedError("socket_closed", "offline"));
+  h.network.restore(); await flush();
+  h.latest().ready();
+  // A reconnect that had to wait for the user to sign in again.
+  h.onTransport(transport => { transport.failConnect = new CodedError("signin_required", "Sign-in expired."); });
+  h.latest().onError(new CodedError("socket_closed", "dropped"));
+  h.clock.advance(3000); await flush();
+  assert.equal(h.controller.needsSignIn, true);
+  h.onTransport(() => {});
+  h.controller.resume(); await flush();
+  h.latest().ready();
+  assert.equal(h.controller.phase, "live");
+  assert.deepEqual(resumeFlags(h), [undefined, undefined, true, true, true, "none sent", true]);
+});
+
+test("A Start begins a fresh conversation: the first one, one after Stop, and one after the session stopped by itself", async () => {
+  const h = harness();
+  await live(h);
+  h.latest().onError(new CodedError("socket_closed", "dropped"));
+  h.clock.advance(300); await flush();
+  h.latest().ready();
+  await h.controller.stop();
+  h.controller.start("microphone"); await flush();
+  h.latest().ready();
+  h.latest().onEvent({ type: "error", code: "session_superseded", message: "Live started elsewhere.", retryable: false });
+  assert.equal(h.controller.phase, "stopped");
+  h.controller.start("microphone"); await flush(); // what the page does on 다시 시작
+  h.latest().ready();
+  assert.deepEqual(resumeFlags(h), [undefined, true, undefined, undefined]);
+});
+
 test("A stop in the middle of a reply ends that reply, so nothing looks as if it were still being generated", async () => withMediaStream(async () => {
   const media = displayMedia(), state = new LiveState();
   const h = harness(() => media.create(), { onEvent: event => state.apply(event), onDisconnect: () => state.endReply() });

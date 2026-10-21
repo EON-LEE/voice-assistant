@@ -30,6 +30,15 @@ test("replyKorean is an optional boolean that is sent only when it was set", () 
   const start = createStartMessage({ ...defaultOptions(), replyKorean: true });
   assert.equal("options" in start && start.options.replyKorean, true);
 });
+test("resumeConversation is an optional boolean that is sent only when it was set", () => {
+  assert.equal("resumeConversation" in validateOptions(defaultOptions()), false);
+  assert.equal(validateOptions({ ...defaultOptions(), resumeConversation: true }).resumeConversation, true);
+  assert.equal(validateOptions({ ...defaultOptions(), resumeConversation: false }).resumeConversation, false);
+  for (const bad of ["true", 1, null])
+    assert.throws(() => validateOptions({ ...defaultOptions(), resumeConversation: bad as unknown as boolean }), /resumeConversation/);
+  const start = createStartMessage({ ...defaultOptions(), resumeConversation: true });
+  assert.equal("options" in start && start.options.resumeConversation, true);
+});
 test("A settings update carries only the known settings, at least one, and is copied", () => {
   assert.deepEqual(validateUpdate({ responseMode: "conversation" }), { responseMode: "conversation" });
   assert.deepEqual(validateUpdate({ replyKorean: false }), { replyKorean: false });

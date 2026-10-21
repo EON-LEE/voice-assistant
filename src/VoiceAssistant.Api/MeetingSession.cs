@@ -68,7 +68,8 @@ public sealed class SessionLease(CancellationToken superseded, Action release) :
 }
 
 public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, string objectId, ILogger logger,
-    int maxSessionMinutes = 30, TimeProvider? timeProvider = null, MeetingFeatures? meetingFeatures = null)
+    int maxSessionMinutes = 30, TimeProvider? timeProvider = null, MeetingFeatures? meetingFeatures = null,
+    ResumableConversations? resumable = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly MeetingFeatures features = meetingFeatures ?? MeetingFeatures.Off;
@@ -314,6 +315,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                 throw new ProviderException("invalid_start", "First message must be protocol v1 session.start with PCM16LE 16 kHz mono audio.");
             using (var json = JsonDocument.Parse(start.Bytes))
                 options = json.RootElement.TryGetProperty("options", out var input) ? SessionOptions.Parse(input) : SessionOptions.Legacy;
+            var resumedTurns = ResumeConversation();
             if (!options.TranscribeOnly) prefetch = new(provider, objectId, options, lifetime.Token);
             speechOptions = await SpeechOptionsAsync(startup.Token);
             var starting = StartSpeechAsync(speechOptions, new SpeechAttempt(delivered: true), lifetime, startup.Token);
@@ -329,6 +331,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             var ready = new Dictionary<string, object> { ["type"] = "session.ready", ["protocolVersion"] = 1 };
             if (options.ReplyKorean) ready["replyKorean"] = true;
             if (!options.TranscribeOnly) ready["sessionUpdate"] = true;
+            if (resumedTurns > 0) ready["resumedTurns"] = resumedTurns;
             await SendAsync(ready, lifetime.Token);
             // Cancelling a pending ReceiveAsync aborts the socket; retain it until the fatal time-limit event is sent.
             receiver = ReceiveLoopAsync(receiving.Token);
@@ -550,6 +553,8 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
             lifetime.Cancel();
             // A speculative reply still waiting for its final ends with the session, unseen (experiment).
             DiscardSpeculation("cancelled");
+            // Before anything that can wait: a reconnect of this user waits for the slot, which is released only after this.
+            KeepConversation(endReason);
             // Nothing feeds the recognizer once the event loop has ended, so it is stopped now, beside the close handshake: a slow
             // one gets the whole shutdown to finish, and a stalled one cannot hold this user's next session back.
             var speechDisposal = new TeardownStep(speech is null ? abandonedStart : StartSpeechDisposal(speech), shutdown);
@@ -608,6 +613,38 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                     "speech dispose {SpeechMs} ms; still running in the background: {Running}.", totalMs, closeMs, prefetchStep.Milliseconds,
                     cleanupStep.Milliseconds, speechDisposal.Milliseconds, running.Length == 0 ? "none" : string.Join(", ", running));
         }
+    }
+
+    /// <summary>
+    /// Every session start takes this user's kept conversation out of the store, so it is used at most once and a fresh
+    /// meeting never inherits it. Only a meeting session that asks for it (a reconnect or a rollover of the live page)
+    /// continues it: those finalized turns are the history its replies start from, never a reply target. Returns how many.
+    /// </summary>
+    private int ResumeConversation()
+    {
+        if (resumable is null) return 0;
+        var kept = resumable.Take(objectId, out var expired);
+        if (!options.ResumeConversation || options.TranscribeOnly) return 0;
+        if (kept is null)
+        {
+            MeetingMetrics.ConversationResumed(expired ? "expired" : "none", 0);
+            return 0;
+        }
+        earlierTranscripts.Restore(kept.Earlier);
+        conversation.AddRange(kept.Recent);
+        MeetingMetrics.ConversationResumed("restored", conversation.Count);
+        logger.LogInformation("Meeting conversation resumed; finalized turns restored: {Turns}.", conversation.Count);
+        return conversation.Count;
+    }
+
+    /// <summary>
+    /// Keeps this session's finalized history for a reconnect or rollover of the same user (see <see cref="ResumeConversation"/>).
+    /// A session the user stopped keeps nothing, since only a fresh start follows it, and a recognition-only one has no history.
+    /// </summary>
+    private void KeepConversation(string endReason)
+    {
+        if (resumable is null || options.TranscribeOnly || endReason == "stopped" || conversation.Count == 0) return;
+        resumable.Save(objectId, new(conversation.ToArray(), earlierTranscripts.Excerpts()));
     }
 
     /// <summary>

@@ -200,7 +200,8 @@ public sealed class SessionOptionsAndRoutingTests
             """{"endSilenceMs":"500"}""", """{"endSilenceMs":99999999999999}""",
             """{"phrases":"JMAP"}""", """{"phrases":[null]}""", """{"phrases":[""]}""", """{"phrases":["\n"]}""",
             """{"topic":true}""", """{"topic":"a\nb"}""", """{"responseMode":"balanced","responseMode":"grounded"}""",
-            """{"replyKorean":"true"}""", """{"replyKorean":1}""", """{"replyKorean":null}""" })
+            """{"replyKorean":"true"}""", """{"replyKorean":1}""", """{"replyKorean":null}""",
+            """{"resumeConversation":"true"}""", """{"resumeConversation":1}""", """{"resumeConversation":null}""" })
             yield return [value];
         yield return [JsonSerializer.Serialize(new { profile = new { name = new string('a', 101) }, profileConfirmed = true })];
         yield return [JsonSerializer.Serialize(new { profile = new { role = new string('a', 161) }, profileConfirmed = true })];
@@ -242,6 +243,15 @@ public sealed class SessionOptionsAndRoutingTests
         Assert.True(Parse("""{"replyKorean":true}""").ReplyKorean);
     }
 
+    [Fact]
+    public void ResumeConversationIsAnOptInStartBooleanThatDefaultsToOff()
+    {
+        Assert.False(SessionOptions.Legacy.ResumeConversation);
+        Assert.False(Parse("""{"responseMode":"balanced"}""").ResumeConversation);
+        Assert.False(Parse("""{"resumeConversation":false}""").ResumeConversation);
+        Assert.True(Parse("""{"resumeConversation":true}""").ResumeConversation);
+    }
+
     [Theory]
     [InlineData("""{"responseMode":"conversation"}""", "conversation", null)]
     [InlineData("""{"responseMode":"balanced","replyKorean":true}""", "balanced", true)]
@@ -268,6 +278,7 @@ public sealed class SessionOptionsAndRoutingTests
     [InlineData("""{"topic":"x"}""")]
     [InlineData("""{"responseMode":"balanced","topic":"x"}""")]
     [InlineData("""{"transcribeOnly":true}""")]
+    [InlineData("""{"resumeConversation":true}""")]
     [InlineData("""{"responseMode":"balanced","responseMode":"grounded"}""")]
     public void InvalidSessionUpdatesAreRejected(string json) =>
         Assert.Throws<JsonException>(() => ParseUpdate(json));
