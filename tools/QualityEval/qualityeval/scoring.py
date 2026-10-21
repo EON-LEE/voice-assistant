@@ -31,7 +31,8 @@ GENERIC = re.compile(
     r"^(?:that(?:'s| is) (?:interesting|a good point|great)|good question|great question|i agree|"
     r"could you (?:explain|say) (?:more|that again)|can you (?:repeat|say) that(?: again)?|could you repeat that|"
     r"let me think)[.!?]?$", re.IGNORECASE)
-MARKUP = re.compile(r"[*#`_]|^\s*[-\u2022]\s|^\s*\d+[.)]\s", re.MULTILINE)
+# A list number has one or two digits; "2019. They founded it then." starts with a year, not a list.
+MARKUP = re.compile(r"[*#`_]|^\s*[-\u2022]\s|^\s*\d{1,2}[.)]\s", re.MULTILINE)
 QUOTES = re.compile("[\"\u201c\u201d]")
 EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF]")
 MAX_ALTERNATIVE_WORDS = 25
