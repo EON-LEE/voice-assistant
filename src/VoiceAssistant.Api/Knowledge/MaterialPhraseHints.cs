@@ -4,8 +4,9 @@ using System.Text.RegularExpressions;
 namespace VoiceAssistant.Api.Knowledge;
 
 /// <summary>
-/// Turns material titles and text into Speech phrase hints: titles, acronyms, product codes such as "ORN-4", CamelCase names
-/// and capitalized multi-word names. Ranked (titles first, then by frequency) and capped. Material text only, never transcripts.
+/// Turns material titles and text into Speech phrase hints: titles, acronyms, product codes such as "ORN-4", CamelCase names,
+/// capitalized multi-word names and single-word proper names ("Kestrova"). Ranked (titles first, then by frequency) and capped.
+/// Material text only, never transcripts.
 /// </summary>
 internal static partial class MaterialPhrases
 {
@@ -14,7 +15,7 @@ internal static partial class MaterialPhrases
     private const int MaxTitles = 30;
 
     [Flags]
-    private enum Kind { None = 0, Title = 1, Code = 2, Acronym = 4, Camel = 8, Name = 16 }
+    private enum Kind { None = 0, Title = 1, Code = 2, Acronym = 4, Camel = 8, Name = 16, Word = 32 }
 
     private sealed class Candidate(string text, int order)
     {
@@ -22,7 +23,8 @@ internal static partial class MaterialPhrases
         public int Order { get; } = order;
         public int Count { get; set; }
         public Kind Kinds { get; set; }
-        public int Score => Count * (Kinds.HasFlag(Kind.Code) ? 3 : 2);
+        // A single word counts half as much as a code or a multi-word name, so frequent ones join without crowding those out.
+        public int Score => Count * (Kinds.HasFlag(Kind.Code) ? 3 : Kinds == Kind.Word ? 1 : 2);
     }
 
     internal static IReadOnlyList<string> Extract(IReadOnlyList<string> titles, IReadOnlyList<string> texts)
@@ -43,6 +45,8 @@ internal static partial class MaterialPhrases
         foreach (var text in sources)
             Scan(text, () => { foreach (Match word in LowercaseWord().Matches(text)) lowercase.Add(word.Value); });
         foreach (var title in titles) Add(TitleText(title), Kind.Title);
+        // Single capitalized words: how often each occurs, and how often on its own in mid-sentence.
+        var single = new Dictionary<string, (int Total, int Standalone)>(StringComparer.Ordinal);
         foreach (var text in sources)
         {
             Scan(text, () =>
@@ -53,7 +57,24 @@ internal static partial class MaterialPhrases
                 foreach (Match match in CamelCase().Matches(text)) Add(match.Value, Kind.Camel);
                 foreach (Match match in CapitalizedRun().Matches(text))
                     if (NameFrom(match.Value) is { } name) Add(name, Kind.Name);
+                foreach (Match match in SingleWord().Matches(text))
+                {
+                    var word = match.Value;
+                    if (lowercase.Contains(word.ToLowerInvariant()) || LeadingWords.Contains(word) || CommonWords.Contains(word)) continue;
+                    single.TryGetValue(word, out var seen);
+                    single[word] = (seen.Total + 1, seen.Standalone + (StandsAlone(text, match.Index) ? 1 : 0));
+                }
             });
+        }
+        // A word never written in lower case, seen at least twice and at least once on its own in mid-sentence, is a name said on
+        // its own ("Kestrova", "the Orrin gateway"). A word that only starts sentences or bullets ("Webhooks deliver...") is
+        // ordinary, and one that only follows another capitalized word ("Traders" in "Northwind Traders") is left to that name.
+        foreach (var (word, (total, standalone)) in single)
+        {
+            if (total < 2 || standalone == 0) continue;
+            if (!candidates.TryGetValue(word, out var candidate)) candidates[word] = candidate = new(word, candidates.Count);
+            candidate.Count += total;
+            candidate.Kinds |= Kind.Word;
         }
 
         // Titles first (most recent documents first, as listed), then the most frequent terms. A capitalized name needs two
@@ -96,6 +117,23 @@ internal static partial class MaterialPhrases
         return string.Join(' ', words);
     }
 
+    /// <summary>
+    /// Whether the word at <paramref name="index"/> stands on its own in mid-sentence: after a lower-case word, a function word
+    /// ("the"), a number or a comma, colon or bracket. Not at the start of the text, a line, a sentence, a heading or a bullet, and
+    /// not right after another capitalized word.
+    /// </summary>
+    private static bool StandsAlone(string text, int index)
+    {
+        var position = index - 1;
+        while (position >= 0 && text[position] is ' ' or '\t') position--;
+        if (position < 0 || text[position] is '\n' or '\r' or '.' or '!' or '?' or '#' or '*' or '-' or '>' or '\u2022') return false;
+        if (!char.IsLetter(text[position])) return true;
+        var end = position + 1;
+        while (position >= 0 && char.IsLetter(text[position])) position--;
+        var previous = text[(position + 1)..end];
+        return !char.IsUpper(previous[0]) || LeadingWords.Contains(previous) || CommonWords.Contains(previous);
+    }
+
     private static readonly HashSet<string> CommonAcronyms = new(StringComparer.Ordinal)
     {
         "AM", "PM", "OK", "THE", "AND", "OR", "FOR", "TO", "OF", "IN", "ON", "AT", "IS", "IT", "BE", "WE", "US", "NO", "YES", "NOT",
@@ -129,6 +167,8 @@ internal static partial class MaterialPhrases
     private static partial Regex CamelCase();
     [GeneratedRegex(@"\b[A-Z][A-Za-z0-9]+(?: [A-Z][A-Za-z0-9]+){1,4}\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
     private static partial Regex CapitalizedRun();
+    [GeneratedRegex(@"\b[A-Z][a-z]{3,}\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
+    private static partial Regex SingleWord();
     [GeneratedRegex(@"\b[a-z]{2,}\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
     private static partial Regex LowercaseWord();
     [GeneratedRegex(@"\.(?:pptx|docx|pdf|txt|md)\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]

@@ -44,6 +44,32 @@ public sealed class MaterialPhraseHintsTests
     }
 
     [Fact]
+    public void SingleWordNamesSaidOnTheirOwnBecomeHintsButOrdinaryCapitalizedWordsDoNot()
+    {
+        string[] texts =
+        [
+            "Kestrova Analytics makes Kestrova Pulse. Ilsa founded Kestrova in 2023, and Kestrova grew.",
+            "- Pulse reads data through the Orrin edge gateway.\n- The Orrin ORN-4 gateway is sold separately.",
+            "Webhooks deliver alerts. Webhooks are optional.",
+            "Please ask Northwind Traders. Northwind Traders confirmed it.",
+            "Monday is busy. We meet on Monday again.",
+            "Growth matters. The Growth tier and the growth plan differ.",
+            "Zephyr is mentioned once, by name.",
+        ];
+
+        var phrases = MaterialPhrases.Extract([], texts).ToList();
+
+        // A name said on its own in mid-sentence, at least twice and never in lower case.
+        foreach (var expected in new[] { "Kestrova", "Orrin", "Northwind" })
+            Assert.Contains(expected, phrases);
+        // Sentence- or bullet-initial only, only after another capitalized word, a common word, also written in lower case, or once.
+        foreach (var dropped in new[] { "Webhooks", "Traders", "Pulse", "Monday", "Growth", "Zephyr", "Ilsa" })
+            Assert.DoesNotContain(dropped, phrases);
+        // At the same count, product codes and multi-word names rank above single words.
+        Assert.True(phrases.IndexOf("ORN-4") < phrases.IndexOf("Orrin"));
+    }
+
+    [Fact]
     public void HintsAreCappedInNumberAndLength()
     {
         var texts = Enumerable.Range(1, 300).Select(index => $"Part AB-{index} is listed.").ToArray();
