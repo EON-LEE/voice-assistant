@@ -127,7 +127,8 @@ try {
     Assert-True ((@($env | Where-Object name -EQ 'Azure__SearchSemanticConfiguration')[0].value -eq 'meeting-semantic') -and
         (@($env | Where-Object name -EQ 'Azure__SearchMinimumRerankerScore')[0].value -eq '1.5')) 'Runtime semantic configuration and the evaluated 1.5 relevance threshold match the API contract'
     Assert-True ((@($env | Where-Object name -EQ 'Session__EarlyStartAtFinal')[0].value -eq 'true') -and
-        (@($env | Where-Object name -EQ 'Speech__MaterialPhraseHints')[0].value -eq 'true')) 'The evaluated early reply start and material phrase hints are enabled'
+        (@($env | Where-Object name -EQ 'Speech__MaterialPhraseHints')[0].value -eq 'true') -and
+        (@($env | Where-Object name -EQ 'Session__SpeculativeStart')[0].value -eq 'true')) 'The evaluated early reply start, material phrase hints and speculative start are enabled'
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
     Assert-True ($template.parameters.enableDiagnostics.defaultValue -eq $true -and
         $environment.properties.appLogsConfiguration -match "if\(parameters\('enableDiagnostics'\)" -and
