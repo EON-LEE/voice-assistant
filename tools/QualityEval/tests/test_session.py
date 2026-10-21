@@ -1,9 +1,10 @@
 import asyncio
 import struct
 import unittest
+from collections import Counter
 
 from qualityeval.audio import FRAME_BYTES, Clip, build_timeline, clip_from_pcm, silence, speech_bounds, tone_clip
-from qualityeval.session import Limits, SessionTracker
+from qualityeval.session import MAX_BACKLOG_FRAMES, Limits, SessionTracker, next_due
 from qualityeval.wsclient import (OP_BINARY, OP_CLOSE, OP_TEXT, WebSocketError, accept_key, apply_mask, encode_frame,
                                   read_frame)
 
@@ -150,6 +151,60 @@ class TrackerTests(unittest.TestCase):
             (4, {"type": "response.delta", "responseId": "r", "turnId": "t", "text": "late"}),
         ])
         self.assertEqual(tracker.anomalies, ["response.delta_for_unknown_response", "delta_after_finish"])
+
+
+class PacingTests(unittest.TestCase):
+    FRAME = 20_000_000
+
+    def stream(self, frames: int, stalls: dict[int, float], *, unbounded: bool = False) -> list[int]:
+        """Send times of ``frames`` frames paced as run_session does, on a clock that freezes ``stalls[i]`` seconds
+        before frame ``i``. ``unbounded`` replays the old loop, which sent every overdue frame at once."""
+        begin = now = 0
+        sent = []
+        for index in range(frames):
+            now += int(stalls.get(index, 0) * S)
+            if unbounded:
+                due = begin + index * self.FRAME
+            else:
+                begin, due = next_due(begin, index, self.FRAME, now)
+            now = max(now, due)
+            sent.append(now)
+        return sent
+
+    @staticmethod
+    def accepted(sent: list[int]) -> bool:
+        """MeetingSession's audio budget: 128,000 bytes at once, refilled at 64,000 bytes per second."""
+        budget, previous = 128_000.0, 0
+        for t in sent:
+            budget = min(128_000.0, budget + (t - previous) / S * 64_000) - FRAME_BYTES
+            previous = t
+            if budget < 0:
+                return False
+        return True
+
+    def test_steady_streaming_follows_the_real_time_schedule(self):
+        self.assertEqual(self.stream(300, {}), [index * self.FRAME for index in range(300)])
+
+    def test_a_short_stall_catches_up_without_moving_the_schedule(self):
+        sent = self.stream(600, {100: 0.5})
+        self.assertEqual(max(Counter(sent).values()), 25)
+        self.assertEqual(sent[-1], 599 * self.FRAME)
+        self.assertTrue(self.accepted(sent))
+
+    def test_a_long_stall_sends_at_most_one_second_at_once_and_moves_the_rest(self):
+        self.assertFalse(self.accepted(self.stream(600, {100: 6.0}, unbounded=True)))
+        sent = self.stream(600, {100: 6.0})
+        self.assertEqual(max(Counter(sent).values()), MAX_BACKLOG_FRAMES + 1)
+        self.assertEqual(sent[-1] - 599 * self.FRAME, 6 * S - (MAX_BACKLOG_FRAMES + 1) * self.FRAME)
+        self.assertEqual(sorted(sent), sent)
+        self.assertTrue(self.accepted(sent))
+
+    def test_repeated_stalls_stay_within_the_server_budget(self):
+        stalls = {index: 5.0 for index in range(100, 3000, 600)}
+        self.assertFalse(self.accepted(self.stream(3000, stalls, unbounded=True)))
+        sent = self.stream(3000, stalls)
+        self.assertEqual(max(Counter(sent).values()), MAX_BACKLOG_FRAMES + 1)
+        self.assertTrue(self.accepted(sent))
 
 
 class FramingTests(unittest.TestCase):

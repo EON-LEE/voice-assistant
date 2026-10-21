@@ -268,6 +268,21 @@ class SessionTracker:
 
 Connector = Callable[[], Awaitable[WebSocketClient]]
 
+# The server accepts about 4 s of audio at once and 2x real time after that; faster audio fails with invalid_audio.
+# A client that stalls (a busy machine, a throttled background task) therefore never sends more than one second of
+# overdue audio at once: a longer delay moves the rest of the timeline instead. No frame is dropped.
+MAX_BACKLOG_FRAMES = 50
+
+
+def next_due(begin: int, index: int, interval: int, now: int) -> tuple[int, int]:
+    """Return the schedule start, moved if frame ``index`` is more than MAX_BACKLOG_FRAMES late, and the frame's due time."""
+    due = begin + index * interval
+    late = now - due - MAX_BACKLOG_FRAMES * interval
+    if late > 0:
+        begin += late
+        due += late
+    return begin, due
+
 
 async def _read(client: WebSocketClient, tracker: SessionTracker, ready: asyncio.Event,
                 clock: Callable[[], int]) -> None:
@@ -329,7 +344,7 @@ async def run_session(connect: Connector, timeline: Timeline, options: dict, *, 
                 if now > deadline:
                     timed_out = True
                     break
-                due = begin + index * interval
+                begin, due = next_due(begin, index, interval, now)
                 if due > now:
                     await asyncio.sleep((due - now) / 1e9)
                 await client.send_binary(timeline.frame(index))
