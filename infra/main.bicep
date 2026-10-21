@@ -33,12 +33,6 @@ param chatDeploymentSku string
 @minValue(1)
 param chatCapacity int
 @allowed([
-  'Default'
-  'Asynchronous'
-])
-@description('Streaming content filter of the chat deployment. Default keeps Microsoft.DefaultV2, which checks each reply before releasing it. Asynchronous uses a policy that mirrors Microsoft.DefaultV2 in Asynchronous_filter mode: tokens stream at once, and the API withdraws a reply the filter stops later (response_filtered).')
-param chatContentFilterStreaming string = 'Default'
-@allowed([
   'text-embedding-3-small'
 ])
 @description('Current backend requests native 1536-dimensional vectors; change code/schema together for another model.')
@@ -81,7 +75,6 @@ param containerCpu string = '2'
 
 var suffix = uniqueString(resourceGroup().id, namePrefix)
 var appName = '${namePrefix}-web'
-var chatAsynchronousFilter = chatContentFilterStreaming == 'Asynchronous'
 var speechUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f2dc8367-1007-4938-bd23-fe263f013447')
 var openAIUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
 // Search Index Data Contributor: the runtime stores each user's own uploaded meeting materials (ACL = caller oid).
@@ -127,29 +120,6 @@ resource openAI 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
   }
 }
 
-// Microsoft.DefaultV2 with only the streaming mode changed; created only for the Asynchronous setting.
-resource chatContentFilter 'Microsoft.CognitiveServices/accounts/raiPolicies@2024-10-01' = if (chatAsynchronousFilter) {
-  parent: openAI
-  name: '${chatDeploymentName}-async-filter'
-  properties: {
-    basePolicyName: 'Microsoft.DefaultV2'
-    mode: 'Asynchronous_filter'
-    contentFilters: [
-      { name: 'Hate', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Prompt' }
-      { name: 'Hate', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Completion' }
-      { name: 'Sexual', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Prompt' }
-      { name: 'Sexual', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Completion' }
-      { name: 'Selfharm', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Prompt' }
-      { name: 'Selfharm', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Completion' }
-      { name: 'Violence', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Prompt' }
-      { name: 'Violence', severityThreshold: 'Medium', blocking: true, enabled: true, source: 'Completion' }
-      { name: 'Jailbreak', blocking: true, enabled: true, source: 'Prompt' }
-      { name: 'Protected Material Text', blocking: true, enabled: true, source: 'Completion' }
-      { name: 'Protected Material Code', blocking: false, enabled: true, source: 'Completion' }
-    ]
-  }
-}
-
 resource chat 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
   parent: openAI
   name: chatDeploymentName
@@ -157,9 +127,6 @@ resource chat 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
   properties: {
     model: { format: 'OpenAI', name: chatModelName, version: chatModelVersion }
     versionUpgradeOption: 'NoAutoUpgrade'
-    // Default sends no raiPolicyName, exactly as before, so the deployment stays on Microsoft.DefaultV2 without a change.
-    // Asynchronous names the policy, which also makes this deployment wait for it.
-    ...(chatAsynchronousFilter ? { raiPolicyName: chatContentFilter.name } : {})
   }
 }
 
