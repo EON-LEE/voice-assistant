@@ -182,6 +182,11 @@ After `session.ready`, it streams the item's timeline in real time as 20 ms fram
 3. The target question.
 4. Silence until the reply finishes or a timeout is reached.
 
+If the evaluating machine stalls (for example, a busy PC or a throttled background task), the client sends at most one
+second of overdue audio at once and moves the rest of the timeline later. No audio is dropped. The server accepts about
+4 seconds of audio at once and twice real time after that; it ends the session with `invalid_audio` when audio arrives
+faster. Latency is still measured from the moment each frame is actually sent.
+
 It then sends `session.stop`. Every server event and every sent frame gets a monotonic timestamp. Context finals are
 assigned to utterances by word overlap, falling back to timing. The evaluated reply is the last completed response whose
 `turnId` belongs to a final of the target question. Replies to earlier context are counted separately.
