@@ -59,17 +59,38 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(report["exitCode"], 0)
 
     def test_quality_drop_beyond_baseline_interval_fails(self):
-        self.assertEqual(compare(result(), result(**{"quality.passRate.value": 0.62}))["exitCode"], 0)
-        report = compare(result(), result(**{"quality.passRate.value": 0.55}))
+        within = {"quality.passRate.value": 0.62, "quality.passRate.ci95": [0.52, 0.72]}
+        self.assertEqual(compare(result(), result(**within))["exitCode"], 0)
+        report = compare(result(), result(**{"quality.passRate.value": 0.55, "quality.passRate.ci95": [0.45, 0.65]}))
         self.assertEqual(report["exitCode"], 1)
         self.assertEqual(report["regressions"], ["quality.passRate"])
 
     def test_lower_is_better_metrics_fail_on_increase(self):
-        report = compare(result(), result(**{"quality.forbiddenRate.value": 0.15}))
+        report = compare(result(), result(**{"quality.forbiddenRate.value": 0.15, "quality.forbiddenRate.ci95": [0.08, 0.22]}))
         self.assertEqual(report["regressions"], ["quality.forbiddenRate"])
 
+    def test_one_miss_against_a_perfect_baseline_is_not_a_regression(self):
+        perfect = result(**{"quality.abstainRate.value": 1.0, "quality.abstainRate.ci95": [1.0, 1.0],
+                            "quality.genericRate.value": 0.0, "quality.genericRate.ci95": [0.0, 0.0]})
+        one_miss = result(**{"quality.abstainRate.value": 0.9444, "quality.abstainRate.ci95": [0.8333, 1.0],
+                             "quality.genericRate.value": 0.0093, "quality.genericRate.ci95": [0.0, 0.0278]})
+        report = compare(perfect, one_miss)
+        self.assertEqual((report["status"], report["exitCode"]), ("pass", 0))
+        dropped = result(**{"quality.abstainRate.value": 0.7222, "quality.abstainRate.ci95": [0.5, 0.8889],
+                            "quality.genericRate.value": 0.0741, "quality.genericRate.ci95": [0.0278, 0.1296]})
+        self.assertEqual(compare(perfect, dropped)["regressions"], ["quality.abstainRate", "quality.genericRate"])
+
+    def test_a_candidate_without_an_interval_is_judged_by_the_baseline_interval(self):
+        report = compare(result(), result(**{"quality.passRate.value": 0.55, "quality.passRate.ci95": None}))
+        self.assertEqual(report["regressions"], ["quality.passRate"])
+
+    def test_one_forbidden_claim_against_a_clean_baseline_still_fails(self):
+        clean = result(**{"quality.forbiddenRate.value": 0.0, "quality.forbiddenRate.ci95": [0.0, 0.0]})
+        one = result(**{"quality.forbiddenRate.value": 0.0093, "quality.forbiddenRate.ci95": [0.0, 0.0278]})
+        self.assertEqual(compare(clean, one)["regressions"], ["quality.forbiddenRate"])
+
     def test_judge_is_advisory_unless_gated(self):
-        candidate = result(**{"judge.usefulness.value": 1.2})
+        candidate = result(**{"judge.usefulness.value": 1.2, "judge.usefulness.ci95": [1.05, 1.35]})
         advisory = compare(result(), candidate)
         self.assertEqual(advisory["exitCode"], 0)
         statuses = {check["metric"]: check["status"] for check in advisory["checks"]}
@@ -93,9 +114,10 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(compare(result(), rescored, Thresholds(allow_mismatch=True))["exitCode"], 0)
 
     def test_render_mentions_failures(self):
-        text = render(compare(result(), result(**{"quality.passRate.value": 0.4})))
+        text = render(compare(result(), result(**{"quality.passRate.value": 0.4, "quality.passRate.ci95": [0.3, 0.5]})))
         self.assertIn("FAIL", text)
         self.assertIn("quality.passRate", text)
+        self.assertIn("candidate CI [0.3, 0.5]", text)
         self.assertEqual(copy.deepcopy(result()), result())
 
 

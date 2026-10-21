@@ -2,7 +2,10 @@
 
 Latency regresses when a gated percentile grows by more than the allowed fraction AND by more than an absolute
 floor (so 30 ms of noise on a 200 ms stage does not fail a build). Quality regresses when the candidate's point
-estimate falls outside the baseline's question-level 95% interval in the bad direction. Judge scores are advisory
+estimate falls outside the baseline's question-level 95% interval in the bad direction AND the baseline's point estimate
+falls outside the candidate's interval in the other direction. Requiring both keeps one miss against a perfect baseline
+(whose interval is a single point) from failing a run, while a real drop still does; a candidate without an interval is
+judged by the baseline's interval alone, and so is the forbidden-claim rate, which stays strict. Judge scores are advisory
 and gate only with ``gate_judge``. Results built from different corpora, items, scorers, session options or accents
 are incompatible (exit 2) unless explicitly allowed. Results written before the scorer fingerprint existed carry none
 and skip that check, except against a rescored result, which compares only with identically scored results.
@@ -16,6 +19,8 @@ LATENCY_GATES = ("speechEndToFirstDelta", "speechEndToCompleted")
 HIGHER_IS_BETTER = ("answeredRate", "passRate", "factRecall", "abstainRate", "formatOkRate", "retrievalHitRate",
                     "termAccuracy")
 LOWER_IS_BETTER = ("forbiddenRate", "genericRate")
+# Forbidden claims stay strict: a single invented price or promise read out in a meeting is already a failure.
+STRICT = ("forbiddenRate",)
 JUDGE_METRICS = ("usefulness", "support")
 EPSILON = 1e-9
 
@@ -81,15 +86,18 @@ def compare(baseline: dict, candidate: dict, thresholds: Thresholds = Thresholds
             base = _get(baseline, group, metric) or {}
             cand = _get(candidate, group, metric) or {}
             check = {"metric": f"{group}.{metric}", "baseline": base.get("value"), "baselineCi95": base.get("ci95"),
-                     "candidate": cand.get("value"), "gating": gating}
+                     "candidate": cand.get("value"), "candidateCi95": cand.get("ci95"), "gating": gating}
             if base.get("value") is None or cand.get("value") is None:
                 check.update(status="skipped", reason="metric missing in one result")
             else:
                 interval = base.get("ci95") or [base["value"], base["value"]]
+                other = None if metric in STRICT else cand.get("ci95")
                 if metric in LOWER_IS_BETTER:
-                    regressed = cand["value"] > interval[1] + EPSILON
+                    regressed = (cand["value"] > interval[1] + EPSILON
+                                 and (not other or base["value"] < other[0] - EPSILON))
                 else:
-                    regressed = cand["value"] < interval[0] - EPSILON
+                    regressed = (cand["value"] < interval[0] - EPSILON
+                                 and (not other or base["value"] > other[1] + EPSILON))
                 check["status"] = ("regression" if gating else "advisory_regression") if regressed else "ok"
             checks.append(check)
     regressions = [check for check in checks if check["status"] == "regression"]
@@ -108,5 +116,7 @@ def render(report: dict) -> str:
         mark = {"ok": "ok  ", "regression": "FAIL", "advisory_regression": "warn"}[check["status"]]
         extra = f" change {check['change']:+.1%}" if "change" in check else \
             (f" baseline CI {check['baselineCi95']}" if check.get("baselineCi95") else "")
+        if check.get("candidateCi95"):
+            extra += f", candidate CI {check['candidateCi95']}"
         lines.append(f"  [{mark}] {check['metric']}: {check['baseline']} -> {check['candidate']}{extra}")
     return "\n".join(lines)

@@ -219,8 +219,8 @@ Matching is token-based on normalized text, so `$1,950`, `1950 dollars` and `USD
 | `passRate` | Answered, with every required fact, no forbidden claim, the required abstention, reading limits met and not filler |
 | `factRecall`, `factRecallPrimary` | Share of required facts found in primary + alternative, or in the primary only |
 | `forbiddenRate` | Share of answers that assert a forbidden claim or pattern. Negation-aware: `can't guarantee 100%` is not a guarantee. |
-| `abstainRate` | Not-covered and trap items: the reply abstains, defers or states the documented alternative |
-| `formatOkRate`, `genericRate` | Reading limits (primary ≤ 24 words, alternative ≤ 25, ≤ 2 sentences per line, no markup or quotes, few very long words), and empty fillers |
+| `abstainRate` | Not-covered and trap items: the reply abstains (for example "not listed", "I don't see that"), defers or states the documented alternative |
+| `formatOkRate`, `genericRate` | Reading limits (primary ≤ 24 words, alternative ≤ 25, ≤ 2 sentences per line, no markup or quotes, few very long words), and empty fillers: a stock phrase, or a primary under 3 words that carries no required fact (`In 2019.` answering "Since when?" is not filler) |
 | `retrievalHitRate` | Materials-required items: `grounding: grounded` with an expected synthetic document among the sources |
 | `termAccuracy` | Key terms (names and acronyms such as `Ruairi`, `TALLIS`, `ORN-4`) recognized in the utterance that says them; also `micro` and `byTerm` |
 
@@ -254,8 +254,13 @@ compare runs scored at different times, [rescore](#rescore-a-finished-run-offlin
 | Rule | Default |
 | --- | --- |
 | Latency: p95 or p50 of `speechEndToFirstDelta` / `speechEndToCompleted` grows by more than 10% **and** by more than 100 ms | `--max-p95-regression 0.10`, `--max-p50-regression 0.10`, `--min-latency-delta-ms 100` |
-| Quality: the candidate's point estimate falls outside the baseline's 95% CI in the bad direction | always on, for answered/pass/fact/abstain/format/retrieval/term rates and forbidden/generic rates |
+| Quality: the candidate's point estimate falls outside the baseline's 95% CI in the bad direction **and** the baseline's point estimate falls outside the candidate's 95% CI in the other direction | always on, for answered/pass/fact/abstain/format/retrieval/term rates and the generic rate. A candidate without a CI is judged by the baseline's CI alone |
+| Forbidden claims: the candidate's `forbiddenRate` exceeds the baseline's 95% CI | always on and strict: one invented price or promise in a meeting is already a failure |
 | Judge usefulness/support below the baseline CI | advisory; gates only with `--gate-judge` |
+
+Requiring both directions matters when the baseline is perfect: its CI is then a single point (for example `[1.0, 1.0]`),
+so one miss in 108 runs would otherwise fail the gate. One miss leaves the baseline inside the candidate's CI and passes;
+a real drop moves the candidate's CI away from the baseline and fails.
 
 Withheld percentiles are skipped, not failed. Run the baseline and the candidate with the same options and repeats. A
 3-repeat run gives about 108 samples, enough for stable p95.
