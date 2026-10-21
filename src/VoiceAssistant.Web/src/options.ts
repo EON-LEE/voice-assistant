@@ -12,6 +12,11 @@ export interface SessionOptions {
   replySettleMs?: number;
   /** Ask the server to push a Korean meaning for each reply line (`response.korean`) instead of a separate request per line. */
   replyKorean?: boolean;
+  /**
+   * Continue the conversation of this user's previous server session. The live page sets it only when it reconnects or rolls
+   * over a live session whose earlier connection was ready, never on a Start; the server then answers with `resumedTurns`.
+   */
+  resumeConversation?: boolean;
 }
 
 /** What `session.update` can change while a session runs; replies that start later use it. */
@@ -59,12 +64,15 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     throw new Error("replySettleMs must be 0 or an integer between 300 and 5000.");
   if (input.replyKorean !== undefined && typeof input.replyKorean !== "boolean")
     throw new Error("replyKorean must be a boolean.");
+  if (input.resumeConversation !== undefined && typeof input.resumeConversation !== "boolean")
+    throw new Error("resumeConversation must be a boolean.");
   return { responseMode: input.responseMode, profile, profileConfirmed: input.profileConfirmed,
     topic: field(input.topic, 300, "Meeting topic"), phrases, endSilenceMs: input.endSilenceMs,
     ...(input.transcribeOnly === undefined ? {} : { transcribeOnly: input.transcribeOnly }),
     ...(input.semanticSegmentation === undefined ? {} : { semanticSegmentation: input.semanticSegmentation }),
     ...(input.replySettleMs === undefined ? {} : { replySettleMs: input.replySettleMs }),
-    ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }) };
+    ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }),
+    ...(input.resumeConversation === undefined ? {} : { resumeConversation: input.resumeConversation }) };
 }
 
 /** Validate and copy a `session.update` payload: only the given, known settings, at least one. */

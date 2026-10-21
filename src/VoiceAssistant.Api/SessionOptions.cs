@@ -25,11 +25,17 @@ public sealed record SessionOptions
     public int ReplySettleMs { get; init; }
     /// <summary>Opt-in: the server also sends the Korean meaning of each reply line as <c>response.korean</c> events.</summary>
     public bool ReplyKorean { get; init; }
+    /// <summary>
+    /// Start only: continue the conversation of this user's previous meeting session, which a reconnect or a rollover of the
+    /// same live session asks for (see <see cref="ResumableConversations"/>). Without it, a start discards that conversation.
+    /// </summary>
+    public bool ResumeConversation { get; init; }
     public static SessionOptions Legacy { get; } = new();
 
     internal static SessionOptions Parse(JsonElement value)
     {
-        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly", "semanticSegmentation", "replySettleMs", "replyKorean");
+        CheckObject(value, "responseMode", "profile", "profileConfirmed", "topic", "phrases", "endSilenceMs", "transcribeOnly", "semanticSegmentation", "replySettleMs", "replyKorean",
+            "resumeConversation");
         var transcribeOnly = value.TryGetProperty("transcribeOnly", out var only) && only.GetBoolean();
         var mode = Text(value, "responseMode", 20, "grounded");
         if (mode is not ("balanced" or "grounded" or "conversation")) throw Invalid();
@@ -65,7 +71,8 @@ public sealed record SessionOptions
             TranscribeOnly = transcribeOnly,
             SemanticSegmentation = value.TryGetProperty("semanticSegmentation", out var semantic) && semantic.GetBoolean(),
             ReplySettleMs = settle,
-            ReplyKorean = value.TryGetProperty("replyKorean", out var korean) && korean.GetBoolean()
+            ReplyKorean = value.TryGetProperty("replyKorean", out var korean) && korean.GetBoolean(),
+            ResumeConversation = value.TryGetProperty("resumeConversation", out var resume) && resume.GetBoolean()
         };
     }
 

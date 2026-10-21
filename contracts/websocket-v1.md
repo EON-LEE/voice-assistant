@@ -106,6 +106,18 @@ enrichment API. A server that supports it sets `"sessionUpdate":true` in `sessio
 `session.update` returns `error` `code:"transcribe_only"`, `retryable:false`); a client must not send `session.update` to a server that did not set it,
 because such a server rejects the command as the fatal `invalid_command`.
 
+Optional `resumeConversation` (boolean, default false, JSON null is not an omission; start only, `session.update` rejects it) continues the
+conversation of the same user's previous meeting session after a reconnect or a rollover. When a meeting session ends for any reason except
+`session.stop`, the server keeps its finalized recognition history in memory: the recent turns the model sees (at most 12 turns and 24,000
+characters) and the short excerpts of older ones, never partial, pending or generated text. The next start of the same authenticated user takes
+that history out, whatever its options, so it is used at most once. With `resumeConversation:true` and within 10 minutes of the end, the new
+session continues with it, and `session.ready` carries `resumedTurns` (1–12, the number of restored turns). Without the flag, after 10 minutes or
+on a `transcribeOnly` socket, the session starts fresh and the history is discarded; a `transcribeOnly` session also keeps nothing. Restored
+turns are context for the next replies (history, routing and retrieval), never a reply target, so `response.request` still needs a final of the
+new socket. Another user's history is never visible. A client sends the flag only when it reconnects or rolls over a session whose earlier
+connection became ready, never on a user's Start. The history is kept per server process, so it needs the single replica that tickets and session
+slots already need; a server that does not know the option rejects the start as `invalid_start`.
+
 Text commands: `{"type":"response.request"}`, `{"type":"response.cancel"}`, `{"type":"session.stop"}` and `session.update` (above). Manual request uses the latest finalized utterance; before any final it returns a retryable `no_transcript` error. At most 10 commands/second. A finalized utterance automatically starts a response when idle. While a reply is active, new partials do not cancel it and the latest final is queued; intermediate queued finals remain in recognized history. Completion/failure starts the latest queued reply. Manual regeneration/cancellation and stop invalidate obsolete generation immediately and clear queued work. Clients match active response/turn IDs, retain completed suggestions and label previous-question replies. Socket writes are serialized.
 
 Server events:
@@ -114,7 +126,7 @@ For a clear individual/group introduction request with any confirmed profile fie
 
 | type | Additional fields |
 | --- | --- |
-| `session.ready` | `protocolVersion: 1`; `replyKorean: true` only when the client opted in with `replyKorean`; `sessionUpdate: true` when the socket accepts `session.update` (every socket except `transcribeOnly`) |
+| `session.ready` | `protocolVersion: 1`; `replyKorean: true` only when the client opted in with `replyKorean`; `sessionUpdate: true` when the socket accepts `session.update` (every socket except `transcribeOnly`); `resumedTurns: integer` (1–12) only when a `resumeConversation` start continued that many finalized turns of the previous session |
 | `session.updated` | `responseMode`, `replyKorean`: the effective values after a `session.update`. Sent in order with the other events, so it is known which reply started before or after it |
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
 | `response.started` | `responseId: string`, `turnId: string` |

@@ -142,6 +142,12 @@ export class LiveController {
   private generation = 0;
   private ready = false;
   private readyAt: number | undefined;
+  /**
+   * A connection of this live session was ready before, so the next one reconnects or rolls over the same conversation and
+   * asks the server to resume it (`resumeConversation`). A Start always begins a fresh one, even when its first connection
+   * has to be retried.
+   */
+  private resumable = false;
   /** Why the server is about to close this connection, from the `error` that came before the close. */
   private closing: Classified | undefined;
   /** This connection started by sending a backlog, so an audio-rate rejection is retried rather than fatal. */
@@ -183,7 +189,7 @@ export class LiveController {
     this.warningDetail = "";
     this.attempt = 0;
     this.readyAt = undefined;
-    this.offline = this.rollingOver = this.paused = this.waitingForSignIn = false;
+    this.offline = this.rollingOver = this.paused = this.waitingForSignIn = this.resumable = false;
     this.clearBacklog(); this.silence.reset();
     const lifetime = this.lifetime = new AbortController();
     this.setPhase("starting");
@@ -357,7 +363,7 @@ export class LiveController {
     if (!this.active) return;
     const generation = ++this.generation;
     let message: object;
-    try { message = createStartMessage(this.deps.options()); }
+    try { message = createStartMessage(this.startOptions()); }
     catch { this.halt({ code: "invalid_options", disposition: "fatal", action: "restart" }); return; }
     const transport = this.transport = this.deps.createTransport();
     const connection = this.connection = new AbortController();
@@ -372,6 +378,12 @@ export class LiveController {
     }).catch(error => this.lost(generation, error));
   }
 
+  /** The latest settings; a reconnect or rollover of a live session that was ready also asks to resume its conversation. */
+  private startOptions(): SessionOptions {
+    const options = this.deps.options();
+    return this.resumable ? { ...options, resumeConversation: true } : options;
+  }
+
   private receive(generation: number, event: ServerEvent): void {
     if (generation !== this.generation) return;
     if (event.type === "error") { this.serverError(generation, event); return; }
@@ -381,7 +393,7 @@ export class LiveController {
         return;
       }
       this.clearTimer("handshake");
-      this.ready = true;
+      this.ready = this.resumable = true;
       this.readyAt = this.refilledAt = this.lastSentAt = this.clock.now();
       this.tokens = liveLimits.burstBytes;
       this.offline = this.rollingOver = false;

@@ -59,6 +59,14 @@ test("Live: session.ready reports the settings-update capability only when the s
     assert.throws(() => parseEvent(JSON.stringify({ type: "session.ready", sessionUpdate: bad })), /sessionUpdate/);
 });
 
+test("Live: session.ready says how many turns the server resumed, as a whole count", () => {
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1, sessionUpdate: true, resumedTurns: 3 })),
+    { type: "session.ready", sessionUpdate: true, resumedTurns: 3 });
+  assert.equal(parseEvent(JSON.stringify({ type: "session.ready", protocolVersion: 1 })).resumedTurns, undefined);
+  for (const bad of ["3", -1, 1.5, null, true])
+    assert.throws(() => parseEvent(JSON.stringify({ type: "session.ready", resumedTurns: bad })), /resumedTurns/, JSON.stringify(bad));
+});
+
 test("Live: session.updated carries the effective document-search mode and Korean flag, both required and strict", () => {
   assert.deepEqual(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "conversation", replyKorean: false })),
     { type: "session.updated", responseMode: "conversation", replyKorean: false });

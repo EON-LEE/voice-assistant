@@ -175,6 +175,17 @@ A user has one meeting session at a time. A new session of the same user superse
 - A teardown slower than 2 s, or one that leaves work running, logs one content-free line: `Meeting session shutdown took N ms: close N ms, prefetch N ms, cleanup N ms, speech dispose N ms; still running in the background: none|prefetch|cleanup|speech`.
 - An in-process recognizer restart waits at most 2 s for the failed recognizer to be disposed, then continues and leaves that disposal in the background.
 
+### Conversation resume
+
+A reconnect or a rollover of the live page continues the same conversation instead of starting the next replies with an empty history (start option `resumeConversation`, see the [contract](../../contracts/websocket-v1.md)):
+
+- When a meeting session ends for any reason except `session.stop`, its finalized recognition history is kept: the recent turns (at most 12 turns and 24,000 characters) and the short excerpts of older ones. Partial, pending and generated text is never kept. The history is saved first thing in the teardown, before anything that can wait, so the slot is released only after it. A reconnect of the same user waits for that slot (see above), so it always finds the history, superseded session or not.
+- A start with `resumeConversation:true` within 10 minutes of that end continues with the history and reports `resumedTurns` in `session.ready`. The restored turns are context for the next replies, their routing and their retrieval, never a reply target.
+- Every start takes the user's entry out, so it is used once. A start without the flag discards it, so a fresh meeting never inherits an old one. `transcribeOnly` sessions keep nothing and resume nothing.
+- The 10 minutes (`ResumableConversations.Lifetime`) cover what the live page does: it rolls over at once and reconnects within about a minute after a drop (20 attempts at most 3 s apart). They also cover a network outage or a sign-in of a few minutes. A longer gap is more likely a new conversation, and meeting text should not stay in memory longer.
+- Privacy: the history is held in memory only, per authenticated object ID, at most one entry per user and 100 entries in total (the oldest gives way). Expired entries are pruned whenever the store is used. Nothing of it is persisted, logged or sent anywhere: the log line `Meeting conversation resumed; finalized turns restored: N.` carries only the count. A restart loses every entry, and since the store is per process it needs the single replica that tickets and session slots already need.
+- Metrics: `voiceassistant.session.resume` counts starts that asked to resume (`outcome=restored|expired|none`), and `voiceassistant.session.resumed_turns` records how many turns a resumed session continued with.
+
 ## Container build
 
 After the sibling browser component is present, build from repository root:
@@ -206,7 +217,7 @@ for clarification or offer a neutral response, not assign another speaker's
 experience to the user. Prompt-contract tests alone are not proof of model
 compliance; actual conversation acceptance runs also inspect this behavior.
 
-Audio exists only in bounded transient buffers and the live Speech SDK push stream; transcript/answer context is memory-only and cleared when the session ends. No application transcript/audio/query/body/credential logging or persistence is configured. Azure services still process submitted content under their service data policies: configure retention, network access and diagnostics to organizational requirements. Disable full request URL/query capture in Azure ingress, access logs, telemetry and reverse proxies because the upgrade URL carries a short-lived ticket.
+Audio exists only in bounded transient buffers and the live Speech SDK push stream; transcript/answer context is memory-only and cleared when the session ends, except the finalized recognition history that a reconnect of the same user may continue, which stays in memory for at most 10 minutes (see [Conversation resume](#conversation-resume)). No application transcript/audio/query/body/credential logging or persistence is configured. Azure services still process submitted content under their service data policies: configure retention, network access and diagnostics to organizational requirements. Disable full request URL/query capture in Azure ingress, access logs, telemetry and reverse proxies because the upgrade URL carries a short-lived ticket.
 
 Metric export (optional, see [Content-free timing metrics](#content-free-timing-metrics)) sends only this app's content-free meter to the configured Application Insights resource. The exporter's own usage telemetry, Statsbeat, is switched off. Statsbeat would otherwise send exporter usage data to Microsoft-owned Application Insights resources and probe the instance metadata endpoint. When export is enabled and `APPLICATIONINSIGHTS_STATSBEAT_DISABLED` is unset, the app sets it to `true` before the exporter starts; an explicit value from the operator is kept.
 
@@ -216,7 +227,7 @@ SDK references: [Speech Entra auth](https://learn.microsoft.com/azure/ai-service
 
 ## Optional fast-answer session context
 
-The [v1 start-options contract](../../contracts/websocket-v1.md) supports `responseMode`, a confirmed bounded name/role/project profile, topic, phrase list, `endSilenceMs`, `replySettleMs` and `replyKorean`. After start only `responseMode` and `replyKorean` can change, through `session.update`; the server announces this with `sessionUpdate:true` in `session.ready`, and every other option stays fixed for the socket. No options means legacy grounded retrieval and700ms silence; the browser explicitly chooses balanced/500ms. Initial JSON is32KiB maximum (supports escaped Unicode at the field limits), subsequent commands remain4KiB, and binary audio remains32KiB. Invalid context fails startup rather than silently falling back.
+The [v1 start-options contract](../../contracts/websocket-v1.md) supports `responseMode`, a confirmed bounded name/role/project profile, topic, phrase list, `endSilenceMs`, `replySettleMs`, `replyKorean` and `resumeConversation` (see [Conversation resume](#conversation-resume)). After start only `responseMode` and `replyKorean` can change, through `session.update`; the server announces this with `sessionUpdate:true` in `session.ready`, and every other option stays fixed for the socket. No options means legacy grounded retrieval and700ms silence; the browser explicitly chooses balanced/500ms. Initial JSON is32KiB maximum (supports escaped Unicode at the field limits), subsequent commands remain4KiB, and binary audio remains32KiB. Invalid context fails startup rather than silently falling back.
 
 Balanced routing is a conservative anchored allowlist, not an LLM classifier: clear general technical/conversational questions and covered profile introductions can skip Search; ambiguous/company/customer/date/commitment requests retrieve. Bounded history can require retrieval but never promote an ambiguous fragment to a knowledge-free route. Explicit conversation mode skips Search while requiring private-fact abstention; grounded always retrieves. Replies are prompted to start with a useful10-22-word direct sentence and use1-2 English sentences. This is a generation instruction, not a promise of perfect word counts or factuality; no second model/rewriter is used. Unconfirmed profile fields never enter the model as user facts. Unknown past experience/motivation/employer is not invented.
 
@@ -368,6 +379,8 @@ The `VoiceAssistant.Api` .NET `Meter` exposes these instruments. Durations are m
 | `voiceassistant.warmup.failures` | counter | `stage`, `required=true\|false` | Failed startup warm-up attempts; `required=false` is the best-effort Search warm-up |
 | `voiceassistant.reply.speculation` | counter | `provider`, `route`, `response_mode`, `outcome=started\|adopted\|discarded`, `reason=mismatch\|target_changed\|cancelled` (discarded only) | Speculative replies (`Session__SpeculativeStart`): started on a paused partial, adopted by their final, or discarded |
 | `voiceassistant.reply.speculative_head_start` | histogram | `provider`, `route`, `response_mode` | Adopted speculative replies: their final's time minus the speculative start |
+| `voiceassistant.session.resume` | counter | `outcome=restored\|expired\|none` | Meeting session starts that asked to continue the previous conversation (`resumeConversation`) |
+| `voiceassistant.session.resumed_turns` | histogram (`{turn}`) | none | Finalized turns a resumed session continued with |
 | `voiceassistant.sessions.active` | observable gauge | none | Open meeting sessions |
 
 Reply tags are `provider=Azure|Fake|TestDouble`, `trigger=automatic|manual`, `route=knowledge|transcript|profile`, `response_mode=balanced|grounded|conversation` and `grounding=grounded|no_matches|unavailable|disabled|pending`.

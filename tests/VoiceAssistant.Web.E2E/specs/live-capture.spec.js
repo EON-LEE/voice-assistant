@@ -60,6 +60,9 @@ function reply(server, id, question, text, extra = {}) {
   server.send({ type: 'response.completed', turnId: `t${id}`, responseId: `r${id}`, text, suggestions: [text], sources: [],
     grounding: 'disabled', ...extra });
 }
+/** Whether each connection's session.start asked the server to resume the conversation (undefined: it did not). */
+const resumeFlags = server => server.connections.map(connection =>
+  connection.commands.find(command => command.type === 'session.start')?.options?.resumeConversation);
 
 test('display mode: three dropped connections reconnect the server only, with no new share picker', async ({ page }) => {
   const server = await liveFixture(page);
@@ -78,6 +81,8 @@ test('display mode: three dropped connections reconnect the server only, with no
   await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
   await expect(page.locator('#session-error')).toBeHidden();
   await expect.poll(() => server.connections.at(-1).frames).toBeGreaterThan(0);
+  // The start is fresh; every reconnect asks the server to continue the same conversation.
+  expect(resumeFlags(server)).toEqual([undefined, true, true, true]);
 });
 
 test('"Stop sharing" ends capture with an inline 다시 공유 button; only that click opens a new picker', async ({ page }) => {
@@ -101,6 +106,7 @@ test('"Stop sharing" ends capture with an inline 다시 공유 button; only that
   expect(server.connections).toHaveLength(2);
   await expect(page.locator('#live-action')).toBeHidden();
   await expect(page.locator('#answer-text')).toHaveText('Alex owns it.', { message: 're-sharing continues the same conversation' });
+  expect(resumeFlags(server), 're-sharing is a Start, so the server begins a fresh conversation').toEqual([undefined, undefined]);
 });
 
 for (const app of [true, false]) {
@@ -140,6 +146,7 @@ test('session_time_limit rolls over to a new session with the same share and no 
   expect(await server.pickerCalls()).toBe(1);
   await expect.poll(() => server.connections[1].commands.find(command => command.type === 'session.start')).toBeTruthy();
   await expect(page.locator('#answer-text')).toHaveText('Review the plan.');
+  expect(resumeFlags(server), 'the next session continues the conversation').toEqual([undefined, true]);
 });
 
 test('a search failure keeps the session and labels that reply 자료 확인 불가', async ({ page }) => {

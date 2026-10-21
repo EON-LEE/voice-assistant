@@ -336,6 +336,8 @@ test('a server that cannot change settings during a session says so, and the nex
   await expect(page.locator('#capture-status')).toContainText('듣는 중');
   expect(ws.commands.filter(command => command.type === 'session.start').map(command => command.options.responseMode))
     .toEqual(['grounded', 'conversation']);
+  expect(ws.commands.filter(command => command.type === 'session.start').map(command => command.options.resumeConversation),
+    'Stop then Start begins a fresh conversation').toEqual([undefined, undefined]);
   expect(updates(ws)).toEqual([]);
   await expect(page.locator('#quick-note')).toBeHidden();
 });

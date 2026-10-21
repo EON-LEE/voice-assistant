@@ -15,6 +15,8 @@ export interface ServerEvent {
   replyKorean?: boolean;
   /** `session.ready`: this server accepts `session.update` (document search and Korean can change while running). */
   sessionUpdate?: boolean;
+  /** `session.ready`: how many finalized turns of the previous connection the server continued with (`resumeConversation`). */
+  resumedTurns?: number;
   /** `session.updated`: the effective document-search mode. */
   responseMode?: "balanced" | "grounded" | "conversation";
   /** `response.delta`: the primary line (first suggestion) is complete with this delta; sent at most once per response. */
@@ -42,7 +44,10 @@ export function parseEvent(data: unknown): ServerEvent {
   if (type === "session.ready") {
     if (e.replyKorean !== undefined && typeof e.replyKorean !== "boolean") throw new Error("Invalid replyKorean flag.");
     if (e.sessionUpdate !== undefined && typeof e.sessionUpdate !== "boolean") throw new Error("Invalid sessionUpdate flag.");
-    return { type, ...(e.replyKorean === true ? { replyKorean: true } : {}), ...(e.sessionUpdate === true ? { sessionUpdate: true } : {}) };
+    if (e.resumedTurns !== undefined && (!Number.isSafeInteger(e.resumedTurns) || (e.resumedTurns as number) < 0))
+      throw new Error("Invalid resumedTurns count.");
+    return { type, ...(e.replyKorean === true ? { replyKorean: true } : {}), ...(e.sessionUpdate === true ? { sessionUpdate: true } : {}),
+      ...(e.resumedTurns === undefined ? {} : { resumedTurns: e.resumedTurns as number }) };
   }
   if (type === "session.updated") {
     if (typeof e.replyKorean !== "boolean") throw new Error("Invalid replyKorean flag.");

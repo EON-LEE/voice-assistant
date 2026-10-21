@@ -50,6 +50,10 @@ public static class MeetingMetrics
         "Speculative replies started on a paused partial, adopted by their final, or discarded (by reason).");
     private static readonly Histogram<double> SpeculativeHeadStart = Milliseconds(
         "voiceassistant.reply.speculative_head_start", "Adopted speculative replies: final transcript time minus the speculative start.");
+    private static readonly Counter<long> Resumes = Count("voiceassistant.session.resume", "{session}",
+        "Meeting session starts that asked to continue the previous conversation, by outcome: restored, expired or none.");
+    private static readonly Histogram<long> ResumedTurns = Meter.CreateHistogram<long>("voiceassistant.session.resumed_turns", "{turn}",
+        "Finalized turns a resumed meeting session continued with.");
     static MeetingMetrics() => Meter.CreateObservableGauge(
         "voiceassistant.sessions.active", () => Volatile.Read(ref activeSessions), "{session}", "Open meeting sessions.");
 
@@ -133,6 +137,16 @@ public static class MeetingMetrics
     }
 
     public static void SessionStarted() => Interlocked.Increment(ref activeSessions);
+
+    /// <summary>
+    /// A meeting session start that asked to continue the previous conversation: <c>restored</c> (with how many finalized turns
+    /// it continued with), <c>expired</c> (kept too long ago) or <c>none</c> (nothing kept).
+    /// </summary>
+    public static void ConversationResumed(string outcome, int turns)
+    {
+        Resumes.Add(1, new KeyValuePair<string, object?>("outcome", Bounded(outcome)));
+        if (turns > 0) ResumedTurns.Record(turns);
+    }
 
     public static void SessionEnded(string reason)
     {

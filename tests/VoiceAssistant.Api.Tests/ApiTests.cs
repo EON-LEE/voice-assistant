@@ -457,6 +457,7 @@ public sealed partial class ApiTests
             }
         }
         public Uri WebSocketUri => new(address.Replace("http:", "ws:") + "/api/meeting");
+        public IServiceProvider Services => app.Services;
         public string Token(string scope = "Meeting.Access", string audience = Audience, string? issuer = null, bool expired = false, string oid = ObjectId)
         {
             var now = DateTime.UtcNow;
