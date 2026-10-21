@@ -220,7 +220,7 @@ Matching is token-based on normalized text, so `$1,950`, `1950 dollars` and `USD
 | `factRecall`, `factRecallPrimary` | Share of required facts found in primary + alternative, or in the primary only |
 | `forbiddenRate` | Share of answers that assert a forbidden claim or pattern. Negation-aware: `can't guarantee 100%` is not a guarantee. |
 | `abstainRate` | Not-covered and trap items: the reply abstains (for example "not listed", "I don't see that"), defers or states the documented alternative |
-| `formatOkRate`, `genericRate` | Reading limits (primary ≤ 24 words, alternative ≤ 25, ≤ 2 sentences per line, no markup or quotes, few very long words), and empty fillers: a stock phrase, or a primary under 3 words that carries no required fact (`In 2019.` answering "Since when?" is not filler) |
+| `formatOkRate`, `genericRate` | Reading limits (primary ≤ 24 words, alternative ≤ 25, ≤ 2 sentences per line, no markup such as bold, headings, bullets or list numbers, no quotes, few very long words; a year that starts a line, as in `2019. They founded it then.`, is not a list number), and empty fillers: a stock phrase, or a primary under 3 words that carries no required fact (`In 2019.` answering "Since when?" is not filler) |
 | `retrievalHitRate` | Materials-required items: `grounding: grounded` with an expected synthetic document among the sources |
 | `termAccuracy` | Key terms (names and acronyms such as `Ruairi`, `TALLIS`, `ORN-4`) recognized in the utterance that says them; also `micro` and `byTerm` |
 

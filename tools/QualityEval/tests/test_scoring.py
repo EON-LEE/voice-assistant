@@ -108,6 +108,11 @@ class ScoringTests(unittest.TestCase):
         self.assertIn("primary_too_long", long.format_issues)
         markup = score_answer(item, "**Joaquin** handles it. See the list.", "", "disabled", [], [], answered=True)
         self.assertIn("primary_markup", markup.format_issues)
+        listed = score_answer(item, "1. Joaquin handles it.", "2) Ruairi helps.", "disabled", [], [], answered=True)
+        self.assertEqual(listed.format_issues, ["primary_markup", "alternative_markup"])
+        year = score_answer(item, "2019. Ilsa Varnquist and Tomasz Brezina founded Kestrova then.",
+                            "They were co-founders, so 2019 is the start date.", "grounded", [], [], answered=True)
+        self.assertEqual(year.format_issues, [])
         sentences = score_answer(item, "One idea. Two ideas. Three ideas.", "", "disabled", [], [], answered=True)
         self.assertIn("primary_too_many_sentences", sentences.format_issues)
         quotes = score_answer(item, 'He said "yes" to that.', "", "disabled", [], [], answered=True)
