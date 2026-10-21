@@ -375,6 +375,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           // hints raised key-term recognition from 0.48 to 0.67 at the same latency and answer quality.
           { name: 'Session__EarlyStartAtFinal', value: 'true' }
           { name: 'Speech__MaterialPhraseHints', value: 'true' }
+          // Evaluated against a same-image control run at the same time: about 0.1 s earlier first line at p50 and p95,
+          // with the same answer quality. Requires Session__EarlyStartAtFinal.
+          { name: 'Session__SpeculativeStart', value: 'true' }
           { name: 'Session__MaxMinutes', value: string(sessionMaxMinutes) }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: enableDiagnostics ? insights!.properties.ConnectionString : '' }
           { name: 'OTEL_SERVICE_NAME', value: appName }

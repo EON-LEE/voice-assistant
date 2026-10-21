@@ -450,8 +450,8 @@ The coordinated API uses semantic reranking with explicit
 The template sets 1.5 since the October 2026 synthetic evaluation (pass 0.98 and
 retrieval hit 0.99 against 0.88 and 0.84 at 2.0, see the
 [quality baseline](../docs/runbooks/quality-baseline.md)); the API's own default is 2.0.
-The template also sets `Session__EarlyStartAtFinal=true` and `Speech__MaterialPhraseHints=true`; both
-passed the same staging evaluation (see the experiment switches in the API README).
+The template also sets `Session__EarlyStartAtFinal=true`, `Speech__MaterialPhraseHints=true` and
+`Session__SpeculativeStart=true`; all three passed the same staging evaluation (see the experiment switches in the API README).
 The index's `meeting-semantic` configuration prioritizes `title` as title and
 `content` as content. The Bicep parameter `searchSemanticSearch` allows `free`
 or `standard`, default `standard`. The free plan has a monthly query quota; once it
