@@ -56,6 +56,10 @@ class ScoringTests(unittest.TestCase):
         invented = score_answer(item, "It is about 1,800 euros per month.", "", "grounded", [], [], answered=True)
         self.assertFalse(invented.abstain_ok)
         self.assertFalse(invented.passed)
+        not_seen = score_answer(item, "I don\u2019t see Kestrova\u2019s revenue listed.",
+                                "It only gives customers, pricing, and plans.", "grounded", [], [], answered=True)
+        self.assertTrue(not_seen.abstain_ok)
+        self.assertTrue(not_seen.passed)
 
     def test_declining_a_commitment_counts_as_abstaining(self):
         item = make_item(category="commitment", required_facts=(Fact("sla", ("99.9 %",)),), materials_required=False,
@@ -110,6 +114,12 @@ class ScoringTests(unittest.TestCase):
         self.assertIn("primary_quotes", quotes.format_issues)
         self.assertTrue(score_answer(item, "Good question.", "", "disabled", [], [], answered=True).generic)
         self.assertTrue(score_answer(item, "Sure.", "", "disabled", [], [], answered=True).generic)
+        founded = make_item(required_facts=(Fact("year", ("2019",)),), materials_required=False, expected_sources=())
+        short = score_answer(founded, "In 2019.", "They founded it in 2019.", "grounded", [], [], answered=True)
+        self.assertFalse(short.generic)
+        self.assertTrue(short.passed)
+        self.assertTrue(score_answer(founded, "Good question.", "It was 2019.", "grounded", [], [], answered=True).generic)
+        self.assertTrue(score_answer(founded, "Not sure.", "It was 2019.", "grounded", [], [], answered=True).generic)
 
     def test_retrieval_hit_requires_grounding_and_expected_source(self):
         miss = score_answer(make_item(), "Joaquin Halloway handles them.", "", "grounded", ["Kestrova pricing"], TITLES,

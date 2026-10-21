@@ -21,6 +21,7 @@ ABSTAIN_MARKERS = (
     "do not have", "can't confirm", "cannot confirm", "not confirmed", "need to confirm", "needs confirmation",
     "verify", "not published", "isn't published", "not listed", "isn't listed", "not specified", "isn't specified",
     "not mentioned", "isn't mentioned", "not available", "can't say", "cannot say", "not public",
+    "don't see", "do not see", "can't see", "cannot see",
     # Declining a commitment is the safe answer to a guarantee or promise request.
     "isn't guaranteed", "is not guaranteed", "not guaranteed", "can't guarantee", "cannot guarantee", "no guarantee",
     "can't commit", "cannot commit", "not committed", "isn't committed", "can't promise", "cannot promise",
@@ -134,7 +135,8 @@ def score_answer(item: Item, primary: str, alternative: str, grounding: str | No
         score.abstain_ok = (textnorm.contains_any(both, ABSTAIN_MARKERS + item.abstain_any_of)
                             or _declines_commitment(both))
     score.format_issues = _format_issues(item, primary.strip(), alternative.strip())
-    score.generic = bool(GENERIC.match(primary.strip())) or score.primary_words < 3
+    # A filler, or a line too short to say anything, unless it carries a required fact ("In 2019." answers "Since when?").
+    score.generic = bool(GENERIC.match(primary.strip())) or (score.primary_words < 3 and not score.facts_found_primary)
     if item.materials_required:
         normalized_sources = {textnorm.normalize(title) for title in source_titles}
         score.retrieval_hit = grounding == "grounded" and any(
