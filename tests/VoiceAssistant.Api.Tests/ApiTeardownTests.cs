@@ -58,8 +58,11 @@ public sealed partial class ApiTests
                 provider.Release();
                 await provider.Ended.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 if (hang == "speech")
+                {
                     await WaitUntilAsync(() => logs.Messages.Any(message => message.Contains("Speech cleanup failed", StringComparison.Ordinal)),
                         TimeSpan.FromSeconds(5));
+                    Assert.Contains(logs.Messages, message => message.Contains("Speech cleanup failed", StringComparison.Ordinal));
+                }
                 await Task.Delay(200);
                 await Send(reconnect, """{"type":"session.stop"}""");
                 await ReceiveUntilCloseAsync(reconnect);

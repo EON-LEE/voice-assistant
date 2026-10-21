@@ -166,7 +166,7 @@ The runtime identity now needs **Search Index Data Contributor** on the existing
 
 ### Session end and reconnect
 
-A user has one meeting session at a time. A new session of the same user supersedes the old one (`session_superseded`) and waits at most 5 s for it to release its slot, otherwise it is refused with HTTP 429. So the old session's teardown is bounded to 2.5 s (real time), even when its cleanup hangs:
+A user has one meeting session at a time. A new session of the same user supersedes the old one (`session_superseded`) and waits at most 8 s for it to release its slot, otherwise it is refused with HTTP 429. The old session may first spend up to 2 s sending `session_superseded` to its client, so its teardown is bounded to 2.5 s (real time), even when its cleanup hangs; the worst case of about 4.5 s stays well inside the wait, and the live page allows 15 s for a connection:
 
 - The recognizer's disposal starts at once, on the thread pool and beside the close handshake: nothing feeds it once the session loop has ended, and stopping a stalled native recognizer can block the calling thread.
 - A session that ends while its recognizer is still starting does not wait for that start either, because a cancelled start disposes what it set up, which can block in the same way. A recognizer that still starts afterwards is disposed at once.

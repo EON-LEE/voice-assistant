@@ -9,6 +9,14 @@ public sealed class SessionSlots
 {
     private readonly Dictionary<string, Slot> active = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// How long a reconnect waits (real time) for the superseded session of the same user to release its slot before it is
+    /// refused with HTTP 429. That session may first spend up to 2 s telling its client it was superseded, then at most
+    /// <see cref="MeetingSession.ShutdownBudget"/> tearing down, so even its worst case ends well inside this wait. The live page
+    /// allows 15 s for a connection.
+    /// </summary>
+    internal static readonly TimeSpan SupersedeWait = TimeSpan.FromSeconds(8);
+
     /// <summary>Acquires the identity's single meeting slot, superseding a stale session of the same identity.</summary>
     public async Task<SessionLease?> AcquireAsync(string objectId, CancellationToken cancellation)
     {
@@ -21,7 +29,7 @@ public sealed class SessionSlots
         // A reconnect after a network drop can arrive before the old socket notices the drop. The old session's teardown is
         // bounded (MeetingSession.ShutdownBudget), so it releases the slot well within this wait even when its cleanup hangs.
         previous.Supersede.Cancel();
-        try { await previous.Released.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellation); }
+        try { await previous.Released.Task.WaitAsync(SupersedeWait, cancellation); }
         catch (TimeoutException) { return null; }
         lock (active)
             return active.ContainsKey(objectId) ? null : Register(objectId);
@@ -718,7 +726,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     /// <summary>
     /// How long a session's teardown may take (real time) before it returns and its slot is released. A reconnect of the same
-    /// user waits for that release (at most 5 s, see <see cref="SessionSlots"/>), so cleanup that hangs, such as a stalled
+    /// user waits for that release (at most <see cref="SessionSlots.SupersedeWait"/>), so cleanup that hangs, such as a stalled
     /// recognizer or a search or model call that ignores cancellation, must not hold it: what still runs then finishes in the
     /// background, observed.
     /// </summary>
