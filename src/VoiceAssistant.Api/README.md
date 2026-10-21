@@ -164,6 +164,17 @@ The runtime identity now needs **Search Index Data Contributor** on the existing
 
 `Session:MaxMinutes` / `Session__MaxMinutes` replaces the fixed30-minute limit (valid5..180, default30). At expiry the server sends the existing error event with `code:"session_time_limit"`, `retryable:false`, message `Session reached its time limit. Start a new session to continue.`, then closes. Other session cancellations retain `session_ended`; the90-second receive-idle timeout is unchanged. Receiving is cancelled only after the expiry error is sent, because cancelling a WebSocket receive first would abort the socket and lose that notification.
 
+### Session end and reconnect
+
+A user has one meeting session at a time. A new session of the same user supersedes the old one (`session_superseded`) and waits at most 5 s for it to release its slot, otherwise it is refused with HTTP 429. So the old session's teardown is bounded to 2.5 s (real time), even when its cleanup hangs:
+
+- The recognizer's disposal starts at once, on the thread pool and beside the close handshake: nothing feeds it once the session loop has ended, and stopping a stalled native recognizer can block the calling thread.
+- A session that ends while its recognizer is still starting does not wait for that start either, because a cancelled start disposes what it set up, which can block in the same way. A recognizer that still starts afterwards is disposed at once.
+- The close handshake keeps its 2 s limit. Retrieval and reply tasks are cancelled, and the session waits for them, for the prefetch worker and for the recognizer until the 2.5 s are up.
+- Whatever still runs then (a stalled recognizer, or a search or model call that ignores cancellation) finishes in the background, and the slot is released. A reconnect after a stall can therefore briefly overlap with a recognizer that is still being disposed. Any later failure is still observed and logged without detail (`Speech cleanup failed; ...`, `Meeting shutdown step prefetch|cleanup failed with <type>; ...`); a recognizer that finishes late logs `Speech cleanup finished after N ms.`
+- A teardown slower than 2 s, or one that leaves work running, logs one content-free line: `Meeting session shutdown took N ms: close N ms, prefetch N ms, cleanup N ms, speech dispose N ms; still running in the background: none|prefetch|cleanup|speech`.
+- An in-process recognizer restart waits at most 2 s for the failed recognizer to be disposed, then continues and leaves that disposal in the background.
+
 ## Container build
 
 After the sibling browser component is present, build from repository root:
