@@ -438,8 +438,8 @@ test("A Start begins a fresh conversation: the first one, one after Stop, and on
   assert.deepEqual(resumeFlags(h), [undefined, true, undefined, undefined]);
 });
 
-test("The reply choice reaches every session.start and a running session's update, and the name never reaches the server", async () => {
-  let settings: LiveSettings = { ...parseSettings(null), replyOn: "questions", myName: "Eon, Eon Lee" };
+test("The reply choice reaches every session.start and a running session's update", async () => {
+  let settings: LiveSettings = { ...parseSettings(null), replyOn: "questions" };
   const h = harness(undefined, {}, () => liveStartOptions(settings));
   const replyOn = (): (string | undefined)[] => h.transports.map(transport =>
     (transport.sent.find(message => message.type === "session.start") as { options?: SessionOptions } | undefined)?.options?.replyOn);
@@ -454,7 +454,6 @@ test("The reply choice reaches every session.start and a running session's updat
   h.clock.advance(3000); await flush();
   h.latest().ready();
   assert.deepEqual(replyOn(), ["questions", "all"]);
-  assert.doesNotMatch(JSON.stringify(h.transports.flatMap(transport => transport.sent)), /Eon/);
 });
 
 test("A stop in the middle of a reply ends that reply, so nothing looks as if it were still being generated", async () => withMediaStream(async () => {

@@ -63,7 +63,6 @@ const report = {
   koreanPending: finalList.filter(f => f.ko.includes("번역 중")).length,
   suggestionChanges: answers.length,
   suggestionsWithAlternative: answers.filter(a => a.alt).length,
-  myTurnHighlights: answers.filter(a => a.label.includes("지금 답할 차례")).length,
   notSure: answers.filter(a => /not sure/i.test(a.answer)).length,
   errors: timeline, finals: finalList, answers, finalScreen: final,
 };

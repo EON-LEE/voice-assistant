@@ -1,6 +1,5 @@
 import type { CaptureSourceKind } from "./capture.js";
 import { defaultOptions, isReplyOn, type ReplyOn, type SessionOptions, type SessionUpdate } from "./options.js";
-import { sanitizeNames } from "./address.js";
 
 export type ResponseMode = SessionOptions["responseMode"];
 export type DocumentMode = Exclude<ResponseMode, "conversation">;
@@ -20,11 +19,6 @@ export interface LiveSettings {
   answerSize: AnswerSize;
   /** Which speech gets an automatic reply ("추천"): everything worth a reply (`all`) or only questions and requests. */
   replyOn: ReplyOn;
-  /**
-   * "내 이름": the user's own names, sanitized (see `sanitizeNames`). An answer to speech that says one is emphasized.
-   * Stored only in this browser: never sent to the server, logged, or part of the session options.
-   */
-  myName: string;
 }
 
 /** The English answer text sizes A− and A+ step through, in percent of the default size (100). */
@@ -83,7 +77,6 @@ export function parseSettings(raw: string | null, offered: HostSources = noHostS
     showKorean: value.showKorean === true,
     answerSize: isAnswerSize(value.answerSize) ? value.answerSize : 100,
     replyOn: isReplyOn(value.replyOn) ? value.replyOn : "all",
-    myName: sanitizeNames(value.myName),
   };
 }
 
@@ -124,7 +117,7 @@ export function deferredUpdateNote(update: SessionUpdate): string {
 
 /**
  * The live page's `session.start` options: its fixed meeting settings plus the chosen document search, topic, Korean and
- * `replyOn`. The names of "내 이름" are never part of them.
+ * `replyOn`.
  */
 export function liveStartOptions(settings: Pick<LiveSettings, "responseMode" | "topic" | "showKorean" | "replyOn">): SessionOptions {
   // endSilenceMs is required by the options validator but has no effect under semantic segmentation.

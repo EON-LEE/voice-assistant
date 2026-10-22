@@ -71,10 +71,7 @@ search or 추천 changes apply from the next connection, and Stop then Start app
 Korean meaning and captions work with any server.
 
 An answer is labeled **추천 영어 답변**: a line to use when you speak, not a sign that
-you must answer. Enter your own name in Settings (**내 이름**, optional, for example
-`Eon, Eon Lee`): when the speech an answer replies to says one of those names, the
-answer is labeled **이름이 불렸어요 · 지금 답할 차례** and highlighted. The names stay in
-this browser and are never sent to the server.
+you must answer. No answer is highlighted as your turn.
 
 The deployed application's URL is environment-specific. Operators find it with
 `az containerapp show --name <app> --resource-group <group>

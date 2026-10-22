@@ -60,7 +60,7 @@ test("A settings update carries only the known settings, at least one, and is co
   assert.notEqual(validateUpdate(input), input);
   for (const bad of [{}, { responseMode: undefined }, { responseMode: "fast" }, { responseMode: 3 }, { replyKorean: "true" },
     { replyKorean: 1 }, { replyKorean: null }, { replyOn: "question" }, { replyOn: null }, { replyOn: true }, { replyOn: undefined },
-    { topic: "x" }, { responseMode: "balanced", topic: "x" }, { replyOn: "all", myName: "Eon" }, null, [], "conversation"])
+    { topic: "x" }, { responseMode: "balanced", topic: "x" }, { replyOn: "all", topic: "x" }, null, [], "conversation"])
     assert.throws(() => validateUpdate(bad as unknown as SessionUpdate), /./, JSON.stringify(bad));
 });
 test("A running session sends a validated settings update only while it is ready and not recognition-only", async () => {
