@@ -50,14 +50,15 @@ windows and enlarged text. This presentation change does not establish answer
 accuracy or real-meeting usability; the older microphone-only desktop prototype
 is unchanged.
 
-### Quick settings: document search, captions, Korean meaning
+### Quick settings: document search, replies, captions, Korean meaning
 
-Under the status line the live page has a quick row for the three choices that
-most affect speed and screen space:
+Under the status line the live page has a quick row for the choices that most
+affect speed, screen space and how often a suggestion appears:
 
 | Control | Effect | Default |
 | --- | --- | --- |
 | 문서검색 **사용 / 미사용** | On searches your uploaded materials (Azure AI Search). Off answers from the conversation only and skips retrieval, the fastest path | 사용 |
+| 추천 **모든 발언 / 질문만** | 모든 발언 suggests a reply for every meaningful unit of speech. 질문만 suggests one only for a question or a direct request, which helps when several people talk and most statements are not meant for you | 모든 발언 |
 | **자막** | Shows what was heard (the recognized conversation) | off |
 | **한국어 뜻** | Shows the Korean meaning of the answer and alternative, and of heard questions while captions are on. Off makes no translation requests | off |
 
@@ -66,8 +67,14 @@ last "on" mode chosen in Settings (search on every reply, or only when needed).
 With a server that announces `sessionUpdate`, a change made during a session is
 sent as `session.update` and applies from the next reply; a reply already being
 prepared keeps its settings. With an older server the page says that document
-search changes apply from the next connection, and Stop then Start applies them.
+search or 추천 changes apply from the next connection, and Stop then Start applies them.
 Korean meaning and captions work with any server.
+
+An answer is labeled **추천 영어 답변**: a line to use when you speak, not a sign that
+you must answer. Enter your own name in Settings (**내 이름**, optional, for example
+`Eon, Eon Lee`): when the speech an answer replies to says one of those names, the
+answer is labeled **이름이 불렸어요 · 지금 답할 차례** and highlighted. The names stay in
+this browser and are never sent to the server.
 
 The deployed application's URL is environment-specific. Operators find it with
 `az containerapp show --name <app> --resource-group <group>

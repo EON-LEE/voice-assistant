@@ -386,11 +386,12 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                                 // Experiment: a complete question or request is answered now; the settle above only checks it later.
                                 else if (features.EarlyStartAtFinal && CanStartEarly()) await StartEarlyReplyAsync(lifetime.Token);
                             }
-                            else if (responseActive)
+                            // Without a settle window every final is answered; with replyOn "questions" only a question or a direct request.
+                            else if (!options.QuestionsOnly || ReplyTrigger.Evaluate([transcript.Text], questionsOnly: true) == ReplyDecision.Reply)
                             {
-                                PreparePendingResponse(1);
+                                if (responseActive) PreparePendingResponse(1);
+                                else await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 1);
                             }
-                            else await StartResponseAsync(lifetime.Token, manual: false, currentSegments: 1);
                         }
                         else
                         {
@@ -413,6 +414,14 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }
                         break;
                     case "settle" when message.Generation == settleNumber && pendingSpeech.Count > 0:
+                        if (options.QuestionsOnly && ReplyTrigger.Evaluate(pendingSpeech, questionsOnly: true) == ReplyDecision.Discard)
+                        {
+                            // replyOn "questions": speech that is not a question or a direct request is dropped like a backchannel,
+                            // however long it is. It stays in the history as context for later replies.
+                            pendingSpeech.Clear();
+                            earlyReply = null;
+                            break;
+                        }
                         if (earlyReply is { } started)
                         {
                             // The reply started at the final stands unless later speech in the window changed its target; then
@@ -461,10 +470,15 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }
                         // A speculative reply was prepared with the earlier settings, so it is dropped (experiment).
                         DiscardSpeculation("cancelled");
-                        // A reply already generating keeps the settings it started with; the change applies from the next one.
+                        // A reply already generating keeps the settings it started with; the change applies from the next one,
+                        // and a changed replyOn from the next settle.
                         options = options.Apply((SessionUpdate)message.Value!);
                         prefetch?.UpdateOptions(options);
-                        await SendAsync(new { type = "session.updated", responseMode = options.ResponseMode, replyKorean = options.ReplyKorean }, lifetime.Token);
+                        await SendAsync(new
+                        {
+                            type = "session.updated", responseMode = options.ResponseMode, replyKorean = options.ReplyKorean,
+                            replyOn = options.ReplyOn
+                        }, lifetime.Token);
                         break;
                     case "session.stop":
                         endReason = "stopped";
@@ -853,7 +867,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         var number = ++settleNumber;
         var delay = TimeSpan.FromMilliseconds(options.ReplySettleMs);
         if (pendingSpeech.Count > 0 && clock.GetElapsedTime(pendingSince) > MaxGatherTime)
-            // A long-running gathered statement is answered as soon as the speaker pauses briefly.
+            // A long-running gathered statement is answered (with replyOn "questions": dropped) as soon as the speaker pauses briefly.
             delay = TimeSpan.FromMilliseconds(CompleteSettleMs);
         else if (afterFinal && CompleteQuestionOrRequest())
             // New speech re-arms the full window, so a continuation still merges into one reply.

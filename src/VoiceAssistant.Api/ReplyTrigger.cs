@@ -25,6 +25,14 @@ public static partial class ReplyTrigger
         return words >= SubstantiveWords ? ReplyDecision.Reply : ReplyDecision.Wait;
     }
 
+    /// <summary>
+    /// <see cref="Evaluate(IReadOnlyList{string})"/>, or for a session that answers only questions and direct requests (replyOn
+    /// <c>questions</c>): speech that does not invite a reply is discarded however long it is, so a statement never waits for
+    /// more context and never replies on its length.
+    /// </summary>
+    public static ReplyDecision Evaluate(IReadOnlyList<string> pending, bool questionsOnly) =>
+        questionsOnly && !InvitesReply(pending) ? ReplyDecision.Discard : Evaluate(pending);
+
     public static bool ContainsQuestion(IReadOnlyList<string> pending)
     {
         var text = string.Join(' ', pending);

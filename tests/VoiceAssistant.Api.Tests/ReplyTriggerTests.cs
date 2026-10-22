@@ -86,6 +86,23 @@ public sealed class ReplyTriggerTests
         Assert.True(ReplyTrigger.InvitesReply(["The numbers look fine.", "OK, walk us through the plan."]));
 
     [Theory]
+    [InlineData(ReplyDecision.Discard, "We finished the migration last week and the dashboards are now live for every team.")]
+    [InlineData(ReplyDecision.Discard, "So busy today I.")]
+    [InlineData(ReplyDecision.Discard, "And then the small cut and break.", "I'm planning to come real soon.", "The weather was bad.")]
+    [InlineData(ReplyDecision.Discard, "Yeah.")]
+    [InlineData(ReplyDecision.Discard, "Right?")]
+    [InlineData(ReplyDecision.Reply, "Did you catch the news?")]
+    [InlineData(ReplyDecision.Reply, "Tell me about your plan.")]
+    [InlineData(ReplyDecision.Reply, "The numbers look fine.", "OK, walk us through the plan.")]
+    [InlineData(ReplyDecision.Reply, "We finished the migration last week.", "What do you think?")]
+    public void QuestionsOnlyDiscardsEveryStatementHoweverLong(ReplyDecision expected, params string[] pending)
+    {
+        Assert.Equal(expected, ReplyTrigger.Evaluate(pending, questionsOnly: true));
+        // Without the switch the rule is exactly the one every session used before.
+        Assert.Equal(ReplyTrigger.Evaluate(pending), ReplyTrigger.Evaluate(pending, questionsOnly: false));
+    }
+
+    [Theory]
     [InlineData(true, "Which vendor did we pick for the data migration?")]
     [InlineData(true, "What are you talking about?")]
     [InlineData(true, "Can you tell me what the deadline is?")]

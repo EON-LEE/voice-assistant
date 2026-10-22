@@ -39,14 +39,28 @@ test("resumeConversation is an optional boolean that is sent only when it was se
   const start = createStartMessage({ ...defaultOptions(), resumeConversation: true });
   assert.equal("options" in start && start.options.resumeConversation, true);
 });
+test("replyOn is all or questions, sent only when it was set", () => {
+  assert.equal("replyOn" in validateOptions(defaultOptions()), false, "without it the server answers all speech as before");
+  for (const replyOn of ["all", "questions"] as const) {
+    assert.equal(validateOptions({ ...defaultOptions(), replyOn }).replyOn, replyOn);
+    const start = createStartMessage({ ...defaultOptions(), replyOn });
+    assert.equal("options" in start && start.options.replyOn, replyOn);
+  }
+  for (const bad of ["Questions", "question", "none", "", true, 1, null])
+    assert.throws(() => validateOptions({ ...defaultOptions(), replyOn: bad as unknown as "all" }), /replyOn/, JSON.stringify(bad));
+});
 test("A settings update carries only the known settings, at least one, and is copied", () => {
   assert.deepEqual(validateUpdate({ responseMode: "conversation" }), { responseMode: "conversation" });
   assert.deepEqual(validateUpdate({ replyKorean: false }), { replyKorean: false });
+  assert.deepEqual(validateUpdate({ replyOn: "questions" }), { replyOn: "questions" });
   assert.deepEqual(validateUpdate({ responseMode: "balanced", replyKorean: true }), { responseMode: "balanced", replyKorean: true });
+  assert.deepEqual(validateUpdate({ responseMode: "balanced", replyKorean: true, replyOn: "all" }),
+    { responseMode: "balanced", replyKorean: true, replyOn: "all" });
   const input = { responseMode: "grounded" as const };
   assert.notEqual(validateUpdate(input), input);
   for (const bad of [{}, { responseMode: undefined }, { responseMode: "fast" }, { responseMode: 3 }, { replyKorean: "true" },
-    { replyKorean: 1 }, { replyKorean: null }, { topic: "x" }, { responseMode: "balanced", topic: "x" }, null, [], "conversation"])
+    { replyKorean: 1 }, { replyKorean: null }, { replyOn: "question" }, { replyOn: null }, { replyOn: true }, { replyOn: undefined },
+    { topic: "x" }, { responseMode: "balanced", topic: "x" }, { replyOn: "all", myName: "Eon" }, null, [], "conversation"])
     assert.throws(() => validateUpdate(bad as unknown as SessionUpdate), /./, JSON.stringify(bad));
 });
 test("A running session sends a validated settings update only while it is ready and not recognition-only", async () => {
@@ -65,10 +79,11 @@ test("A running session sends a validated settings update only while it is ready
   session.update({ replyKorean: true });
   assert.deepEqual(sent.map(message => message.type), ["session.start"], "nothing is sent before session.ready");
   receive({ type: "session.ready", sessionUpdate: true });
-  session.update({ responseMode: "conversation", replyKorean: false });
-  assert.deepEqual(sent.at(-1), { type: "session.update", options: { responseMode: "conversation", replyKorean: false } });
+  session.update({ responseMode: "conversation", replyKorean: false, replyOn: "questions" });
+  assert.deepEqual(sent.at(-1), { type: "session.update", options: { responseMode: "conversation", replyKorean: false, replyOn: "questions" } });
   assert.throws(() => session.update({}), /at least one/);
   assert.throws(() => session.update({ responseMode: "fast" } as unknown as SessionUpdate), /Choose/);
+  assert.throws(() => session.update({ replyOn: "questions only" } as unknown as SessionUpdate), /replyOn/);
   assert.equal(sent.length, 2, "an invalid update never reaches the server");
   broken = true;
   session.update({ replyKorean: true });

@@ -5,14 +5,15 @@ import { CaptureError, DisplayAudioSource, MicrophoneAudioSource, isHostSource, 
   type CaptureSourceKind } from "./capture.js";
 import { HostAudioSource, hostKind, hostWebView, isHostAudioAvailable } from "./host-audio.js";
 import { SocketTransport, asError } from "./transport.js";
-import { defaultOptions, type SessionOptions } from "./options.js";
+import type { SessionOptions } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
 import type { Grounding, ServerEvent } from "./protocol.js";
 import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply,
   type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
-import { parseSettings, pendingUpdate, settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, documentSearchOn,
-  type HostSources, type LiveSettings, type ResponseMode } from "./live-settings.js";
+import { deferredUpdateNote, liveStartOptions, parseSettings, pendingUpdate, settingsKey, stepAnswerSize, withDocumentSearch,
+  withResponseMode, documentSearchOn, type AppliedSettings, type HostSources, type LiveSettings, type ResponseMode } from "./live-settings.js";
+import { parseNames, primaryLabel, sanitizeNames } from "./address.js";
 import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
 import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, sourceNames, warningMessage, type LiveWarning,
   type PageAction } from "./live-errors.js";
@@ -29,7 +30,7 @@ const toggleButton = $<HTMLButtonElement>("live-toggle"), pauseButton = $<HTMLBu
 const smallerButton = $<HTMLButtonElement>("answer-smaller"), largerButton = $<HTMLButtonElement>("answer-larger");
 const settingsDialog = $<HTMLDialogElement>("settings");
 const micDevice = $<HTMLSelectElement>("mic-device"), responseMode = $<HTMLSelectElement>("response-mode");
-const topic = $<HTMLInputElement>("topic");
+const topic = $<HTMLInputElement>("topic"), myName = $<HTMLInputElement>("my-name");
 const audioSource = $<HTMLSelectElement>("audio-source");
 const microphoneSettings = $("microphone-settings"), displayHint = $("display-hint");
 /** LiveCoach.exe (WebView2) or a browser tab: the share picker offers different surfaces in each. */
@@ -63,8 +64,8 @@ let pushing = false;
 // Only a reply that began while the server was pushing Korean has a pushed line to wait for.
 const pushedAtStart = new Set<string>();
 // What the connected session runs with, and whether the server accepts setting changes while connected.
-let applied: { responseMode: ResponseMode; replyKorean: boolean } = { responseMode: "grounded", replyKorean: false };
-let startedMode: ResponseMode = "grounded";
+let applied: AppliedSettings = { responseMode: "grounded", replyKorean: false, replyOn: "all" };
+let started: Omit<AppliedSettings, "replyKorean"> = { responseMode: "grounded", replyOn: "all" };
 let canUpdate = false, updating = false;
 let quickNote = "";
 const recentTranslatedTurns = 6;
@@ -79,7 +80,8 @@ function loadSettings(): LiveSettings {
   try { return parseSettings(localStorage.getItem(settingsKey), offered); } catch { return parseSettings(null, offered); }
 }
 let settings = loadSettings();
-responseMode.value = settings.responseMode; topic.value = settings.topic; audioSource.value = settings.audioSource;
+responseMode.value = settings.responseMode; topic.value = settings.topic; myName.value = settings.myName;
+audioSource.value = settings.audioSource;
 if (host === "app") {
   // WebView2 has no browser tabs to pick; only a whole screen carries (system) audio there.
   displayHint.textContent = "라이브 시작 시 뜨는 공유 선택창에서 '전체 화면'을 고르고 '시스템 오디오 공유'를 체크하세요. "
@@ -100,11 +102,15 @@ function selectedSource(): CaptureSourceKind {
   return value === "display" || value === "teams" || value === "host-system" ? value : "microphone";
 }
 function saveSettings(): void {
-  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: selectedSource() };
+  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: selectedSource(),
+    myName: sanitizeNames(myName.value) };
+  // The field shows the names as they are kept: invalid ones are dropped, the rest joined with ", ".
+  if (myName.value !== settings.myName) myName.value = settings.myName;
   persist();
 }
 micDevice.addEventListener("change", saveSettings);
 topic.addEventListener("change", saveSettings);
+myName.addEventListener("change", () => { saveSettings(); render(); });
 audioSource.addEventListener("change", () => {
   renderAudioSource(); saveSettings();
   // Choosing the source in use again also cancels a switch that is still being prepared.
@@ -124,6 +130,8 @@ function changeSettings(next: LiveSettings): void {
 }
 $("doc-on").addEventListener("click", () => changeSettings(withDocumentSearch(settings, true)));
 $("doc-off").addEventListener("click", () => changeSettings(withDocumentSearch(settings, false)));
+$("reply-all").addEventListener("click", () => changeSettings({ ...settings, replyOn: "all" }));
+$("reply-questions").addEventListener("click", () => changeSettings({ ...settings, replyOn: "questions" }));
 $("toggle-captions").addEventListener("click", () => changeSettings({ ...settings, showCaptions: !settings.showCaptions }));
 $("toggle-korean").addEventListener("click", () => changeSettings({ ...settings, showKorean: !settings.showKorean }));
 responseMode.addEventListener("change", () => changeSettings(withResponseMode(settings, responseMode.value as ResponseMode)));
@@ -144,8 +152,8 @@ function syncSession(): void {
   const update = pendingUpdate(applied, settings);
   if (!update) { quickNote = ""; return; }
   if (!canUpdate) {
-    // Korean still works without the server: the client translates it itself. Document search needs the server.
-    quickNote = update.responseMode ? "이 서버는 연결 중 문서검색 변경을 지원하지 않아요 · 다음 연결부터 적용돼요" : "";
+    // Korean still works without the server: the client translates it itself. Document search and replyOn need the server.
+    quickNote = deferredUpdateNote(update);
     return;
   }
   quickNote = "";
@@ -157,10 +165,8 @@ function syncSession(): void {
 function resetUpdate(): void { canUpdate = updating = false; quickNote = ""; }
 
 function sessionOptions(): SessionOptions {
-  // endSilenceMs is required by the options validator but has no effect under semantic segmentation.
-  const options: SessionOptions = { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic,
-    endSilenceMs: 1100, semanticSegmentation: true, replySettleMs: 1000, replyKorean: settings.showKorean };
-  startedMode = options.responseMode;
+  const options = liveStartOptions(settings);
+  started = { responseMode: options.responseMode, replyOn: options.replyOn ?? "all" };
   return options;
 }
 
@@ -346,12 +352,13 @@ function onEvent(e: ServerEvent): void {
   state.apply(e);
   if (e.type === "session.ready") {
     pushing = e.replyKorean === true; canUpdate = e.sessionUpdate === true; updating = false;
-    applied = { responseMode: startedMode, replyKorean: pushing };
+    applied = { ...started, replyKorean: pushing };
     // A setting may have changed between connecting and being ready.
     syncSession();
   }
   if (e.type === "session.updated") {
-    applied = { responseMode: e.responseMode ?? applied.responseMode, replyKorean: e.replyKorean === true };
+    applied = { responseMode: e.responseMode ?? applied.responseMode, replyKorean: e.replyKorean === true,
+      replyOn: e.replyOn ?? applied.replyOn };
     pushing = applied.replyKorean; updating = false;
     syncSession();
   }
@@ -522,6 +529,7 @@ function setHidden(id: string, hidden: boolean): void {
 function renderQuick(): void {
   const search = documentSearchOn(settings);
   setPressed("doc-on", search); setPressed("doc-off", !search);
+  setPressed("reply-all", settings.replyOn === "all"); setPressed("reply-questions", settings.replyOn === "questions");
   setPressed("toggle-captions", settings.showCaptions); setPressed("toggle-korean", settings.showKorean);
   setHidden("caption-block", !settings.showCaptions); setHidden("conversation-section", !settings.showCaptions);
   setHidden("answer-meaning", !settings.showKorean); setHidden("alternative-meaning", !settings.showKorean);
@@ -590,13 +598,14 @@ function renderSuggestions(): void {
   const generating = controller.isReady && state.generating;
   const finishing = !!display && generating && state.current?.id === display.id;
   const previous = !!display && (state.hasNewerReply || generating && state.current?.id !== display.id);
-  const myTurn = !previous && !!display?.respondNow;
-  setText("primary-label", previous ? "이전 질문용 답변" : myTurn ? "지금 말할 추천" : "추천 영어 답변");
-  panel.querySelector(".live-card.primary")!.classList.toggle("my-turn", myTurn);
+  // What the reply answers. Only an answer to speech that says the user's name is emphasized; respondNow is not shown.
+  const answered = display?.question ?? state.turns.find(turn => turn.id === display?.turnId)?.text;
+  const label = primaryLabel(previous, answered, parseNames(settings.myName));
+  setText("primary-label", label.text);
+  panel.querySelector(".live-card.primary")!.classList.toggle("my-turn", label.myTurn);
   const answersSection = panel.querySelector<HTMLElement>(".live-answers")!;
   if (answersSection.dataset.previous !== String(previous)) answersSection.dataset.previous = String(previous);
-  setText("question-text", display?.question ?? state.turns.find(turn => turn.id === display?.turnId)?.text
-    ?? (display ? "이전 대화" : state.latest?.text ?? "영어 대화를 기다리고 있어요."));
+  setText("question-text", answered ?? (display ? "이전 대화" : state.latest?.text ?? "영어 대화를 기다리고 있어요."));
   setText("reading-status", state.readingHeld
     ? state.hasNewerReply ? "새 답변 도착 · 고정을 해제하면 표시합니다"
       : generating ? "화면 고정됨 · 새 답변 준비 중"

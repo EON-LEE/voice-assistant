@@ -6,7 +6,8 @@ import { HostAudioSource, hostKind } from "../../src/VoiceAssistant.Web/src/host
 import { LiveController, SilenceWatch, liveLimits, type LiveClock, type LiveNetwork, type SourceHooks } from "../../src/VoiceAssistant.Web/src/live-controller.js";
 import { liveMessage, warningMessage, type Classified } from "../../src/VoiceAssistant.Web/src/live-errors.js";
 import { LiveState } from "../../src/VoiceAssistant.Web/src/live-state.js";
-import { defaultOptions } from "../../src/VoiceAssistant.Web/src/options.js";
+import { liveStartOptions, parseSettings, pendingUpdate, type LiveSettings } from "../../src/VoiceAssistant.Web/src/live-settings.js";
+import { defaultOptions, type SessionOptions } from "../../src/VoiceAssistant.Web/src/options.js";
 import type { ServerEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 import { maxAudioMessageBytes, type Transport } from "../../src/VoiceAssistant.Web/src/transport.js";
 import { FakeWebView } from "./fake-webview.js";
@@ -83,7 +84,8 @@ class FakeSource implements AudioSource {
 }
 
 function harness(createSource?: (kind: CaptureSourceKind, hooks: SourceHooks) => AudioSource,
-  listen: { onEvent?(event: ServerEvent): void; onDisconnect?(reason: Classified): void } = {}) {
+  listen: { onEvent?(event: ServerEvent): void; onDisconnect?(reason: Classified): void } = {},
+  options: () => SessionOptions = defaultOptions) {
   const clock = new FakeClock(), network = new FakeNetwork();
   const transports: FakeTransport[] = [], events: ServerEvent[] = [], disconnects: Classified[] = [], sources: FakeSource[] = [];
   let hooks: SourceHooks | undefined;
@@ -100,7 +102,7 @@ function harness(createSource?: (kind: CaptureSourceKind, hooks: SourceHooks) =>
       transports.push(transport);
       return transport;
     },
-    options: () => defaultOptions(),
+    options,
     onEvent: event => { events.push(event); listen.onEvent?.(event); },
     onDisconnect: reason => { disconnects.push(reason); listen.onDisconnect?.(reason); },
     onChange: () => {},
@@ -434,6 +436,25 @@ test("A Start begins a fresh conversation: the first one, one after Stop, and on
   h.controller.start("microphone"); await flush(); // what the page does on 다시 시작
   h.latest().ready();
   assert.deepEqual(resumeFlags(h), [undefined, true, undefined, undefined]);
+});
+
+test("The reply choice reaches every session.start and a running session's update, and the name never reaches the server", async () => {
+  let settings: LiveSettings = { ...parseSettings(null), replyOn: "questions", myName: "Eon, Eon Lee" };
+  const h = harness(undefined, {}, () => liveStartOptions(settings));
+  const replyOn = (): (string | undefined)[] => h.transports.map(transport =>
+    (transport.sent.find(message => message.type === "session.start") as { options?: SessionOptions } | undefined)?.options?.replyOn);
+  await live(h);
+  assert.deepEqual(replyOn(), ["questions"]);
+  // Switched back to all speech while connected: only that change is sent, and it applies from the next settle.
+  settings = { ...settings, replyOn: "all" };
+  h.controller.update(pendingUpdate({ responseMode: "grounded", replyKorean: false, replyOn: "questions" }, settings)!);
+  assert.deepEqual(h.latest().sent.at(-1), { type: "session.update", options: { replyOn: "all" } });
+  // A reconnect starts with the choice as it is now.
+  h.latest().onError(new CodedError("socket_closed", "dropped"));
+  h.clock.advance(3000); await flush();
+  h.latest().ready();
+  assert.deepEqual(replyOn(), ["questions", "all"]);
+  assert.doesNotMatch(JSON.stringify(h.transports.flatMap(transport => transport.sent)), /Eon/);
 });
 
 test("A stop in the middle of a reply ends that reply, so nothing looks as if it were still being generated", async () => withMediaStream(async () => {

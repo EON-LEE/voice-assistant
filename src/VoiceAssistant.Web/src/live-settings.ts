@@ -1,5 +1,6 @@
 import type { CaptureSourceKind } from "./capture.js";
-import type { SessionOptions, SessionUpdate } from "./options.js";
+import { defaultOptions, isReplyOn, type ReplyOn, type SessionOptions, type SessionUpdate } from "./options.js";
+import { sanitizeNames } from "./address.js";
 
 export type ResponseMode = SessionOptions["responseMode"];
 export type DocumentMode = Exclude<ResponseMode, "conversation">;
@@ -17,6 +18,13 @@ export interface LiveSettings {
   showKorean: boolean;
   /** The English answer's text size, in percent of the default size. */
   answerSize: AnswerSize;
+  /** Which speech gets an automatic reply ("추천"): everything worth a reply (`all`) or only questions and requests. */
+  replyOn: ReplyOn;
+  /**
+   * "내 이름": the user's own names, sanitized (see `sanitizeNames`). An answer to speech that says one is emphasized.
+   * Stored only in this browser: never sent to the server, logged, or part of the session options.
+   */
+  myName: string;
 }
 
 /** The English answer text sizes A− and A+ step through, in percent of the default size (100). */
@@ -74,6 +82,8 @@ export function parseSettings(raw: string | null, offered: HostSources = noHostS
     showCaptions: value.showCaptions === true,
     showKorean: value.showKorean === true,
     answerSize: isAnswerSize(value.answerSize) ? value.answerSize : 100,
+    replyOn: isReplyOn(value.replyOn) ? value.replyOn : "all",
+    myName: sanitizeNames(value.myName),
   };
 }
 
@@ -89,12 +99,35 @@ export function withDocumentSearch(settings: LiveSettings, on: boolean): LiveSet
   return withResponseMode(settings, on ? settings.documentMode : "conversation");
 }
 
+/** The settings a connected session runs with, as far as `session.update` can change them. */
+export interface AppliedSettings { responseMode: ResponseMode; replyKorean: boolean; replyOn: ReplyOn }
+
 /** What a connected session still has to be told so that it matches the settings; `null` when it already does. */
-export function pendingUpdate(applied: { responseMode: ResponseMode; replyKorean: boolean },
-  settings: Pick<LiveSettings, "responseMode" | "showKorean">): SessionUpdate | null {
+export function pendingUpdate(applied: AppliedSettings,
+  settings: Pick<LiveSettings, "responseMode" | "showKorean" | "replyOn">): SessionUpdate | null {
   const update: SessionUpdate = {
     ...(applied.responseMode !== settings.responseMode ? { responseMode: settings.responseMode } : {}),
     ...(applied.replyKorean !== settings.showKorean ? { replyKorean: settings.showKorean } : {}),
+    ...(applied.replyOn !== settings.replyOn ? { replyOn: settings.replyOn } : {}),
   };
   return Object.keys(update).length ? update : null;
+}
+
+/**
+ * What the quick row says when the server cannot change settings while connected: document search and `replyOn` then wait
+ * for the next connection. Korean needs no note, because the page translates by itself.
+ */
+export function deferredUpdateNote(update: SessionUpdate): string {
+  const names = [update.responseMode ? "문서검색" : "", update.replyOn ? "추천" : ""].filter(Boolean);
+  return names.length ? `이 서버는 연결 중 ${names.join("·")} 변경을 지원하지 않아요 · 다음 연결부터 적용돼요` : "";
+}
+
+/**
+ * The live page's `session.start` options: its fixed meeting settings plus the chosen document search, topic, Korean and
+ * `replyOn`. The names of "내 이름" are never part of them.
+ */
+export function liveStartOptions(settings: Pick<LiveSettings, "responseMode" | "topic" | "showKorean" | "replyOn">): SessionOptions {
+  // endSilenceMs is required by the options validator but has no effect under semantic segmentation.
+  return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic, endSilenceMs: 1100,
+    semanticSegmentation: true, replySettleMs: 1000, replyKorean: settings.showKorean, replyOn: settings.replyOn };
 }

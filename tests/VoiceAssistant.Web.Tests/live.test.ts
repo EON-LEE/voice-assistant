@@ -80,6 +80,17 @@ test("Live: session.updated carries the effective document-search mode and Korea
   assert.equal(state.display, null, "a settings acknowledgement changes no conversation state");
 });
 
+test("Live: session.updated may carry the effective replyOn, which must then be all or questions", () => {
+  for (const replyOn of ["all", "questions"])
+    assert.deepEqual(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: false, replyOn })),
+      { type: "session.updated", responseMode: "grounded", replyKorean: false, replyOn });
+  assert.equal(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: false })).replyOn, undefined,
+    "a server older than replyOn leaves it out");
+  for (const bad of ["question", "Questions", "", null, true, 1])
+    assert.throws(() => parseEvent(JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: false, replyOn: bad })),
+      /replyOn/, JSON.stringify(bad));
+});
+
 test("Live: continuous speech never discards a started reply and keeps last suggestions visible", () => {
   const state = new LiveState();
   state.apply(final("one", "Launch?"));

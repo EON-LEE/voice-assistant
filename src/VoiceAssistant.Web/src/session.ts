@@ -61,7 +61,7 @@ export class MeetingSession {
   }
   request(): void { if (!this.paused) this.command("response.request"); }
   cancel(): void { this.command("response.cancel"); }
-  /** Changes document search or Korean for the replies that start from now on; only call it when `session.ready` said `sessionUpdate`. */
+  /** Changes document search, Korean or `replyOn` for the replies that start from now on; only call it when `session.ready` said `sessionUpdate`. */
   update(settings: SessionUpdate): void {
     const options = validateUpdate(settings);
     if (!this.isReady || this.options?.transcribeOnly) return;
