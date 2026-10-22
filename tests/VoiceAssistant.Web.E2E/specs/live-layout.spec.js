@@ -532,6 +532,30 @@ test('only an answer to speech that says my own name is emphasized, and the name
   await expect(page.locator('#my-name')).toHaveValue('Eon, Eon Lee');
 });
 
+test('a reply to two gathered finals is emphasized when only the earlier final says my name', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { myName: 'Eon', showCaptions: true } });
+  const label = page.locator('#primary-label'), card = page.locator('.live-card.primary');
+  const gathered = (first, second, startedExtra, answer) => {
+    ws.send({ type: 'transcript.final', turnId: first.id, revision: 1, text: first.text });
+    ws.send({ type: 'transcript.final', turnId: second.id, revision: 1, text: second.text });
+    ws.send({ type: 'response.started', turnId: second.id, responseId: `r-${second.id}`, ...startedExtra });
+    ws.send({ type: 'response.completed', turnId: second.id, responseId: `r-${second.id}`, text: answer, sources: [], grounding: 'disabled' });
+  };
+  // The server answers both finals of its settle window in one reply, which names only the latest turn.
+  gathered({ id: 't1', text: 'Eon, quick question.' }, { id: 't2', text: 'When does the migration finish?' }, { segments: 2 },
+    'Next Friday, if the tests pass.');
+  await expect(page.locator('#answer-text')).toHaveText('Next Friday, if the tests pass.');
+  await expect(page.locator('#question-text')).toHaveText('Eon, quick question. When does the migration finish?');
+  await expect(label).toHaveText('이름이 불렸어요 · 지금 답할 차례');
+  await expect(card).toHaveClass(/my-turn/);
+  // A server that does not send segments: only the latest final is known to be answered.
+  gathered({ id: 't3', text: 'Eon, one more thing.' }, { id: 't4', text: 'What about the budget?' }, {}, 'It stays the same.');
+  await expect(page.locator('#answer-text')).toHaveText('It stays the same.');
+  await expect(page.locator('#question-text')).toHaveText('What about the budget?');
+  await expect(label).toHaveText('추천 영어 답변');
+  await expect(card).not.toHaveClass(/my-turn/);
+});
+
 test('the actual local Fake API answers its question with 추천 질문만, and its respondNow alone emphasizes nothing', async ({ page }) => {
   test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires the explicit local Fake API; never Azure.');
   const sent = [], received = [];

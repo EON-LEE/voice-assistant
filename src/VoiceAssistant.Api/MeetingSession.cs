@@ -399,7 +399,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             if (!FollowPartial(transcript, lifetime)) prefetch!.Update(transcript, earlierTranscripts.With(conversation));
                             // Ongoing speech postpones the reply, except a question or request already waiting too long.
                             if (options.ReplySettleMs > 0 && pendingSpeech.Count > 0 &&
-                                !(clock.GetElapsedTime(pendingSince) > MaxGatherTime && ReplyTrigger.InvitesReply(pendingSpeech)))
+                                !(clock.GetElapsedTime(pendingSince) > MaxGatherTime && InvitesReply(pendingSpeech)))
                                 ScheduleSettle(lifetime);
                         }
                         break;
@@ -414,10 +414,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }
                         break;
                     case "settle" when message.Generation == settleNumber && pendingSpeech.Count > 0:
-                        if (options.QuestionsOnly && ReplyTrigger.Evaluate(pendingSpeech, questionsOnly: true) == ReplyDecision.Discard)
+                        // replyOn "questions" answers only a real question or a direct request; any other speech is dropped like a
+                        // backchannel, however long it is, and stays in the history as context. "all" decides exactly as before.
+                        var decision = ReplyTrigger.Evaluate(pendingSpeech, options.QuestionsOnly);
+                        if (options.QuestionsOnly && decision == ReplyDecision.Discard)
                         {
-                            // replyOn "questions": speech that is not a question or a direct request is dropped like a backchannel,
-                            // however long it is. It stays in the history as context for later replies.
                             pendingSpeech.Clear();
                             earlyReply = null;
                             break;
@@ -435,7 +436,6 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             else await StartResponseAsync(lifetime.Token, manual: false, gathered);
                             break;
                         }
-                        var decision = ReplyTrigger.Evaluate(pendingSpeech);
                         if (decision == ReplyDecision.Wait) break;
                         var currentSegments = pendingSpeech.Count;
                         pendingSpeech.Clear();
@@ -889,11 +889,19 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         }
     }
 
+    /// <summary>
+    /// Whether the gathered speech invites a reply: a question or a direct request. With replyOn "questions" only a real question
+    /// form counts (<see cref="ReplyTrigger.InvitesReplyStrictly"/>), so a statement that merely starts with a question word
+    /// ("Could be a network issue.") starts no early, speculative or settled reply. "all" keeps the looser check.
+    /// </summary>
+    private bool InvitesReply(IReadOnlyList<string> gathered) =>
+        options.QuestionsOnly ? ReplyTrigger.InvitesReplyStrictly(gathered) : ReplyTrigger.InvitesReply(gathered);
+
     /// <summary>The gathered speech ends with a question or request that looks finished: the rule that picks the short settle.</summary>
     private bool CompleteQuestionOrRequest() => CompleteQuestionOrRequest(pendingSpeech);
 
-    private static bool CompleteQuestionOrRequest(IReadOnlyList<string> gathered) =>
-        ReplyTrigger.InvitesReply(gathered) && ReplyTrigger.LooksComplete(gathered);
+    private bool CompleteQuestionOrRequest(IReadOnlyList<string> gathered) =>
+        InvitesReply(gathered) && ReplyTrigger.LooksComplete(gathered);
 
     /// <summary>Speech gathered after an early reply started, unless it is only backchannels, changes what it should answer.</summary>
     private bool TargetChangedSince((int Generation, int Segments) early) => TargetChangedSince(early, pendingSpeech);
@@ -906,7 +914,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
 
     private bool CanStartEarly(IReadOnlyList<string> gathered)
     {
-        if (!CompleteQuestionOrRequest(gathered) || ReplyTrigger.Evaluate(gathered) != ReplyDecision.Reply) return false;
+        if (!CompleteQuestionOrRequest(gathered) || ReplyTrigger.Evaluate(gathered, options.QuestionsOnly) != ReplyDecision.Reply) return false;
         // Within one window a new early start needs a changed target (a backchannel never is) and replaces only its own reply.
         if (earlyReply is { } early) return TargetChangedSince(early, gathered) && (!responseActive || early.Generation == generationNumber);
         // Otherwise only when nothing else is answering: an active reply keeps today's hold-and-queue through the settle.
@@ -1056,7 +1064,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         var number = ++generationNumber;
         MeetingMetrics.Speculation("adopted", MeetingMetrics.ProviderMode(provider), adopted.Route, adopted.Settings.ResponseMode,
             headStart: clock.GetElapsedTime(adopted.StartedAt, lastFinalTimestamp));
-        await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
+        await SendAsync(new { type = "response.started", responseId, turnId = responseTurn, segments = Segments(adopted.History) }, lifetime);
         retired.RemoveAll(task => task.IsCompletedSuccessfully);
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
         earlyReply = (number, segments);
@@ -1280,7 +1288,7 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         var output = new ReplyOutput(events.Writer, number);
         var scope = settings.ReplyKorean ? new KoreanScope(responseId, responseTurn, output, measurement) : null;
         koreanScope = scope;
-        await SendAsync(new { type = "response.started", responseId, turnId = responseTurn }, lifetime);
+        await SendAsync(new { type = "response.started", responseId, turnId = responseTurn, segments = Segments(history) }, lifetime);
         if (!generationTask.IsCompleted) retired.Add(generationTask);
         retired.RemoveAll(task => task.IsCompletedSuccessfully);
         if (retired.Count > 8) throw new ProviderException("response_overload", "Too many pending responses. Reconnect.");
@@ -1288,6 +1296,12 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         var route = responseRoute;
         generationTask = Task.Run(() => GenerateAsync(output, history, route, prefetched, scope, settings, measurement, deadline, token, lifetime));
     }
+
+    /// <summary>
+    /// How many finalized utterances a reply answers: the target turns of its history, sent as <c>segments</c> with
+    /// <c>response.started</c>. Its <c>turnId</c> names only the latest of them, so a client needs this to see all the gathered speech.
+    /// </summary>
+    private static int Segments(ConversationTurn[] history) => Math.Max(1, history.Count(turn => turn.CurrentResponseTarget));
 
     private async Task CancelResponseAsync(CancellationToken cancellation)
     {

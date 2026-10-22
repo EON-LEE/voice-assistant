@@ -24,6 +24,8 @@ export interface ServerEvent {
   responseMode?: "balanced" | "grounded" | "conversation";
   /** `session.updated`: which speech starts an automatic reply; a server older than `replyOn` omits it. */
   replyOn?: "all" | "questions";
+  /** `response.started`: how many finalized utterances the reply answers, ending with `turnId`. Older servers omit it. */
+  segments?: number;
   /** `response.delta`: the primary line (first suggestion) is complete with this delta; sent at most once per response. */
   primaryDone?: boolean;
   /** `response.korean`: the reply line (0 = primary, 1 = alternative) and its Korean meaning, or `failed` when it has none. */
@@ -72,7 +74,12 @@ export function parseEvent(data: unknown): ServerEvent {
     return { type, turnId, revision: e.revision as number, text: text("text") };
   }
   const responseId = text("responseId");
-  if (type === "response.started" || type === "response.cancelled") return { type, turnId, responseId };
+  if (type === "response.started") {
+    if (e.segments !== undefined && (!Number.isSafeInteger(e.segments) || (e.segments as number) < 1))
+      throw new Error("Invalid segments count.");
+    return { type, turnId, responseId, ...(e.segments === undefined ? {} : { segments: e.segments as number }) };
+  }
+  if (type === "response.cancelled") return { type, turnId, responseId };
   if (type === "response.delta") {
     const delta = text("text");
     if (e.primaryDone !== undefined && typeof e.primaryDone !== "boolean") throw new Error("Invalid primaryDone flag.");

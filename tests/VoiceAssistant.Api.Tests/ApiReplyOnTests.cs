@@ -217,4 +217,53 @@ public sealed partial class ApiTests
             + replyOn + "}}");
         Assert.Equal("invalid_start", (await Receive(socket)).GetProperty("code").GetString());
     }
+
+    [Theory]
+    [InlineData("questions", "could be a network issue", "Could be a network issue.")]
+    [InlineData("questions", "when we migrated the dashboards last week everything went fine",
+        "When we migrated the dashboards last week, everything went fine.")]
+    [InlineData("all", "could be a network issue", "Could be a network issue.")]
+    [InlineData("all", "when we migrated the dashboards last week everything went fine",
+        "When we migrated the dashboards last week, everything went fine.")]
+    public async Task AStatementThatStartsLikeAQuestionStartsNoEarlySpeculativeOrSettledReplyWhenOnlyQuestionsAreAnswered(
+        string replyOn, string partial, string statement)
+    {
+        using var capture = new MetricCapture();
+        var clock = new ManualClock();
+        var provider = new SpeculationProvider();
+        await using var host = await Host.StartAsync(provider: provider, clock: clock, configuration: SpeculationOn());
+        using var socket = await host.ConnectAsync();
+        await Send(socket, WithOptions(new { responseMode = "conversation", replySettleMs = 1000, replyOn }));
+        Assert.Equal("session.ready", TypeOf(await Receive(socket)));
+
+        // The speaker pauses on the statement's last words (where a speculative reply starts), then its final arrives (where an
+        // early reply starts) and its settle window passes.
+        await PauseOnPartialAsync(socket, provider, clock, new("s", 1, partial, false));
+        var timers = clock.TimersCreated;
+        provider.Emit(new("s", 2, statement, true));
+        if (replyOn == "all")
+        {
+            // Unchanged: the loose check takes it for a question, so its speculative reply is adopted at the final.
+            Assert.Equal("s", StartedTurn(await ReceiveUntilAsync(socket, Completed)));
+            Assert.Single(Speculations(capture, "adopted"));
+            Assert.Equal(1, provider.Answers);
+            await Send(socket, """{"type":"session.stop"}""");
+            return;
+        }
+        Assert.Equal("transcript.final", TypeOf(await Receive(socket)));
+        await clock.WaitForTimersAsync(timers + 1);
+        clock.Advance(TimeSpan.FromMilliseconds(1000));
+        Assert.Empty(Speculations(capture, "started"));
+        Assert.Equal(0, provider.Answers);
+
+        // A real question is still answered, speculatively too; a reply to the statement would have been sent before its partial.
+        await PauseOnPartialAsync(socket, provider, clock, new("q", 1, RolloutPartial, false));
+        Assert.Equal(RolloutPartial, await NextAsync(provider.Finished));
+        provider.Emit(new("q", 2, RolloutQuestion, true));
+        Assert.Equal("q", StartedTurn(await ReceiveUntilAsync(socket, Completed)));
+        Assert.Single(Speculations(capture, "adopted"));
+        Assert.Equal(1, provider.Answers);
+        await Send(socket, """{"type":"session.stop"}""");
+        Assert.DoesNotContain(await ReceiveUntilCloseAsync(socket), message => TypeOf(message) == "response.started");
+    }
 }
