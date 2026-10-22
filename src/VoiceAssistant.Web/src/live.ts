@@ -13,7 +13,6 @@ import { LiveState, answers, meaningTexts, primaryMeaning, translatable, transla
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
 import { deferredUpdateNote, liveStartOptions, parseSettings, pendingUpdate, settingsKey, stepAnswerSize, withDocumentSearch,
   withResponseMode, documentSearchOn, type AppliedSettings, type HostSources, type LiveSettings, type ResponseMode } from "./live-settings.js";
-import { parseNames, primaryLabel, sanitizeNames } from "./address.js";
 import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
 import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, sourceNames, warningMessage, type LiveWarning,
   type PageAction } from "./live-errors.js";
@@ -30,7 +29,7 @@ const toggleButton = $<HTMLButtonElement>("live-toggle"), pauseButton = $<HTMLBu
 const smallerButton = $<HTMLButtonElement>("answer-smaller"), largerButton = $<HTMLButtonElement>("answer-larger");
 const settingsDialog = $<HTMLDialogElement>("settings");
 const micDevice = $<HTMLSelectElement>("mic-device"), responseMode = $<HTMLSelectElement>("response-mode");
-const topic = $<HTMLInputElement>("topic"), myName = $<HTMLInputElement>("my-name");
+const topic = $<HTMLInputElement>("topic");
 const audioSource = $<HTMLSelectElement>("audio-source");
 const microphoneSettings = $("microphone-settings"), displayHint = $("display-hint");
 /** LiveCoach.exe (WebView2) or a browser tab: the share picker offers different surfaces in each. */
@@ -80,8 +79,7 @@ function loadSettings(): LiveSettings {
   try { return parseSettings(localStorage.getItem(settingsKey), offered); } catch { return parseSettings(null, offered); }
 }
 let settings = loadSettings();
-responseMode.value = settings.responseMode; topic.value = settings.topic; myName.value = settings.myName;
-audioSource.value = settings.audioSource;
+responseMode.value = settings.responseMode; topic.value = settings.topic; audioSource.value = settings.audioSource;
 if (host === "app") {
   // WebView2 has no browser tabs to pick; only a whole screen carries (system) audio there.
   displayHint.textContent = "라이브 시작 시 뜨는 공유 선택창에서 '전체 화면'을 고르고 '시스템 오디오 공유'를 체크하세요. "
@@ -102,15 +100,11 @@ function selectedSource(): CaptureSourceKind {
   return value === "display" || value === "teams" || value === "host-system" ? value : "microphone";
 }
 function saveSettings(): void {
-  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: selectedSource(),
-    myName: sanitizeNames(myName.value) };
-  // The field shows the names as they are kept: invalid ones are dropped, the rest joined with ", ".
-  if (myName.value !== settings.myName) myName.value = settings.myName;
+  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: selectedSource() };
   persist();
 }
 micDevice.addEventListener("change", saveSettings);
 topic.addEventListener("change", saveSettings);
-myName.addEventListener("change", () => { saveSettings(); render(); });
 audioSource.addEventListener("change", () => {
   renderAudioSource(); saveSettings();
   // Choosing the source in use again also cancels a switch that is still being prepared.
@@ -598,14 +592,13 @@ function renderSuggestions(): void {
   const generating = controller.isReady && state.generating;
   const finishing = !!display && generating && state.current?.id === display.id;
   const previous = !!display && (state.hasNewerReply || generating && state.current?.id !== display.id);
-  // What the reply answers. Only an answer to speech that says the user's name is emphasized; respondNow is not shown.
-  const answered = display?.question ?? state.turns.find(turn => turn.id === display?.turnId)?.text;
-  const label = primaryLabel(previous, answered, parseNames(settings.myName));
-  setText("primary-label", label.text);
-  panel.querySelector(".live-card.primary")!.classList.toggle("my-turn", label.myTurn);
+  // Nothing emphasizes the answer: the server's respondNow guess is not shown.
+  setText("primary-label", previous ? "이전 질문용 답변" : "추천 영어 답변");
   const answersSection = panel.querySelector<HTMLElement>(".live-answers")!;
   if (answersSection.dataset.previous !== String(previous)) answersSection.dataset.previous = String(previous);
-  setText("question-text", answered ?? (display ? "이전 대화" : state.latest?.text ?? "영어 대화를 기다리고 있어요."));
+  // What the reply answers: every final gathered into it (see LiveState), or the latest speech before any reply.
+  setText("question-text", display?.question ?? state.turns.find(turn => turn.id === display?.turnId)?.text
+    ?? (display ? "이전 대화" : state.latest?.text ?? "영어 대화를 기다리고 있어요."));
   setText("reading-status", state.readingHeld
     ? state.hasNewerReply ? "새 답변 도착 · 고정을 해제하면 표시합니다"
       : generating ? "화면 고정됨 · 새 답변 준비 중"

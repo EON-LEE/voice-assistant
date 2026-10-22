@@ -446,7 +446,7 @@ test('the document search choice in the settings dialog and the quick buttons ar
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).responseMode)).toBe('balanced');
 });
 
-// ---------- 추천: replies to all speech or questions only; 내 이름: the name emphasis ----------
+// ---------- 추천: replies to all speech or questions only; what the primary answer is labeled and answers ----------
 
 const startedReplyOn = ws => ws.commands.filter(command => command.type === 'session.start').map(command => command.options.replyOn);
 
@@ -487,54 +487,42 @@ test('a server that cannot change settings during a session takes the 추천 cho
   await expect(note).toBeHidden();
 });
 
-test('only an answer to speech that says my own name is emphasized, and the name never leaves the page', async ({ page }) => {
-  const ws = await meetingFixture(page, { settings: null });
+test('the primary answer is never emphasized: respondNow and a name stored earlier change nothing, and an earlier question is named', async ({ page }) => {
+  // A name saved by the removed 내 이름 setting is ignored, and the next save drops it.
+  const ws = await meetingFixture(page, { settings: { myName: 'Eon' } });
   const label = page.locator('#primary-label'), card = page.locator('.live-card.primary'), answer = page.locator('#answer-text');
+  await expect(page.locator('#my-name')).toHaveCount(0);
   const replyTo = (id, question, extra) => {
     ws.send({ type: 'transcript.final', turnId: `t${id}`, revision: 1, text: question });
     ws.send({ type: 'response.started', turnId: `t${id}`, responseId: `r${id}` });
     ws.send({ type: 'response.completed', turnId: `t${id}`, responseId: `r${id}`, text: `Answer ${id}.`, sources: [],
       grounding: 'disabled', ...extra });
   };
-  // Without a name nothing is emphasized, even when the server's turn guess says respondNow.
-  replyTo(1, 'Eon, what do you think about the rollout?', { respondNow: true });
-  await expect(answer).toHaveText('Answer 1.');
-  await expect(label).toHaveText('추천 영어 답변');
-  await expect(card).not.toHaveClass(/my-turn/);
-  // The name is kept as sanitized and applies to the answer on screen at once.
-  await menuAction(page, 'settings');
-  await page.locator('#my-name').fill('  Eon ,  Eon   Lee , E ');
-  await page.getByRole('button', { name: '닫기', exact: true }).click();
-  await expect(page.locator('#my-name')).toHaveValue('Eon, Eon Lee');
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).myName)).toBe('Eon, Eon Lee');
-  await expect(label).toHaveText('이름이 불렸어요 · 지금 답할 차례');
-  await expect(card).toHaveClass(/my-turn/);
-  // Another name, or a word that only contains the name, is not the user's turn, whatever respondNow says.
-  for (const [id, question] of [[2, 'Leon, what do you think?'], [3, 'Mina, can you take this one?']]) {
-    replyTo(id, question, { respondNow: true });
+  // The server's turn guess is not shown: an answer it marks looks like any other.
+  for (const [id, respondNow] of [[1, true], [2, false]]) {
+    replyTo(id, `Eon, what do you think about step ${id}?`, { respondNow });
     await expect(answer).toHaveText(`Answer ${id}.`);
     await expect(label).toHaveText('추천 영어 답변');
-    await expect(card).not.toHaveClass(/my-turn/);
+    await expect(card).toHaveAttribute('class', 'live-card primary');
   }
-  replyTo(4, 'Thanks, eon  lee. Any concerns?', { respondNow: false });
-  await expect(answer).toHaveText('Answer 4.');
-  await expect(label).toHaveText('이름이 불렸어요 · 지금 답할 차례');
-  await expect(card).toHaveClass(/my-turn/);
-  // While a newer reply is prepared, the answer on screen belongs to an earlier question and is not emphasized.
-  ws.send({ type: 'transcript.final', turnId: 't5', revision: 1, text: 'Eon, and the budget?' });
-  ws.send({ type: 'response.started', turnId: 't5', responseId: 'r5' });
+  // While a newer reply is prepared, the answer on screen belongs to an earlier question.
+  ws.send({ type: 'transcript.final', turnId: 't3', revision: 1, text: 'And the budget?' });
+  ws.send({ type: 'response.started', turnId: 't3', responseId: 'r3' });
   await expect(label).toHaveText('이전 질문용 답변');
-  await expect(card).not.toHaveClass(/my-turn/);
-  expect(JSON.stringify(ws.commands)).not.toContain('Eon');
-  await page.reload();
-  await ready(page);
-  await menuAction(page, 'settings');
-  await expect(page.locator('#my-name')).toHaveValue('Eon, Eon Lee');
+  await expect(answer).toHaveText('Answer 2.');
+  await expect(card).toHaveAttribute('class', 'live-card primary');
+  ws.send({ type: 'response.completed', turnId: 't3', responseId: 'r3', text: 'Answer 3.', sources: [], grounding: 'disabled',
+    respondNow: true });
+  await expect(answer).toHaveText('Answer 3.');
+  await expect(label).toHaveText('추천 영어 답변');
+  await expect(card).toHaveAttribute('class', 'live-card primary');
+  await page.locator('#toggle-captions').click();
+  await expect(page.locator('#toggle-captions')).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('live-coach-settings'))))).not.toContain('myName');
 });
 
-test('a reply to two gathered finals is emphasized when only the earlier final says my name', async ({ page }) => {
-  const ws = await meetingFixture(page, { settings: { myName: 'Eon', showCaptions: true } });
-  const label = page.locator('#primary-label'), card = page.locator('.live-card.primary');
+test('답변 기준 발언 shows every final a gathered reply answers, and only its own turn from an older server', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { showCaptions: true } });
   const gathered = (first, second, startedExtra, answer) => {
     ws.send({ type: 'transcript.final', turnId: first.id, revision: 1, text: first.text });
     ws.send({ type: 'transcript.final', turnId: second.id, revision: 1, text: second.text });
@@ -542,21 +530,18 @@ test('a reply to two gathered finals is emphasized when only the earlier final s
     ws.send({ type: 'response.completed', turnId: second.id, responseId: `r-${second.id}`, text: answer, sources: [], grounding: 'disabled' });
   };
   // The server answers both finals of its settle window in one reply, which names only the latest turn.
-  gathered({ id: 't1', text: 'Eon, quick question.' }, { id: 't2', text: 'When does the migration finish?' }, { segments: 2 },
+  gathered({ id: 't1', text: 'Quick question about the rollout.' }, { id: 't2', text: 'When does the migration finish?' }, { segments: 2 },
     'Next Friday, if the tests pass.');
   await expect(page.locator('#answer-text')).toHaveText('Next Friday, if the tests pass.');
-  await expect(page.locator('#question-text')).toHaveText('Eon, quick question. When does the migration finish?');
-  await expect(label).toHaveText('이름이 불렸어요 · 지금 답할 차례');
-  await expect(card).toHaveClass(/my-turn/);
+  await expect(page.locator('#question-text')).toHaveText('Quick question about the rollout. When does the migration finish?');
+  await expect(page.locator('#primary-label')).toHaveText('추천 영어 답변');
   // A server that does not send segments: only the latest final is known to be answered.
-  gathered({ id: 't3', text: 'Eon, one more thing.' }, { id: 't4', text: 'What about the budget?' }, {}, 'It stays the same.');
+  gathered({ id: 't3', text: 'One more thing.' }, { id: 't4', text: 'What about the budget?' }, {}, 'It stays the same.');
   await expect(page.locator('#answer-text')).toHaveText('It stays the same.');
   await expect(page.locator('#question-text')).toHaveText('What about the budget?');
-  await expect(label).toHaveText('추천 영어 답변');
-  await expect(card).not.toHaveClass(/my-turn/);
 });
 
-test('the actual local Fake API answers its question with 추천 질문만, and its respondNow alone emphasizes nothing', async ({ page }) => {
+test('the actual local Fake API answers its question with 추천 질문만, and its respondNow changes nothing on screen', async ({ page }) => {
   test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires the explicit local Fake API; never Azure.');
   const sent = [], received = [];
   page.on('websocket', socket => {
@@ -564,7 +549,7 @@ test('the actual local Fake API answers its question with 추천 질문만, and 
     socket.on('framesent', frame => { if (typeof frame.payload === 'string') sent.push(JSON.parse(frame.payload)); });
     socket.on('framereceived', frame => { if (typeof frame.payload === 'string') received.push(JSON.parse(frame.payload)); });
   });
-  await seedSettings(page, { replyOn: 'questions', myName: 'Mina' });
+  await seedSettings(page, { replyOn: 'questions' });
   await page.goto('/live.html');
   await ready(page);
   await menuAction(page, 'start');
@@ -574,12 +559,11 @@ test('the actual local Fake API answers its question with 추천 질문만, and 
   expect(sent.find(message => message.type === 'session.start').options.replyOn).toBe('questions');
   expect(received.find(message => message.type === 'response.completed').respondNow).toBe(true);
   await expect(page.locator('#primary-label')).toHaveText('추천 영어 답변');
-  await expect(page.locator('.live-card.primary')).not.toHaveClass(/my-turn/);
+  await expect(page.locator('.live-card.primary')).toHaveAttribute('class', 'live-card primary');
   await page.locator('#reply-all').click();
   await expect.poll(() => received.filter(message => message.type === 'session.updated').map(message => message.replyOn)).toEqual(['all']);
   await expect(page.locator('#quick-note')).toBeHidden();
   await expect(page.locator('#session-error')).toBeHidden();
-  expect(JSON.stringify(sent)).not.toContain('Mina');
   await menuAction(page, 'stop');
   await expect(page.locator('#capture-status')).toContainText('꺼짐');
 });
