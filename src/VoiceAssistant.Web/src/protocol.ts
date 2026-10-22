@@ -9,16 +9,23 @@ export interface ServerEvent {
   retrievalPrefetched?: boolean;
   /** One or two English replies; the first always equals `text`. Older servers omit it. */
   suggestions?: string[];
-  /** The latest speech invites the listener to respond now (emphasis only). */
+  /**
+   * The server's guess that the latest speech invites a response now. Still parsed and kept so the protocol is unchanged, but
+   * the live page no longer shows it: with several people talking it tells whether someone should answer, not the user.
+   */
   respondNow?: boolean;
   /** `session.ready`: the server pushes a Korean meaning (`response.korean`) for every reply line. `session.updated`: the effective value. */
   replyKorean?: boolean;
-  /** `session.ready`: this server accepts `session.update` (document search and Korean can change while running). */
+  /** `session.ready`: this server accepts `session.update` (document search, Korean and `replyOn` can change while running). */
   sessionUpdate?: boolean;
   /** `session.ready`: how many finalized turns of the previous connection the server continued with (`resumeConversation`). */
   resumedTurns?: number;
   /** `session.updated`: the effective document-search mode. */
   responseMode?: "balanced" | "grounded" | "conversation";
+  /** `session.updated`: which speech starts an automatic reply; a server older than `replyOn` omits it. */
+  replyOn?: "all" | "questions";
+  /** `response.started`: how many finalized utterances the reply answers, ending with `turnId`. Older servers omit it. */
+  segments?: number;
   /** `response.delta`: the primary line (first suggestion) is complete with this delta; sent at most once per response. */
   primaryDone?: boolean;
   /** `response.korean`: the reply line (0 = primary, 1 = alternative) and its Korean meaning, or `failed` when it has none. */
@@ -54,7 +61,8 @@ export function parseEvent(data: unknown): ServerEvent {
     const responseMode = text("responseMode");
     if (responseMode !== "balanced" && responseMode !== "grounded" && responseMode !== "conversation")
       throw new Error("Invalid responseMode in server event.");
-    return { type, responseMode, replyKorean: e.replyKorean };
+    if (e.replyOn !== undefined && e.replyOn !== "all" && e.replyOn !== "questions") throw new Error("Invalid replyOn in server event.");
+    return { type, responseMode, replyKorean: e.replyKorean, ...(e.replyOn === undefined ? {} : { replyOn: e.replyOn }) };
   }
   if (type === "error") {
     if (typeof e.retryable !== "boolean") throw new Error("Invalid retryable error flag.");
@@ -66,7 +74,12 @@ export function parseEvent(data: unknown): ServerEvent {
     return { type, turnId, revision: e.revision as number, text: text("text") };
   }
   const responseId = text("responseId");
-  if (type === "response.started" || type === "response.cancelled") return { type, turnId, responseId };
+  if (type === "response.started") {
+    if (e.segments !== undefined && (!Number.isSafeInteger(e.segments) || (e.segments as number) < 1))
+      throw new Error("Invalid segments count.");
+    return { type, turnId, responseId, ...(e.segments === undefined ? {} : { segments: e.segments as number }) };
+  }
+  if (type === "response.cancelled") return { type, turnId, responseId };
   if (type === "response.delta") {
     const delta = text("text");
     if (e.primaryDone !== undefined && typeof e.primaryDone !== "boolean") throw new Error("Invalid primaryDone flag.");

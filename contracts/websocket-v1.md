@@ -38,7 +38,7 @@ At the maximum duration the server emits existing `error` with `code:"session_ti
 
 Speech recovery: when the recognizer stops with a connection failure, a service time-out or service unavailable, the server recreates it in-process instead of ending the session. This happens at most 3 times per session, and a failed attempt also counts. The waits before the attempts are 0.5, 1 and 2 seconds. No event is sent. The transcript history, settings and any reply in progress are kept, but audio that arrives while the recognizer is being replaced is not transcribed. Any other cancellation, or a retryable one after the restarts are used up, ends the session with `error` `code:"speech_unavailable"` as before. A failed renewal of the Speech token is retried while the current token is still valid. Only a token that expired without a successful renewal ends the session, with `speech_authentication_failed`.
 
-Optional top-level `session.start.options` is immutable for this socket, except `responseMode` and `replyKorean`, which `session.update` can change while the session runs (see below):
+Optional top-level `session.start.options` is immutable for this socket, except `responseMode`, `replyKorean` and `replyOn`, which `session.update` can change while the session runs (see below):
 
 ```json
 {"responseMode":"balanced","profile":{"name":"Mina","role":"Software engineer","project":"Evaluating email client interoperability"},"profileConfirmed":true,"topic":"Email protocols","phrases":["JMAP","IMAP","CONDSTORE","QRESYNC"],"endSilenceMs":500}
@@ -85,23 +85,39 @@ gathered speech. Otherwise the reply stands, and no second reply follows. A repl
 still holds a new question back until it completes, exactly as without the switch. Clients need no change: every event is one
 they already handle.
 
+Optional `replyOn` (`"all"` or `"questions"`, default `"all"`; JSON null is not an omission) chooses which speech starts an
+automatic reply. `all` keeps the behavior above exactly. With `questions` only gathered speech that invites a reply starts one,
+alone or together with the statements gathered around it: a question mark, a direct request (`Tell me about your plan.`), or a
+sentence that starts like a real question even without a question mark. Those are a wh-word with an auxiliary (`When will the
+migration finish.`), `which` or `whose` with an auxiliary and its subject or with a noun and an auxiliary, `how much/many/long`,
+`what about`, `how about`, `why not` or `why don't`, `who` with a verb (`Who owns the roadmap.`), or an auxiliary with its
+subject (`Is the build green.`, `Can you share the latency numbers.`). A statement never does, however long it is, also when it
+only starts with a question word (`When we migrated…`, `What we found is…`, `Which means…`, `Could be a network issue.`,
+`Should be done by Friday.`, `Have a great weekend.`), and also not after the 12-second gather limit: when its wait ends it is
+dropped from the gathered speech like backchannels, but it stays in the history, so later replies still see it as context.
+Without `replySettleMs` the same rule applies to each final. Early start and speculative start use the same stricter check, so
+neither starts a reply for such a statement. `response.request` still answers the latest final in either mode. An unknown value
+or a wrong type fails as `invalid_start`, and so does the option on a server that does not know it.
+
 Optional `replyKorean` (boolean, default false, JSON null is not an omission) asks the server to translate every reply line into
 Korean and push it as `response.korean`, so the client needs no second HTTP request after `response.completed`. `session.ready`
 then carries `"replyKorean":true`. A client that did not opt in receives neither that field nor `response.korean` events, and
 the server makes no translation calls for it. A server that does not know the option rejects the start as `invalid_start`.
 
-Optional `session.update` changes the document-search mode and the Korean push of a running session, so a client can switch
-either one without reconnecting:
+Optional `session.update` changes the document-search mode, the Korean push and `replyOn` of a running session, so a client can
+switch any of them without reconnecting:
 
 ```json
-{"type":"session.update","options":{"responseMode":"conversation","replyKorean":false}}
+{"type":"session.update","options":{"responseMode":"conversation","replyKorean":false,"replyOn":"questions"}}
 ```
 
-`options` accepts only `responseMode` (`balanced`, `grounded`, `conversation`) and `replyKorean` (boolean); at least one must be present. Unknown or duplicate properties, wrong types, JSON null and an empty object fail as the
-fatal `invalid_command`. The server answers in order with `{"type":"session.updated","responseMode":…,"replyKorean":…}` carrying the full effective values.
+`options` accepts only `responseMode` (`balanced`, `grounded`, `conversation`), `replyKorean` (boolean) and `replyOn` (`all`, `questions`); at least one must be present. Unknown or duplicate properties, wrong types, unknown values, JSON null and an empty object fail as the
+fatal `invalid_command`. The server answers in order with `{"type":"session.updated","responseMode":…,"replyKorean":…,"replyOn":…}` carrying the full effective values;
+`replyOn` is `"all"` also for a client that never sent it.
 A reply that was already started (`response.started` sent) keeps the settings it started with: a switch to `conversation` does not stop a search that
 reply already depends on, and a reply started without `replyKorean` gets no pushed Korean. The change applies from the next reply, and a pending
-partial-speech retrieval is dropped when the mode changes. A client that switches `replyKorean` on translates an older or running reply itself through the
+partial-speech retrieval is dropped when the mode changes. A changed `replyOn` decides from the next time a wait ends (without
+`replySettleMs`, from the next final), so a reply that is already generating keeps going. A client that switches `replyKorean` on translates an older or running reply itself through the
 enrichment API. A server that supports it sets `"sessionUpdate":true` in `session.ready` (not on a `transcribeOnly` socket, where
 `session.update` returns `error` `code:"transcribe_only"`, `retryable:false`); a client must not send `session.update` to a server that did not set it,
 because such a server rejects the command as the fatal `invalid_command`.
@@ -127,11 +143,11 @@ For a clear individual/group introduction request with any confirmed profile fie
 | type | Additional fields |
 | --- | --- |
 | `session.ready` | `protocolVersion: 1`; `replyKorean: true` only when the client opted in with `replyKorean`; `sessionUpdate: true` when the socket accepts `session.update` (every socket except `transcribeOnly`); `resumedTurns: integer` (1–12) only when a `resumeConversation` start continued that many finalized turns of the previous session |
-| `session.updated` | `responseMode`, `replyKorean`: the effective values after a `session.update`. Sent in order with the other events, so it is known which reply started before or after it |
+| `session.updated` | `responseMode`, `replyKorean`, `replyOn`: the effective values after a `session.update`. Sent in order with the other events, so it is known which reply started before or after it. A server older than `replyOn` omits that field |
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
-| `response.started` | `responseId: string`, `turnId: string` |
+| `response.started` | `responseId: string`, `turnId: string`, `segments: integer` (at least 1): how many finalized utterances the reply answers, ending with `turnId`. With `replySettleMs` a reply answers the finals gathered in its wait (and a reply that replaces an early one, all the finals gathered by then), but `turnId` names only the latest of them; `response.request` and a session without `replySettleMs` answer one final. Older servers omit it |
 | `response.delta` | `responseId`, `turnId`, `text: string` (append); `primaryDone: true` once per streamed reply when the primary line is complete (see below) |
-| `response.completed` | `responseId`, `turnId`, `text: string` (complete replacement), `suggestions: string[]` (1–2 English replies, primary first), `sources: [{title,url,updatedAt}]`, `grounding`, `responseRoute: transcript\|profile\|knowledge`, `retrievalPrefetched: boolean` |
+| `response.completed` | `responseId`, `turnId`, `text: string` (complete replacement), `suggestions: string[]` (1–2 English replies, primary first), `sources: [{title,url,updatedAt}]`, `grounding`, `responseRoute: transcript\|profile\|knowledge`, `retrievalPrefetched: boolean`, `respondNow: boolean` (not on the fixed grounding-failure notice: a turn classifier's guess that the latest speech invites a response now; it says whether someone should answer, not whether this user should, and the web client does not show it) |
 | `response.korean` | `responseId`, `turnId`, `index: 0\|1` (0 = primary reply, 1 = alternative), and either `korean: string` (1–400 characters, mainly Hangul) or `failed: true` with no `korean` property. Sent only to clients that opted in with `replyKorean` |
 | `response.cancelled` | `responseId`, `turnId` |
 | `error` | `code: string`, `message: string` (safe user-facing detail), `retryable: boolean` |

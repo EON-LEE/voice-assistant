@@ -86,14 +86,15 @@ async function meetingFixture(page, { replyKorean = false, sessionUpdate = false
     };
   });
   await seedSettings(page, settings);
-  let socket, effective = { responseMode: 'grounded', replyKorean: false };
+  let socket, effective = { responseMode: 'grounded', replyKorean: false, replyOn: 'all' };
   await page.routeWebSocket('**/api/meeting*', ws => {
     socket = ws;
     ws.onMessage(message => {
       if (typeof message !== 'string') return;
       const command = JSON.parse(message); commands.push(command);
       if (command.type === 'session.start') {
-        effective = { responseMode: command.options.responseMode, replyKorean: command.options.replyKorean === true };
+        effective = { responseMode: command.options.responseMode, replyKorean: command.options.replyKorean === true,
+          replyOn: command.options.replyOn ?? 'all' };
         ws.send(JSON.stringify({ type: 'session.ready', ...(replyKorean ? { protocolVersion: 1, replyKorean: true } : {}),
           ...(sessionUpdate ? { sessionUpdate: true } : {}) }));
       }
@@ -285,10 +286,14 @@ async function menuAction(page, action) {
 test('by default only the English answer shows: no captions, no Korean meaning, and no Korean is requested', async ({ page }) => {
   const ws = await meetingFixture(page, { settings: null });
   expect(startOptions(ws).replyKorean).toBe(false);
+  expect(startOptions(ws).replyOn).toBe('all');
   expect(await pressed(page, 'doc-on')).toBe('true');
   expect(await pressed(page, 'doc-off')).toBe('false');
+  expect(await pressed(page, 'reply-all')).toBe('true');
+  expect(await pressed(page, 'reply-questions')).toBe('false');
   expect(await pressed(page, 'toggle-captions')).toBe('false');
   expect(await pressed(page, 'toggle-korean')).toBe('false');
+  await expect(page.locator('.live-answers-title')).toHaveText('말할 때 쓸 답변');
   reply(ws, 1, 'What comes first?', 'We should check the plan.');
   await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
   await expect(page.locator('#answer-meaning')).toBeHidden();
@@ -303,10 +308,11 @@ test('by default only the English answer shows: no captions, no Korean meaning, 
 
 test('each quick setting reaches a connected session that supports changes, and captions alone send nothing', async ({ page }) => {
   const ws = await meetingFixture(page, { settings: null, sessionUpdate: true });
-  expect(startOptions(ws)).toMatchObject({ responseMode: 'grounded', replyKorean: false });
+  expect(startOptions(ws)).toMatchObject({ responseMode: 'grounded', replyKorean: false, replyOn: 'all' });
   const sent = [];
   for (const [id, options] of [['doc-off', { responseMode: 'conversation' }], ['doc-on', { responseMode: 'grounded' }],
-    ['toggle-korean', { replyKorean: true }], ['toggle-korean', { replyKorean: false }]]) {
+    ['toggle-korean', { replyKorean: true }], ['toggle-korean', { replyKorean: false }],
+    ['reply-questions', { replyOn: 'questions' }], ['reply-all', { replyOn: 'all' }]]) {
     await page.locator(`#${id}`).click();
     sent.push({ type: 'session.update', options });
     await expect.poll(() => updates(ws)).toEqual(sent);
@@ -392,13 +398,16 @@ test('the quick settings are remembered, and settings saved by an older version 
   await page.goto('/live.html');
   await ready(page);
   await page.locator('#doc-off').click();
+  await page.locator('#reply-questions').click();
   await page.locator('#toggle-captions').click();
   await page.locator('#toggle-korean').click();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings'))))
-    .toMatchObject({ responseMode: 'conversation', documentMode: 'grounded', showCaptions: true, showKorean: true });
+    .toMatchObject({ responseMode: 'conversation', documentMode: 'grounded', showCaptions: true, showKorean: true, replyOn: 'questions' });
   await page.reload();
   await ready(page);
   expect(await pressed(page, 'doc-off')).toBe('true');
+  expect(await pressed(page, 'reply-questions')).toBe('true');
+  expect(await pressed(page, 'reply-all')).toBe('false');
   expect(await pressed(page, 'toggle-captions')).toBe('true');
   expect(await pressed(page, 'toggle-korean')).toBe('true');
   await expect(page.locator('#caption-block')).toBeVisible();
@@ -408,6 +417,7 @@ test('the quick settings are remembered, and settings saved by an older version 
   await page.reload();
   await ready(page);
   expect(await pressed(page, 'doc-on')).toBe('true');
+  expect(await pressed(page, 'reply-all')).toBe('true');
   expect(await pressed(page, 'toggle-captions')).toBe('false');
   expect(await pressed(page, 'toggle-korean')).toBe('false');
   await expect(page.locator('#caption-block')).toBeHidden();
@@ -436,6 +446,144 @@ test('the document search choice in the settings dialog and the quick buttons ar
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).responseMode)).toBe('balanced');
 });
 
+// ---------- 추천: replies to all speech or questions only; 내 이름: the name emphasis ----------
+
+const startedReplyOn = ws => ws.commands.filter(command => command.type === 'session.start').map(command => command.options.replyOn);
+
+test('추천 질문만 is sent at the start, a switch while connected changes only replyOn, and the next start uses the choice', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { replyOn: 'questions' }, sessionUpdate: true });
+  expect(startOptions(ws)).toMatchObject({ replyOn: 'questions', responseMode: 'grounded', replyKorean: false });
+  expect(await pressed(page, 'reply-questions')).toBe('true');
+  expect(await pressed(page, 'reply-all')).toBe('false');
+  await page.locator('#reply-all').click();
+  await expect.poll(() => updates(ws)).toEqual([{ type: 'session.update', options: { replyOn: 'all' } }]);
+  expect(await pressed(page, 'reply-all')).toBe('true');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).replyOn)).toBe('all');
+  await expect(page.locator('#quick-note')).toBeHidden();
+  await expect(page.locator('#session-error')).toBeHidden();
+  await menuAction(page, 'stop');
+  await expect(page.locator('#capture-status')).toContainText('꺼짐');
+  await menuAction(page, 'start');
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  expect(startedReplyOn(ws)).toEqual(['questions', 'all']);
+});
+
+test('a server that cannot change settings during a session takes the 추천 choice at the next connection', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: null });
+  const note = page.locator('#quick-note');
+  await page.locator('#reply-questions').click();
+  await expect(note).toHaveText('이 서버는 연결 중 추천 변경을 지원하지 않아요 · 다음 연결부터 적용돼요');
+  expect(await pressed(page, 'reply-questions')).toBe('true');
+  await page.locator('#doc-off').click();
+  await expect(note).toHaveText('이 서버는 연결 중 문서검색·추천 변경을 지원하지 않아요 · 다음 연결부터 적용돼요');
+  await page.locator('#doc-on').click();
+  await expect(note).toHaveText('이 서버는 연결 중 추천 변경을 지원하지 않아요 · 다음 연결부터 적용돼요');
+  await menuAction(page, 'stop');
+  await expect(page.locator('#capture-status')).toContainText('꺼짐');
+  await menuAction(page, 'start');
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  expect(startedReplyOn(ws)).toEqual(['all', 'questions']);
+  expect(updates(ws)).toEqual([]);
+  await expect(note).toBeHidden();
+});
+
+test('only an answer to speech that says my own name is emphasized, and the name never leaves the page', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: null });
+  const label = page.locator('#primary-label'), card = page.locator('.live-card.primary'), answer = page.locator('#answer-text');
+  const replyTo = (id, question, extra) => {
+    ws.send({ type: 'transcript.final', turnId: `t${id}`, revision: 1, text: question });
+    ws.send({ type: 'response.started', turnId: `t${id}`, responseId: `r${id}` });
+    ws.send({ type: 'response.completed', turnId: `t${id}`, responseId: `r${id}`, text: `Answer ${id}.`, sources: [],
+      grounding: 'disabled', ...extra });
+  };
+  // Without a name nothing is emphasized, even when the server's turn guess says respondNow.
+  replyTo(1, 'Eon, what do you think about the rollout?', { respondNow: true });
+  await expect(answer).toHaveText('Answer 1.');
+  await expect(label).toHaveText('추천 영어 답변');
+  await expect(card).not.toHaveClass(/my-turn/);
+  // The name is kept as sanitized and applies to the answer on screen at once.
+  await menuAction(page, 'settings');
+  await page.locator('#my-name').fill('  Eon ,  Eon   Lee , E ');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await expect(page.locator('#my-name')).toHaveValue('Eon, Eon Lee');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).myName)).toBe('Eon, Eon Lee');
+  await expect(label).toHaveText('이름이 불렸어요 · 지금 답할 차례');
+  await expect(card).toHaveClass(/my-turn/);
+  // Another name, or a word that only contains the name, is not the user's turn, whatever respondNow says.
+  for (const [id, question] of [[2, 'Leon, what do you think?'], [3, 'Mina, can you take this one?']]) {
+    replyTo(id, question, { respondNow: true });
+    await expect(answer).toHaveText(`Answer ${id}.`);
+    await expect(label).toHaveText('추천 영어 답변');
+    await expect(card).not.toHaveClass(/my-turn/);
+  }
+  replyTo(4, 'Thanks, eon  lee. Any concerns?', { respondNow: false });
+  await expect(answer).toHaveText('Answer 4.');
+  await expect(label).toHaveText('이름이 불렸어요 · 지금 답할 차례');
+  await expect(card).toHaveClass(/my-turn/);
+  // While a newer reply is prepared, the answer on screen belongs to an earlier question and is not emphasized.
+  ws.send({ type: 'transcript.final', turnId: 't5', revision: 1, text: 'Eon, and the budget?' });
+  ws.send({ type: 'response.started', turnId: 't5', responseId: 'r5' });
+  await expect(label).toHaveText('이전 질문용 답변');
+  await expect(card).not.toHaveClass(/my-turn/);
+  expect(JSON.stringify(ws.commands)).not.toContain('Eon');
+  await page.reload();
+  await ready(page);
+  await menuAction(page, 'settings');
+  await expect(page.locator('#my-name')).toHaveValue('Eon, Eon Lee');
+});
+
+test('a reply to two gathered finals is emphasized when only the earlier final says my name', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { myName: 'Eon', showCaptions: true } });
+  const label = page.locator('#primary-label'), card = page.locator('.live-card.primary');
+  const gathered = (first, second, startedExtra, answer) => {
+    ws.send({ type: 'transcript.final', turnId: first.id, revision: 1, text: first.text });
+    ws.send({ type: 'transcript.final', turnId: second.id, revision: 1, text: second.text });
+    ws.send({ type: 'response.started', turnId: second.id, responseId: `r-${second.id}`, ...startedExtra });
+    ws.send({ type: 'response.completed', turnId: second.id, responseId: `r-${second.id}`, text: answer, sources: [], grounding: 'disabled' });
+  };
+  // The server answers both finals of its settle window in one reply, which names only the latest turn.
+  gathered({ id: 't1', text: 'Eon, quick question.' }, { id: 't2', text: 'When does the migration finish?' }, { segments: 2 },
+    'Next Friday, if the tests pass.');
+  await expect(page.locator('#answer-text')).toHaveText('Next Friday, if the tests pass.');
+  await expect(page.locator('#question-text')).toHaveText('Eon, quick question. When does the migration finish?');
+  await expect(label).toHaveText('이름이 불렸어요 · 지금 답할 차례');
+  await expect(card).toHaveClass(/my-turn/);
+  // A server that does not send segments: only the latest final is known to be answered.
+  gathered({ id: 't3', text: 'Eon, one more thing.' }, { id: 't4', text: 'What about the budget?' }, {}, 'It stays the same.');
+  await expect(page.locator('#answer-text')).toHaveText('It stays the same.');
+  await expect(page.locator('#question-text')).toHaveText('What about the budget?');
+  await expect(label).toHaveText('추천 영어 답변');
+  await expect(card).not.toHaveClass(/my-turn/);
+});
+
+test('the actual local Fake API answers its question with 추천 질문만, and its respondNow alone emphasizes nothing', async ({ page }) => {
+  test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires the explicit local Fake API; never Azure.');
+  const sent = [], received = [];
+  page.on('websocket', socket => {
+    if (!socket.url().includes('/api/meeting')) return;
+    socket.on('framesent', frame => { if (typeof frame.payload === 'string') sent.push(JSON.parse(frame.payload)); });
+    socket.on('framereceived', frame => { if (typeof frame.payload === 'string') received.push(JSON.parse(frame.payload)); });
+  });
+  await seedSettings(page, { replyOn: 'questions', myName: 'Mina' });
+  await page.goto('/live.html');
+  await ready(page);
+  await menuAction(page, 'start');
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  // The Fake recognizer hears its fixed question, which is still answered when only questions are.
+  await expect(page.locator('#answer-text')).toContainText('confirm the goal', { timeout: 15_000 });
+  expect(sent.find(message => message.type === 'session.start').options.replyOn).toBe('questions');
+  expect(received.find(message => message.type === 'response.completed').respondNow).toBe(true);
+  await expect(page.locator('#primary-label')).toHaveText('추천 영어 답변');
+  await expect(page.locator('.live-card.primary')).not.toHaveClass(/my-turn/);
+  await page.locator('#reply-all').click();
+  await expect.poll(() => received.filter(message => message.type === 'session.updated').map(message => message.replyOn)).toEqual(['all']);
+  await expect(page.locator('#quick-note')).toBeHidden();
+  await expect(page.locator('#session-error')).toBeHidden();
+  expect(JSON.stringify(sent)).not.toContain('Mina');
+  await menuAction(page, 'stop');
+  await expect(page.locator('#capture-status')).toContainText('꺼짐');
+});
+
 async function assertLayout(page) {
   const geometry = await page.evaluate(() => {
     const panel = document.querySelector('#live-panel').getBoundingClientRect();
@@ -456,7 +604,8 @@ async function assertLayout(page) {
   await expect(page.locator('#answer-korean')).toBeInViewport();
   await page.locator('#alternative-korean').scrollIntoViewIfNeeded();
   await expect(page.locator('#alternative-korean')).toBeInViewport();
-  for (const id of ['live-toggle', 'live-pause', 'doc-on', 'doc-off', 'toggle-captions', 'toggle-korean', 'answer-smaller', 'answer-larger']) {
+  for (const id of ['live-toggle', 'live-pause', 'doc-on', 'doc-off', 'reply-all', 'reply-questions', 'toggle-captions', 'toggle-korean',
+    'answer-smaller', 'answer-larger']) {
     await page.locator(`#${id}`).scrollIntoViewIfNeeded();
     await expect(page.locator(`#${id}`)).toBeInViewport();
   }

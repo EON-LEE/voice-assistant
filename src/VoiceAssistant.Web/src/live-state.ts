@@ -3,7 +3,9 @@ import type { Grounding, ServerEvent, Source } from "./protocol.js";
 export interface LiveTurn { id: string; revision: number; text: string; final: boolean }
 export interface LiveReply {
   id: string; turnId: string; text: string; complete: boolean; sources: Source[];
-  question?: string; grounding?: Grounding; suggestions?: string[]; respondNow?: boolean;
+  /** What the reply answers: its gathered finals (`segments` of `response.started`), joined with single spaces. */
+  question?: string;
+  grounding?: Grounding; suggestions?: string[]; respondNow?: boolean;
   /** The primary line is final (`primaryDone`), so it can be read before the reply completes. */
   primaryDone?: boolean;
   /** The reply stopped after its primary line was shown: the line stays, without alternative or grounding. */
@@ -124,6 +126,17 @@ export class LiveState {
     if (this.shownReply?.id === id) this.shownReply = null;
     if (this.heldReply?.id === id) this.heldReply = null;
   }
+  /**
+   * What a reply answers. The server gathers the finals of one settle window into one reply but names only the latest turn;
+   * `segments` says how many finals it answers, so they are joined, ending with the target. Without `segments` (an older
+   * server), or when those finals are no longer all known, it is the target turn alone.
+   */
+  private answered(target: LiveTurn, segments: number | undefined): string {
+    if (!segments || segments < 2 || !target.final) return target.text;
+    const finals = this.turns.slice(0, this.turns.indexOf(target) + 1).filter(turn => turn.final);
+    if (finals.length < segments) return target.text;
+    return finals.slice(-segments).map(turn => turn.text.trim()).join(" ");
+  }
 
   apply(e: ServerEvent): void {
     switch (e.type) {
@@ -158,7 +171,8 @@ export class LiveState {
         if (this.order.length > 256) this.seen.delete(this.order.shift()!);
         this.error = "";
         this.retire();
-        this.current = { id: e.responseId!, turnId: e.turnId!, question: target.text, text: "", complete: false, sources: [] };
+        this.current = { id: e.responseId!, turnId: e.turnId!, question: this.answered(target, e.segments), text: "", complete: false,
+          sources: [] };
         return;
       case "response.delta":
       case "response.completed":

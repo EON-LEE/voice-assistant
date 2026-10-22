@@ -25,6 +25,19 @@ public static partial class ReplyTrigger
         return words >= SubstantiveWords ? ReplyDecision.Reply : ReplyDecision.Wait;
     }
 
+    /// <summary>
+    /// <see cref="Evaluate(IReadOnlyList{string})"/>, or for a session that answers only questions and direct requests (replyOn
+    /// <c>questions</c>): speech that strictly invites a reply (<see cref="InvitesReplyStrictly"/>) is answered unless it is only
+    /// backchannels, and any other speech is discarded however long it is. A statement never waits for more context and never
+    /// replies on its length, even when it starts with a question word.
+    /// </summary>
+    public static ReplyDecision Evaluate(IReadOnlyList<string> pending, bool questionsOnly)
+    {
+        var decision = Evaluate(pending);
+        if (!questionsOnly || decision == ReplyDecision.Discard) return decision;
+        return InvitesReplyStrictly(pending) ? ReplyDecision.Reply : ReplyDecision.Discard;
+    }
+
     public static bool ContainsQuestion(IReadOnlyList<string> pending)
     {
         var text = string.Join(' ', pending);
@@ -40,6 +53,19 @@ public static partial class ReplyTrigger
         var text = string.Join(' ', pending);
         var sentences = Split(text);
         return IsQuestion(text, sentences) || IsRequest(sentences);
+    }
+
+    /// <summary>
+    /// <see cref="InvitesReply"/> for replyOn <c>questions</c>: a question mark, a direct request, or a sentence that starts like a
+    /// real question. A statement that merely starts with a question word ("When we migrated…", "Could be a network issue.")
+    /// does not invite a reply.
+    /// </summary>
+    public static bool InvitesReplyStrictly(IReadOnlyList<string> pending)
+    {
+        var text = string.Join(' ', pending);
+        if (text.Contains('?')) return true;
+        var sentences = Split(text);
+        return IsRequest(sentences) || sentences.Any(sentence => StrictQuestionStart().IsMatch(LeadingFiller().Replace(sentence, "")));
     }
 
     /// <summary>
@@ -146,4 +172,29 @@ public static partial class ReplyTrigger
     private static partial Regex LeadingFiller();
     [GeneratedRegex(@"^(what|how|why|when|where|who|which|whose|can|could|would|will|do|does|did|is|are|was|were|should|shall|have|has|may|might|any) ")]
     private static partial Regex QuestionStart();
+
+    // Auxiliaries and modals, also negated, and the subjects that follow one in a question ("is the build…", "can you…").
+    private const string Auxiliary = "(?:is|are|was|were|am|do|does|did|can|could|would|will|should|shall|have|has|had|may|might|must"
+        + "|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|can't|couldn't|wouldn't|won't|shouldn't|haven't|hasn't|hadn't|mustn't)";
+    private const string Subject = "(?:you|we|i|they|he|she|it|anyone|everyone|someone|somebody|anybody|everybody|this|that|these|those"
+        + "|there|the|your|our|my|their|his|her|its|any|all)";
+    // A sentence that starts like a real question even without a question mark (replyOn "questions"): a wh-word with an
+    // auxiliary ("when will", "what's"); "which" or "whose" with an auxiliary and its subject, or with a noun and an auxiliary;
+    // "how much/many/long…", "what about", "how about", "why not/don't"; "who" with a verb ("who owns"); or an auxiliary with its
+    // subject and more words ("is the build green", "can't we start"). A statement that only begins with such a word does not
+    // match: "When we migrated…", "What we found is…", "What's interesting is…", "Which means…", "Which is why…", "Which, honestly,
+    // was…", "Should be done…", "Could be…", "Have a great weekend", "Do it." Matched against a normalized sentence after leading
+    // fillers are removed.
+    [GeneratedRegex(@"
+        ^(?:
+            (?:what(?!(?:'s|\s+(?:is|was))\s+[a-z']+\s+(?:is|was)\b)|how|why|when|where|who)(?:'(?:s|re|d|ll|ve)\b|\s+" + Auxiliary + @"\b)
+          | (?:which|whose)(?:'s|\s+" + Auxiliary + @")\s+(?:" + Subject + @"|one|ones|better|best|worse|worst|faster|cheaper|easier|safer|right|correct|preferred)\b
+          | (?:which|whose)\s+(?!(?:" + Auxiliary + @"|also|just|still|even|really|actually|basically|honestly|obviously|probably|definitely|certainly|clearly|usually|already|always|never)\b)[a-z']+\s+" + Auxiliary + @"\b
+          | how\s+(?:much|many|long|often|far|soon|come)\b
+          | (?:what|how)\s+about\b
+          | why\s+(?:not|[a-z]+n't)\b
+          | who\s+(?:[a-z]+s|[a-z]+ed|made|wrote|built|took|said|sent|ran|broke|got|found|led|left|gave|came|saw|knew|told|chose|bought|paid|put|set|kept|won|lost|began|brought|held|spoke|thought|met|heard|went)\b
+          | " + Auxiliary + @"\s+" + Subject + @"\s+[a-z']
+        )", RegexOptions.IgnorePatternWhitespace | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex StrictQuestionStart();
 }

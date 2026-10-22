@@ -86,6 +86,78 @@ public sealed class ReplyTriggerTests
         Assert.True(ReplyTrigger.InvitesReply(["The numbers look fine.", "OK, walk us through the plan."]));
 
     [Theory]
+    [InlineData(ReplyDecision.Discard, "We finished the migration last week and the dashboards are now live for every team.")]
+    [InlineData(ReplyDecision.Discard, "So busy today I.")]
+    [InlineData(ReplyDecision.Discard, "And then the small cut and break.", "I'm planning to come real soon.", "The weather was bad.")]
+    [InlineData(ReplyDecision.Discard, "Yeah.")]
+    [InlineData(ReplyDecision.Discard, "Right?")]
+    [InlineData(ReplyDecision.Discard, "When we migrated the dashboards last week, everything went fine.")]
+    [InlineData(ReplyDecision.Discard, "What we found is that the cache was cold.")]
+    [InlineData(ReplyDecision.Discard, "Which means we need another week.")]
+    [InlineData(ReplyDecision.Discard, "Should be done by Friday.")]
+    [InlineData(ReplyDecision.Discard, "Could be a network issue.")]
+    [InlineData(ReplyDecision.Discard, "Have a great weekend, everyone.")]
+    [InlineData(ReplyDecision.Reply, "Did you catch the news?")]
+    [InlineData(ReplyDecision.Reply, "Tell me about your plan.")]
+    [InlineData(ReplyDecision.Reply, "The numbers look fine.", "OK, walk us through the plan.")]
+    [InlineData(ReplyDecision.Reply, "We finished the migration last week.", "What do you think?")]
+    [InlineData(ReplyDecision.Reply, "Is the build green.")]
+    [InlineData(ReplyDecision.Reply, "What's the plan.")]
+    public void QuestionsOnlyDiscardsEveryStatementHoweverLong(ReplyDecision expected, params string[] pending)
+    {
+        Assert.Equal(expected, ReplyTrigger.Evaluate(pending, questionsOnly: true));
+        // Without the switch the rule is exactly the one every session used before.
+        Assert.Equal(ReplyTrigger.Evaluate(pending), ReplyTrigger.Evaluate(pending, questionsOnly: false));
+    }
+
+    [Theory]
+    [InlineData("When we migrated the dashboards last week, everything went fine.")]
+    [InlineData("What we found is that the cache was cold.")]
+    [InlineData("Which means we need another week.")]
+    [InlineData("Should be done by Friday.")]
+    [InlineData("Could be a network issue.")]
+    [InlineData("Have a great weekend, everyone.")]
+    [InlineData("What's interesting is that the cache was cold.")]
+    [InlineData("What happened was the cache went cold.")]
+    [InlineData("Which is why we need another week.")]
+    [InlineData("Which, honestly, was a mess.")]
+    [InlineData("Which would have helped.")]
+    [InlineData("How we handle it is up to the team.")]
+    [InlineData("Will do.")]
+    [InlineData("Do it.")]
+    public void StatementsThatStartWithAQuestionWordDoNotInviteAReplyStrictly(string speech)
+    {
+        Assert.False(ReplyTrigger.InvitesReplyStrictly([speech]));
+        Assert.False(ReplyTrigger.InvitesReplyStrictly(["Okay.", speech]));
+    }
+
+    [Theory]
+    [InlineData("When will the migration finish.")]
+    [InlineData("Is the build green.")]
+    [InlineData("Do you have the numbers.")]
+    [InlineData("Can you share the latency numbers.")]
+    [InlineData("Who owns the roadmap.")]
+    [InlineData("What about the price.")]
+    [InlineData("What's the plan for the beta.")]
+    [InlineData("How much does the migration cost.")]
+    [InlineData("How about Friday.")]
+    [InlineData("Why don't we start with the budget.")]
+    [InlineData("Why not ship it now.")]
+    [InlineData("Which vendor did we pick.")]
+    [InlineData("Which one is better.")]
+    [InlineData("Whose turn is it.")]
+    [InlineData("Who approved the budget.")]
+    [InlineData("Don't you think it's too early.")]
+    [InlineData("So, shall we move on to the next item.")]
+    [InlineData("Tell me about your plan.")]
+    [InlineData("Could be a network issue?")]
+    public void RealQuestionFormsAndRequestsInviteAReplyStrictlyWithoutAQuestionMark(string speech)
+    {
+        Assert.True(ReplyTrigger.InvitesReplyStrictly([speech]));
+        Assert.True(ReplyTrigger.InvitesReplyStrictly(["We moved the launch.", speech]), "any sentence of the gathered speech counts");
+    }
+
+    [Theory]
     [InlineData(true, "Which vendor did we pick for the data migration?")]
     [InlineData(true, "What are you talking about?")]
     [InlineData(true, "Can you tell me what the deadline is?")]

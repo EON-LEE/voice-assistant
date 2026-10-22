@@ -39,12 +39,20 @@ public sealed partial class ApiTests
         Assert.Equal("session.updated", TypeOf(mode));
         Assert.Equal("conversation", mode.GetProperty("responseMode").GetString());
         Assert.True(mode.GetProperty("replyKorean").GetBoolean());
+        Assert.Equal("all", mode.GetProperty("replyOn").GetString());
 
         await Send(socket, UpdateCommand(new { replyKorean = false }));
         var korean = await Receive(socket);
         Assert.Equal("session.updated", TypeOf(korean));
         Assert.Equal("conversation", korean.GetProperty("responseMode").GetString());
         Assert.False(korean.GetProperty("replyKorean").GetBoolean());
+
+        await Send(socket, UpdateCommand(new { replyOn = "questions" }));
+        var replyOn = await Receive(socket);
+        Assert.Equal("session.updated", TypeOf(replyOn));
+        Assert.Equal("questions", replyOn.GetProperty("replyOn").GetString());
+        Assert.Equal("conversation", replyOn.GetProperty("responseMode").GetString());
+        Assert.False(replyOn.GetProperty("replyKorean").GetBoolean());
         await Send(socket, """{"type":"session.stop"}""");
     }
 
@@ -168,6 +176,8 @@ public sealed partial class ApiTests
     [InlineData("""{"type":"session.update","options":{}}""")]
     [InlineData("""{"type":"session.update","options":{"responseMode":"fast"}}""")]
     [InlineData("""{"type":"session.update","options":{"replyKorean":"yes"}}""")]
+    [InlineData("""{"type":"session.update","options":{"replyOn":"questions only"}}""")]
+    [InlineData("""{"type":"session.update","options":{"replyOn":null}}""")]
     [InlineData("""{"type":"session.update","options":{"topic":"changed"}}""")]
     public async Task MalformedSessionUpdateEndsTheSessionWithInvalidCommand(string command)
     {

@@ -289,7 +289,7 @@ export class LiveController {
 
   request(): void { if (!this.paused) this.command({ type: "response.request" }); }
 
-  /** Changes document search or Korean for replies that start from now on; only after `session.ready` said `sessionUpdate`. */
+  /** Changes document search, Korean or `replyOn` for replies that start from now on; only after `session.ready` said `sessionUpdate`. */
   update(settings: SessionUpdate): void {
     const options = validateUpdate(settings);
     this.command({ type: "session.update", options });

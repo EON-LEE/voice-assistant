@@ -137,6 +137,13 @@ public sealed class StateAndProtocolTests
     }
 
     [Fact]
+    public void IgnoresTheAdditiveSegmentsCountOfResponseStarted()
+    {
+        var started = Parse("""{"type":"response.started","responseId":"r","turnId":"t","segments":2}""");
+        Assert.Equal(("response.started", "t", "r"), (started.Type, started.TurnId, started.ResponseId));
+    }
+
+    [Fact]
     public void ParsesGroundingAndRouteMetadataForVisibleSearchState()
     {
         var completed = Parse("""{"type":"response.completed","responseId":"r","turnId":"t","text":"yes","sources":[],"grounding":"no_matches","responseRoute":"knowledge","retrievalPrefetched":false}""");

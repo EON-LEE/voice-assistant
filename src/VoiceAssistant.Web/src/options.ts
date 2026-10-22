@@ -13,16 +13,28 @@ export interface SessionOptions {
   /** Ask the server to push a Korean meaning for each reply line (`response.korean`) instead of a separate request per line. */
   replyKorean?: boolean;
   /**
+   * Which speech starts an automatic reply: everything worth a reply (`all`, the server's default) or only questions and direct
+   * requests (`questions`). A manual `response.request` is answered either way.
+   */
+  replyOn?: ReplyOn;
+  /**
    * Continue the conversation of this user's previous server session. The live page sets it only when it reconnects or rolls
    * over a live session whose earlier connection was ready, never on a Start; the server then answers with `resumedTurns`.
    */
   resumeConversation?: boolean;
 }
 
+/** `replyOn`: which speech starts an automatic reply. */
+export type ReplyOn = "all" | "questions";
+export function isReplyOn(value: unknown): value is ReplyOn {
+  return value === "all" || value === "questions";
+}
+
 /** What `session.update` can change while a session runs; replies that start later use it. */
 export interface SessionUpdate {
   responseMode?: SessionOptions["responseMode"];
   replyKorean?: boolean;
+  replyOn?: ReplyOn;
 }
 
 export function defaultOptions(): SessionOptions {
@@ -64,6 +76,8 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     throw new Error("replySettleMs must be 0 or an integer between 300 and 5000.");
   if (input.replyKorean !== undefined && typeof input.replyKorean !== "boolean")
     throw new Error("replyKorean must be a boolean.");
+  if (input.replyOn !== undefined && !isReplyOn(input.replyOn))
+    throw new Error("replyOn must be \"all\" or \"questions\".");
   if (input.resumeConversation !== undefined && typeof input.resumeConversation !== "boolean")
     throw new Error("resumeConversation must be a boolean.");
   return { responseMode: input.responseMode, profile, profileConfirmed: input.profileConfirmed,
@@ -72,20 +86,24 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     ...(input.semanticSegmentation === undefined ? {} : { semanticSegmentation: input.semanticSegmentation }),
     ...(input.replySettleMs === undefined ? {} : { replySettleMs: input.replySettleMs }),
     ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }),
+    ...(input.replyOn === undefined ? {} : { replyOn: input.replyOn }),
     ...(input.resumeConversation === undefined ? {} : { resumeConversation: input.resumeConversation }) };
 }
 
 /** Validate and copy a `session.update` payload: only the given, known settings, at least one. */
 export function validateUpdate(input: SessionUpdate): SessionUpdate {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("A settings update must be an object.");
-  if (Object.keys(input).some(key => key !== "responseMode" && key !== "replyKorean"))
-    throw new Error("A settings update changes responseMode or replyKorean only.");
+  if (Object.keys(input).some(key => key !== "responseMode" && key !== "replyKorean" && key !== "replyOn"))
+    throw new Error("A settings update changes responseMode, replyKorean or replyOn only.");
   if (input.responseMode !== undefined && !["balanced", "grounded", "conversation"].includes(input.responseMode))
     throw new Error("Choose Document search: On when needed, On every reply, or Off.");
   if (input.replyKorean !== undefined && typeof input.replyKorean !== "boolean")
     throw new Error("replyKorean must be a boolean.");
+  if (input.replyOn !== undefined && !isReplyOn(input.replyOn))
+    throw new Error("replyOn must be \"all\" or \"questions\".");
   const update: SessionUpdate = { ...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
-    ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }) };
+    ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }),
+    ...(input.replyOn === undefined ? {} : { replyOn: input.replyOn }) };
   if (!Object.keys(update).length) throw new Error("A settings update must change at least one setting.");
   return update;
 }

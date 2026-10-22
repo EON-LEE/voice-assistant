@@ -201,7 +201,9 @@ public sealed class SessionOptionsAndRoutingTests
             """{"phrases":"JMAP"}""", """{"phrases":[null]}""", """{"phrases":[""]}""", """{"phrases":["\n"]}""",
             """{"topic":true}""", """{"topic":"a\nb"}""", """{"responseMode":"balanced","responseMode":"grounded"}""",
             """{"replyKorean":"true"}""", """{"replyKorean":1}""", """{"replyKorean":null}""",
-            """{"resumeConversation":"true"}""", """{"resumeConversation":1}""", """{"resumeConversation":null}""" })
+            """{"resumeConversation":"true"}""", """{"resumeConversation":1}""", """{"resumeConversation":null}""",
+            """{"replyOn":"some"}""", """{"replyOn":"Questions"}""", """{"replyOn":""}""", """{"replyOn":null}""", """{"replyOn":true}""",
+            """{"replyOn":1}""", """{"replyOn":["questions"]}""", """{"replyOn":"all","replyOn":"questions"}""" })
             yield return [value];
         yield return [JsonSerializer.Serialize(new { profile = new { name = new string('a', 101) }, profileConfirmed = true })];
         yield return [JsonSerializer.Serialize(new { profile = new { role = new string('a', 161) }, profileConfirmed = true })];
@@ -252,15 +254,30 @@ public sealed class SessionOptionsAndRoutingTests
         Assert.True(Parse("""{"resumeConversation":true}""").ResumeConversation);
     }
 
+    [Fact]
+    public void ReplyOnAnswersAllSpeechUnlessTheClientAsksForQuestionsOnly()
+    {
+        Assert.Equal("all", SessionOptions.Legacy.ReplyOn);
+        Assert.False(SessionOptions.Legacy.QuestionsOnly);
+        Assert.Equal("all", Parse("""{"responseMode":"balanced","replySettleMs":1000}""").ReplyOn);
+        Assert.Equal("all", Parse("""{"replyOn":"all"}""").ReplyOn);
+        var questions = Parse("""{"replyOn":"questions"}""");
+        Assert.Equal("questions", questions.ReplyOn);
+        Assert.True(questions.QuestionsOnly);
+    }
+
     [Theory]
-    [InlineData("""{"responseMode":"conversation"}""", "conversation", null)]
-    [InlineData("""{"responseMode":"balanced","replyKorean":true}""", "balanced", true)]
-    [InlineData("""{"replyKorean":false}""", null, false)]
-    public void SessionUpdateCarriesOnlyTheGivenSettings(string json, string? mode, bool? korean)
+    [InlineData("""{"responseMode":"conversation"}""", "conversation", null, null)]
+    [InlineData("""{"responseMode":"balanced","replyKorean":true}""", "balanced", true, null)]
+    [InlineData("""{"replyKorean":false}""", null, false, null)]
+    [InlineData("""{"replyOn":"questions"}""", null, null, "questions")]
+    [InlineData("""{"replyOn":"all","replyKorean":true}""", null, true, "all")]
+    public void SessionUpdateCarriesOnlyTheGivenSettings(string json, string? mode, bool? korean, string? replyOn)
     {
         var update = ParseUpdate(json);
         Assert.Equal(mode, update.ResponseMode);
         Assert.Equal(korean, update.ReplyKorean);
+        Assert.Equal(replyOn, update.ReplyOn);
     }
 
     [Theory]
@@ -280,6 +297,10 @@ public sealed class SessionOptionsAndRoutingTests
     [InlineData("""{"transcribeOnly":true}""")]
     [InlineData("""{"resumeConversation":true}""")]
     [InlineData("""{"responseMode":"balanced","responseMode":"grounded"}""")]
+    [InlineData("""{"replyOn":"some"}""")]
+    [InlineData("""{"replyOn":null}""")]
+    [InlineData("""{"replyOn":false}""")]
+    [InlineData("""{"replyOn":"questions","replyOn":"all"}""")]
     public void InvalidSessionUpdatesAreRejected(string json) =>
         Assert.Throws<JsonException>(() => ParseUpdate(json));
 
@@ -292,10 +313,17 @@ public sealed class SessionOptionsAndRoutingTests
         Assert.True(mode.ReplyKorean);
         Assert.Equal("API", mode.Topic);
         Assert.Equal(1000, mode.ReplySettleMs);
+        Assert.Equal("all", mode.ReplyOn);
         var korean = mode.Apply(ParseUpdate("""{"replyKorean":false}"""));
         Assert.Equal("conversation", korean.ResponseMode);
         Assert.False(korean.ReplyKorean);
         Assert.Equal("balanced", start.ResponseMode);
+        var questions = korean.Apply(ParseUpdate("""{"replyOn":"questions"}"""));
+        Assert.True(questions.QuestionsOnly);
+        Assert.Equal("conversation", questions.ResponseMode);
+        Assert.False(questions.ReplyKorean);
+        Assert.Equal("questions", questions.Apply(ParseUpdate("""{"replyKorean":true}""")).ReplyOn);
+        Assert.Equal("all", questions.Apply(ParseUpdate("""{"replyOn":"all"}""")).ReplyOn);
     }
 
     private static SessionUpdate ParseUpdate(string json)

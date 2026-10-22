@@ -27,6 +27,11 @@
               <button id="doc-on" type="button" aria-pressed="true">사용</button>
               <button id="doc-off" type="button" aria-pressed="false">미사용</button>
             </div>
+            <div class="live-seg" role="group" aria-labelledby="reply-on-label">
+              <span id="reply-on-label" class="live-seg-label">추천</span>
+              <button id="reply-all" type="button" aria-pressed="true">모든 발언</button>
+              <button id="reply-questions" type="button" aria-pressed="false">질문만</button>
+            </div>
             <button id="toggle-captions" class="live-chip" type="button" aria-pressed="false">자막</button>
             <button id="toggle-korean" class="live-chip" type="button" aria-pressed="false">한국어 뜻</button>
           </div>
@@ -40,7 +45,7 @@
             <p id="question-text" class="live-question" lang="en">영어 대화를 기다리고 있어요.</p>
           </div>
           <div class="live-answers-header">
-            <h1 class="live-answers-title">지금 읽을 답변</h1>
+            <h1 class="live-answers-title">말할 때 쓸 답변</h1>
             <div class="live-size" role="group" aria-label="답변 글자 크기">
               <button id="answer-smaller" type="button" title="답변 글자 작게">A−</button>
               <button id="answer-larger" type="button" title="답변 글자 크게">A+</button>
@@ -129,6 +134,10 @@
         <label>회의 주제 (선택)
           <input id="topic" maxlength="300" placeholder="예: Azure migration weekly sync">
         </label>
+        <label>내 이름 (선택)
+          <input id="my-name" maxlength="80" placeholder="예: Eon, Eon Lee" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="live-hint">회의에서 이 이름이 불리면 그 질문의 답변을 '이름이 불렸어요'로 강조합니다. 이 PC에만 저장하고 서버로 보내지 않습니다.</p>
         <p class="live-hint">라이브 시작은 선택한 오디오(마이크, 공유한 탭/시스템 오디오 또는 LiveCoach가 듣는 Teams/PC 소리)를 Azure로 전송합니다. 회의 참여자의 허락을 받은 뒤 시작하세요. 오디오는 저장하지 않습니다.</p>
         <p><a href="/materials.html" target="_blank" rel="noopener">내 문서 업로드 / 관리 (새 탭)</a></p>
         <div class="live-settings-actions"><button value="close">닫기</button></div>

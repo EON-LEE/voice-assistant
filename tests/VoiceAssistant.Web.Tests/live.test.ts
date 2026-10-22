@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply } from "../../src/VoiceAssistant.Web/src/live-state.js";
 import { parseEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
+import { parseNames, primaryLabel } from "../../src/VoiceAssistant.Web/src/address.js";
 
 const final = (turnId: string, text: string) => ({ type: "transcript.final", turnId, revision: 1, text });
 
@@ -23,6 +24,37 @@ test("Live: respondNow is parsed, validated and kept on the completed reply", ()
   state.apply({ type: "response.started", turnId: "t", responseId: "r" });
   state.apply(e);
   assert.equal(state.display?.respondNow, true);
+});
+
+test("Live: response.started may say how many finals the reply answers, as a whole count of at least one", () => {
+  const started = (extra: object) => JSON.stringify({ type: "response.started", turnId: "t", responseId: "r", ...extra });
+  assert.deepEqual(parseEvent(started({ segments: 2 })), { type: "response.started", turnId: "t", responseId: "r", segments: 2 });
+  assert.deepEqual(parseEvent(started({})), { type: "response.started", turnId: "t", responseId: "r" }, "an older server leaves it out");
+  for (const bad of [0, -1, 1.5, "2", null, true, 2 ** 53])
+    assert.throws(() => parseEvent(started({ segments: bad })), /segments/, JSON.stringify(bad));
+  assert.deepEqual(parseEvent(JSON.stringify({ type: "response.cancelled", turnId: "t", responseId: "r" })),
+    { type: "response.cancelled", turnId: "t", responseId: "r" });
+});
+
+test("Live: a reply to gathered finals answers all of them, so a name in the earlier one still marks the user's turn", () => {
+  const names = parseNames("Eon");
+  const reply = (segments?: number) => {
+    const state = new LiveState();
+    state.apply(final("t1", "Eon, quick question."));
+    state.apply({ type: "transcript.partial", turnId: "p", revision: 1, text: "um" });
+    state.apply(final("t2", "When does the migration finish? "));
+    state.apply(parseEvent(JSON.stringify({ type: "response.started", turnId: "t2", responseId: "r", ...(segments ? { segments } : {}) })));
+    state.apply({ type: "response.completed", turnId: "t2", responseId: "r", text: "Next Friday.", sources: [] });
+    return state.display!;
+  };
+  const gathered = reply(2);
+  assert.equal(gathered.question, "Eon, quick question. When does the migration finish?", "finals only, joined with single spaces");
+  assert.deepEqual(primaryLabel(false, gathered.question, names), { text: "이름이 불렸어요 · 지금 답할 차례", myTurn: true });
+  for (const [segments, why] of [[undefined, "an older server"], [1, "one final"], [3, "a final that is no longer known"]] as const) {
+    const single = reply(segments);
+    assert.equal(single.question, "When does the migration finish? ", why);
+    assert.deepEqual(primaryLabel(false, single.question, names), { text: "추천 영어 답변", myTurn: false }, why);
+  }
 });
 
 test("Live: a pushed Korean line parses strictly as either a meaning or a failure for one of the two reply lines", () => {
@@ -78,6 +110,17 @@ test("Live: session.updated carries the effective document-search mode and Korea
   const state = new LiveState();
   state.apply(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "conversation", replyKorean: false })));
   assert.equal(state.display, null, "a settings acknowledgement changes no conversation state");
+});
+
+test("Live: session.updated may carry the effective replyOn, which must then be all or questions", () => {
+  for (const replyOn of ["all", "questions"])
+    assert.deepEqual(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: false, replyOn })),
+      { type: "session.updated", responseMode: "grounded", replyKorean: false, replyOn });
+  assert.equal(parseEvent(JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: false })).replyOn, undefined,
+    "a server older than replyOn leaves it out");
+  for (const bad of ["question", "Questions", "", null, true, 1])
+    assert.throws(() => parseEvent(JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: false, replyOn: bad })),
+      /replyOn/, JSON.stringify(bad));
 });
 
 test("Live: continuous speech never discards a started reply and keeps last suggestions visible", () => {
