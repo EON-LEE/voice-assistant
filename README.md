@@ -63,7 +63,7 @@ affect speed, screen space and how often a suggestion appears:
 | 추천 **모든 발언 / 질문만** | 모든 발언 suggests a reply for every meaningful unit of speech. 질문만 suggests one only for a question or a direct request, which helps when several people talk and most statements are not meant for you | 모든 발언 |
 | **자막** | Shows what was heard (the recognized conversation) | off |
 | **한국어 뜻** | Shows the Korean meaning of both suggestions, and of heard questions while captions are on. Off makes no translation requests | off |
-| **내 메모** | Opens **내 입장·메모** in Settings: your position, preferences, constraints or goals for this meeting, which both suggestions then follow. Pressed while notes are set | no notes |
+| **내 메모** | Opens **내 입장·메모** in Settings: your position, preferences, constraints or goals for this meeting, which both suggestions then follow. Shows ✓, and is announced as "내 메모 (설정됨)", while notes are set | no notes |
 
 The choices are kept in this browser/WebOverlay profile. **사용** returns to the
 last "on" mode chosen in Settings (search on every reply, or only when needed).

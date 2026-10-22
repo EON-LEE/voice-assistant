@@ -11,9 +11,9 @@ import type { Grounding, ServerEvent } from "./protocol.js";
 import { LiveState, answers, meaningTexts, primaryMeaning, suggestionLabels, translatable, translationChunks, type LiveReply,
   type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
-import { acknowledgedSettings, deferredUpdateNote, keptNotes, liveStartOptions, parseSettings, pendingUpdate, settingsKey,
-  stepAnswerSize, withDocumentSearch, withResponseMode, documentSearchOn, type AppliedSettings, type HostSources, type LiveSettings,
-  type ResponseMode } from "./live-settings.js";
+import { acknowledgedSettings, deferredUpdateNote, keptNotes, liveStartOptions, notesChipName, parseSettings, pendingUpdate,
+  settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, documentSearchOn, type AppliedSettings, type HostSources,
+  type LiveSettings, type ResponseMode } from "./live-settings.js";
 import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
 import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, sourceNames, warningMessage, type LiveWarning,
   type PageAction } from "./live-errors.js";
@@ -534,7 +534,10 @@ function renderQuick(): void {
   setPressed("doc-on", search); setPressed("doc-off", !search);
   setPressed("reply-all", settings.replyOn === "all"); setPressed("reply-questions", settings.replyOn === "questions");
   setPressed("toggle-captions", settings.showCaptions); setPressed("toggle-korean", settings.showKorean);
-  setPressed("notes-chip", settings.notes.length > 0);
+  // 내 메모 opens the notes and toggles nothing: whether they are set is in its name and its ✓ (data-set), not aria-pressed.
+  const notesChip = $("notes-chip"), notesSet = String(settings.notes.length > 0), notesName = notesChipName(settings.notes);
+  if (notesChip.dataset.set !== notesSet) notesChip.dataset.set = notesSet;
+  if (notesChip.getAttribute("aria-label") !== notesName) notesChip.setAttribute("aria-label", notesName);
   setHidden("caption-block", !settings.showCaptions); setHidden("conversation-section", !settings.showCaptions);
   setHidden("answer-meaning", !settings.showKorean); setHidden("alternative-meaning", !settings.showKorean);
   setText("details-summary", settings.showCaptions ? "대화 · 상세 근거" : "상세 근거");

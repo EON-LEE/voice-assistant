@@ -69,8 +69,8 @@ html, body.live-body { margin: 0; min-height: 100%; }
 .live-seg button:nth-of-type(2) { border-radius: 0 6px 6px 0; margin-left: -1px; }
 .live-chip { border-radius: 999px; }
 .live-quick button:hover { background: #2a4260; }
-.live-quick button[aria-pressed="true"] { background: #344d6b; border-color: #a9c9ff; color: #fff; font-weight: 600; }
-.live-quick button[aria-pressed="true"]::before { content: "✓ "; content: "✓ " / ""; }
+.live-quick button[aria-pressed="true"], .live-quick button[data-set="true"] { background: #344d6b; border-color: #a9c9ff; color: #fff; font-weight: 600; }
+.live-quick button[aria-pressed="true"]::before, .live-quick button[data-set="true"]::before { content: "✓ "; content: "✓ " / ""; }
 .live-quick button:focus-visible { outline: 2px solid #a9c9ff; outline-offset: 2px; position: relative; }
 
 .live-conversation {

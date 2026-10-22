@@ -144,6 +144,14 @@ export function deferredUpdateNote(update: SessionUpdate): string {
 }
 
 /**
+ * The accessible name of the "내 메모" chip. The chip opens the notes and toggles nothing, so whether notes are set is part of
+ * its name (and of its ✓), never a pressed state.
+ */
+export function notesChipName(notes: string): string {
+  return notes ? "내 메모 (설정됨)" : "내 메모";
+}
+
+/**
  * The live page's `session.start` options: its fixed meeting settings plus the chosen document search, topic, Korean,
  * `replyOn` and notes.
  */

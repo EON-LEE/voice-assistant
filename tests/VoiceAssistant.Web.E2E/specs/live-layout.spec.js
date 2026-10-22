@@ -326,6 +326,16 @@ test('reading hold and response updates survive moving into and out of a floatin
 const updates = ws => ws.commands.filter(command => command.type === 'session.update');
 const startOptions = ws => ws.commands.find(command => command.type === 'session.start').options;
 const pressed = (page, id) => page.locator(`#${id}`).getAttribute('aria-pressed');
+/** 내 메모 opens the notes and toggles nothing: whether they are set is in its accessible name and its ✓ (data-set). */
+async function expectNotesChip(page, set) {
+  const chip = page.locator('#notes-chip');
+  await expect(chip).toHaveAccessibleName(set ? '내 메모 (설정됨)' : '내 메모');
+  await expect(chip).toHaveAttribute('data-set', String(set));
+  await expect(chip).not.toHaveAttribute('aria-pressed');
+  await expect(chip).toHaveAttribute('aria-haspopup', 'dialog');
+  const check = await chip.evaluate(el => getComputedStyle(el, '::before').content);
+  if (set) expect(check).toContain('✓'); else expect(check).toBe('none');
+}
 async function menuAction(page, action) {
   await page.locator('#live-panel').dispatchEvent('contextmenu', { clientX: 10, clientY: 10 });
   await page.locator(`[data-action="${action}"]`).click();
@@ -342,7 +352,7 @@ test('by default only the English answers show: no captions, no Korean meaning, 
   expect(await pressed(page, 'reply-questions')).toBe('false');
   expect(await pressed(page, 'toggle-captions')).toBe('false');
   expect(await pressed(page, 'toggle-korean')).toBe('false');
-  expect(await pressed(page, 'notes-chip')).toBe('false');
+  await expectNotesChip(page, false);
   await expect(page.locator('.live-answers-title')).toHaveText('말할 때 쓸 답변');
   reply(ws, 1, 'What comes first?', 'We should check the plan.');
   await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
@@ -466,7 +476,7 @@ test('the quick settings are remembered, and settings saved by an older version 
   expect(await pressed(page, 'reply-all')).toBe('false');
   expect(await pressed(page, 'toggle-captions')).toBe('true');
   expect(await pressed(page, 'toggle-korean')).toBe('true');
-  expect(await pressed(page, 'notes-chip')).toBe('true');
+  await expectNotesChip(page, true);
   await expect(page.locator('#my-notes')).toHaveValue('B안 선호. 예산 5천 달러 이하. 3분기 전에는 약속하지 않음.');
   await expect(page.locator('#caption-block')).toBeVisible();
   await expect(page.locator('#answer-meaning')).toBeVisible();
@@ -478,7 +488,7 @@ test('the quick settings are remembered, and settings saved by an older version 
   expect(await pressed(page, 'reply-all')).toBe('true');
   expect(await pressed(page, 'toggle-captions')).toBe('false');
   expect(await pressed(page, 'toggle-korean')).toBe('false');
-  expect(await pressed(page, 'notes-chip')).toBe('false');
+  await expectNotesChip(page, false);
   await expect(page.locator('#caption-block')).toBeHidden();
   await expect(page.locator('#answer-meaning')).toBeHidden();
   await expect(page.locator('#topic')).toHaveValue('Azure sync');
@@ -639,7 +649,7 @@ test('내 메모 opens the notes, which are kept on one line, sent at the start 
   const ws = await meetingFixture(page, { settings: { notes: 'Prefer plan B.' }, sessionUpdate: true });
   const field = page.locator('#my-notes'), chip = page.locator('#notes-chip'), dialog = page.locator('#settings');
   expect(startOptions(ws).notes).toBe('Prefer plan B.');
-  expect(await pressed(page, 'notes-chip')).toBe('true');
+  await expectNotesChip(page, true);
   await expect(field).toHaveAttribute('maxlength', '500');
   await chip.click();
   await expect(dialog).toBeVisible();
@@ -662,7 +672,7 @@ test('내 메모 opens the notes, which are kept on one line, sent at the start 
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect.poll(() => updates(ws).map(update => update.options)).toEqual([{ notes: kept }, { notes: '' }]);
-  expect(await pressed(page, 'notes-chip')).toBe('false');
+  await expectNotesChip(page, false);
   await menuAction(page, 'stop');
   await expect(page.locator('#capture-status')).toContainText('꺼짐');
   await menuAction(page, 'start');
@@ -677,7 +687,7 @@ test('a server that cannot change settings during a session takes the notes at t
   await page.locator('#my-notes').fill('Do not commit before the third quarter.');
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await expect(page.locator('#quick-note')).toHaveText('이 서버는 연결 중 내 메모 변경을 지원하지 않아요 · 다음 연결부터 적용돼요');
-  expect(await pressed(page, 'notes-chip')).toBe('true');
+  await expectNotesChip(page, true);
   await menuAction(page, 'stop');
   await expect(page.locator('#capture-status')).toContainText('꺼짐');
   await menuAction(page, 'start');

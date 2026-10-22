@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { acknowledgedSettings, answerSizes, deferredUpdateNote, documentSearchOn, keptNotes, liveStartOptions, noHostSources, parseSettings,
-  pendingUpdate, resolveAudioSource, settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, type AppliedSettings,
+import { acknowledgedSettings, answerSizes, deferredUpdateNote, documentSearchOn, keptNotes, liveStartOptions, noHostSources, notesChipName,
+  parseSettings, pendingUpdate, resolveAudioSource, settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, type AppliedSettings,
   type HostSources, type LiveSettings } from "../../src/VoiceAssistant.Web/src/live-settings.js";
 import { createStartMessage, validateUpdate } from "../../src/VoiceAssistant.Web/src/options.js";
 import { parseEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
@@ -64,6 +64,12 @@ test("Live settings: notes are kept on one line, without control characters, at 
   const stored = parseSettings(JSON.stringify({ notes: " Prefer plan B.\n Budget under 5,000 dollars. " }));
   assert.equal(stored.notes, "Prefer plan B. Budget under 5,000 dollars.");
   assert.deepEqual(parseSettings(JSON.stringify(stored)), stored, "kept notes load back unchanged");
+});
+
+test("Live settings: the 내 메모 chip says in its name whether notes are set, because opening them toggles nothing", () => {
+  assert.equal(notesChipName(""), "내 메모");
+  assert.equal(notesChipName("Prefer plan B."), "내 메모 (설정됨)");
+  assert.equal(notesChipName(parseSettings(JSON.stringify({ notes: " \n " })).notes), "내 메모", "notes of only spaces are none");
 });
 
 test("Live settings: a document mode and its remembered choice never disagree", () => {
