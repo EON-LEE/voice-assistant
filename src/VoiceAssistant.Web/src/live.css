@@ -57,7 +57,7 @@ html, body.live-body { margin: 0; min-height: 100%; }
 .live-action[hidden] { display: none; }
 .live-note { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: #ffe2aa; }
 
-/* Quick settings: document search on/off, replies to all speech or questions only, captions, Korean meaning. Buttons stay text-only so the host's drag handler ignores them. */
+/* Quick settings: document search on/off, replies to all speech or questions only, captions, Korean meaning and the notes. Buttons stay text-only so the host's drag handler ignores them. */
 .live-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
 .live-seg { display: inline-flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
 .live-seg-label { margin-right: 6px; font-size: 12px; color: #c1cfe2; white-space: nowrap; }
@@ -119,12 +119,13 @@ html, body.live-body { margin: 0; min-height: 100%; }
 .live-badge[data-grounding="grounded"] { color: #b4e2c8; border-color: #57876a; }
 .live-card { margin-top: 12px; padding: 15px 16px; border-radius: 11px; }
 .live-card.primary { background: rgba(115, 156, 222, .07); border: 1px solid rgba(154, 187, 238, .21); }
+/* 추천 2 sits right below 추천 1, a little quieter: a lighter card, a smaller label and 0.9 of the English size. */
 .live-card.secondary { background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .13); }
+.live-card.secondary .live-choice { font-size: 10px; }
 .live-choice { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: #b7d2ff; }
-.live-choice span + span { font-size: 10px; font-weight: 400; color: #9fb1cb; }
 /* --answer-scale is the A− / A+ choice; without it (the default) the sizes are exactly the stylesheet's. */
 .live-english { margin: 12px 0 16px; font-size: calc(clamp(22px, 4.8vw, 28px) * var(--answer-scale, 1)); line-height: 1.45; font-weight: 600; color: #fff; overflow-wrap: anywhere; }
-.live-card.secondary .live-english { font-size: calc(19px * var(--answer-scale, 1)); }
+.live-card.secondary .live-english { font-size: calc(clamp(22px, 4.8vw, 28px) * var(--answer-scale, 1) * .9); }
 .live-meaning { border-top: 1px solid rgba(161, 197, 255, .19); padding-top: 10px; }
 .live-meaning-label { font-size: 11px; color: #aec8ef; }
 .live-meaning p { margin: 5px 0 0; font-size: 15px; line-height: 1.6; color: #b9c8de; }
@@ -160,11 +161,12 @@ html, body.live-body { margin: 0; min-height: 100%; }
 .live-settings::backdrop { background: rgba(0, 0, 0, .55); }
 .live-settings h2 { margin: 0 0 10px; font-size: 16px; }
 .live-settings label { display: grid; gap: 4px; margin-top: 12px; font-size: 13px; color: #c1cfe2; }
-.live-settings select, .live-settings input {
+.live-settings select, .live-settings input, .live-settings textarea {
   min-width: 0; width: 100%;
   font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 6px; border: 1px solid #4b5c74;
   background: #0f1622; color: #edf2fa;
 }
+.live-settings textarea { min-height: 4.5em; line-height: 1.5; resize: vertical; }
 .live-settings meter { width: 100%; margin-top: 6px; }
 .live-settings button {
   font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px; border: 1px solid #5d7394;

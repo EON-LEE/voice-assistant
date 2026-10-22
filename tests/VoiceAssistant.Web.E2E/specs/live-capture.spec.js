@@ -202,8 +202,10 @@ test('the finished primary line shows before the reply completes, and completion
   await expect(page.locator('#hold-answer')).toBeEnabled();
   server.send({ type: 'response.completed', turnId: 't1', responseId: 'r1', text: 'We can ship on Friday.',
     suggestions: ['We can ship on Friday.', 'Friday looks realistic for the release.'], sources: [], grounding: 'disabled' });
-  await page.locator('#live-details summary').click();
+  // The second suggestion appears right below the first, without opening the details.
   await expect(page.locator('#alternative-text')).toHaveText('Friday looks realistic for the release.');
+  await expect(page.locator('#alternative-card')).toBeVisible();
+  await expect(page.locator('#live-details')).not.toHaveAttribute('open');
   await expect(page.locator('#grounding-badge')).toContainText('문서 검색 미사용');
   const latency = await page.evaluate(() => window.__liveCoachDebug.latency);
   expect(latency).toHaveLength(1);

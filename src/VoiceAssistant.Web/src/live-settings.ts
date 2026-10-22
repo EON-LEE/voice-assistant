@@ -1,5 +1,7 @@
 import type { CaptureSourceKind } from "./capture.js";
-import { defaultOptions, isReplyOn, type ReplyOn, type SessionOptions, type SessionUpdate } from "./options.js";
+import { defaultOptions, isReplyOn, normalizeNotes, notesLimit, type ReplyOn, type SessionOptions,
+  type SessionUpdate } from "./options.js";
+import type { ServerEvent } from "./protocol.js";
 
 export type ResponseMode = SessionOptions["responseMode"];
 export type DocumentMode = Exclude<ResponseMode, "conversation">;
@@ -19,6 +21,8 @@ export interface LiveSettings {
   answerSize: AnswerSize;
   /** Which speech gets an automatic reply ("추천"): everything worth a reply (`all`) or only questions and requests. */
   replyOn: ReplyOn;
+  /** "내 입장·메모" as {@link keptNotes} keeps them; empty when none are set. Both suggestions follow them. */
+  notes: string;
 }
 
 /** The English answer text sizes A− and A+ step through, in percent of the default size (100). */
@@ -40,6 +44,18 @@ export interface HostSources { teams: boolean; system: boolean }
 export const noHostSources: HostSources = { teams: false, system: false };
 
 export const settingsKey = "live-coach-settings";
+
+/**
+ * Notes as the page keeps and sends them: normalized like the server keeps them ({@link normalizeNotes}), without other
+ * control characters, at most {@link notesLimit} characters. Anything but text means no notes.
+ */
+export function keptNotes(value: unknown): string {
+  if (typeof value !== "string") return "";
+  let notes = normalizeNotes(value).replace(/[\u0000-\u001f\u007f-\u009f]/gu, "");
+  // Only text kept by an older or edited copy can be longer; a cut never leaves half a character behind.
+  if (notes.length > notesLimit) notes = notes.slice(0, notesLimit).replace(/[\ud800-\udbff]$/u, "");
+  return normalizeNotes(notes);
+}
 
 /**
  * The audio source to use here. LiveCoach sources exist only inside LiveCoach.exe (elsewhere a share takes their place);
@@ -77,6 +93,7 @@ export function parseSettings(raw: string | null, offered: HostSources = noHostS
     showKorean: value.showKorean === true,
     answerSize: isAnswerSize(value.answerSize) ? value.answerSize : 100,
     replyOn: isReplyOn(value.replyOn) ? value.replyOn : "all",
+    notes: keptNotes(value.notes),
   };
 }
 
@@ -93,34 +110,46 @@ export function withDocumentSearch(settings: LiveSettings, on: boolean): LiveSet
 }
 
 /** The settings a connected session runs with, as far as `session.update` can change them. */
-export interface AppliedSettings { responseMode: ResponseMode; replyKorean: boolean; replyOn: ReplyOn }
+export interface AppliedSettings { responseMode: ResponseMode; replyKorean: boolean; replyOn: ReplyOn; notes: string }
 
 /** What a connected session still has to be told so that it matches the settings; `null` when it already does. */
 export function pendingUpdate(applied: AppliedSettings,
-  settings: Pick<LiveSettings, "responseMode" | "showKorean" | "replyOn">): SessionUpdate | null {
+  settings: Pick<LiveSettings, "responseMode" | "showKorean" | "replyOn" | "notes">): SessionUpdate | null {
   const update: SessionUpdate = {
     ...(applied.responseMode !== settings.responseMode ? { responseMode: settings.responseMode } : {}),
     ...(applied.replyKorean !== settings.showKorean ? { replyKorean: settings.showKorean } : {}),
     ...(applied.replyOn !== settings.replyOn ? { replyOn: settings.replyOn } : {}),
+    ...(applied.notes !== settings.notes ? { notes: settings.notes } : {}),
   };
   return Object.keys(update).length ? update : null;
 }
 
 /**
- * What the quick row says when the server cannot change settings while connected: document search and `replyOn` then wait
- * for the next connection. Korean needs no note, because the page translates by itself.
+ * What a session runs with once `session.updated` acknowledged `sent`: the effective values the event reports, and the notes
+ * that update carried, because the server says only whether notes are set, never their text.
+ */
+export function acknowledgedSettings(applied: AppliedSettings, updated: ServerEvent, sent: SessionUpdate | null): AppliedSettings {
+  return { responseMode: updated.responseMode ?? applied.responseMode, replyKorean: updated.replyKorean === true,
+    replyOn: updated.replyOn ?? applied.replyOn, notes: updated.notes === false ? "" : sent?.notes ?? applied.notes };
+}
+
+/**
+ * What the quick row says when the server cannot change settings while connected: document search, `replyOn` and the notes
+ * then wait for the next connection. Korean needs no note, because the page translates by itself.
  */
 export function deferredUpdateNote(update: SessionUpdate): string {
-  const names = [update.responseMode ? "문서검색" : "", update.replyOn ? "추천" : ""].filter(Boolean);
+  const names = [update.responseMode ? "문서검색" : "", update.replyOn ? "추천" : "", update.notes !== undefined ? "내 메모" : ""]
+    .filter(Boolean);
   return names.length ? `이 서버는 연결 중 ${names.join("·")} 변경을 지원하지 않아요 · 다음 연결부터 적용돼요` : "";
 }
 
 /**
- * The live page's `session.start` options: its fixed meeting settings plus the chosen document search, topic, Korean and
- * `replyOn`.
+ * The live page's `session.start` options: its fixed meeting settings plus the chosen document search, topic, Korean,
+ * `replyOn` and notes.
  */
-export function liveStartOptions(settings: Pick<LiveSettings, "responseMode" | "topic" | "showKorean" | "replyOn">): SessionOptions {
+export function liveStartOptions(settings: Pick<LiveSettings, "responseMode" | "topic" | "showKorean" | "replyOn" | "notes">): SessionOptions {
   // endSilenceMs is required by the options validator but has no effect under semantic segmentation.
   return { ...defaultOptions(), responseMode: settings.responseMode, topic: settings.topic, endSilenceMs: 1100,
-    semanticSegmentation: true, replySettleMs: 1000, replyKorean: settings.showKorean, replyOn: settings.replyOn };
+    semanticSegmentation: true, replySettleMs: 1000, replyKorean: settings.showKorean, replyOn: settings.replyOn,
+    notes: settings.notes };
 }

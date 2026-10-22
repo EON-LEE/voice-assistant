@@ -203,12 +203,16 @@ public sealed class SessionOptionsAndRoutingTests
             """{"replyKorean":"true"}""", """{"replyKorean":1}""", """{"replyKorean":null}""",
             """{"resumeConversation":"true"}""", """{"resumeConversation":1}""", """{"resumeConversation":null}""",
             """{"replyOn":"some"}""", """{"replyOn":"Questions"}""", """{"replyOn":""}""", """{"replyOn":null}""", """{"replyOn":true}""",
-            """{"replyOn":1}""", """{"replyOn":["questions"]}""", """{"replyOn":"all","replyOn":"questions"}""" })
+            """{"replyOn":1}""", """{"replyOn":["questions"]}""", """{"replyOn":"all","replyOn":"questions"}""",
+            """{"notes":null}""", """{"notes":5}""", """{"notes":["Prefer plan B."]}""", """{"notes":"Prefer\u0000 plan B."}""",
+            """{"notes":"Prefer\u007f plan B."}""", """{"notes":"a","notes":"b"}""" })
             yield return [value];
         yield return [JsonSerializer.Serialize(new { profile = new { name = new string('a', 101) }, profileConfirmed = true })];
         yield return [JsonSerializer.Serialize(new { profile = new { role = new string('a', 161) }, profileConfirmed = true })];
         yield return [JsonSerializer.Serialize(new { profile = new { project = new string('a', 301) }, profileConfirmed = true })];
         yield return [JsonSerializer.Serialize(new { topic = new string('a', 301) })];
+        yield return [JsonSerializer.Serialize(new { notes = new string('a', 501) })];
+        yield return [JsonSerializer.Serialize(new { notes = new string('a', 250) + "\n\n" + new string('b', 250) })];
         yield return [JsonSerializer.Serialize(new { phrases = new[] { new string('a', 65) } })];
         yield return [JsonSerializer.Serialize(new { phrases = Enumerable.Repeat("a", 41).ToArray() })];
         yield return [JsonSerializer.Serialize(new { phrases = Enumerable.Repeat(new string('a', 64), 33).ToArray() })];
@@ -266,6 +270,22 @@ public sealed class SessionOptionsAndRoutingTests
         Assert.True(questions.QuestionsOnly);
     }
 
+    [Fact]
+    public void NotesAreKeptAsOneLineOfAtMost500Characters()
+    {
+        Assert.Equal("", SessionOptions.Legacy.Notes);
+        Assert.Equal("", Parse("""{"responseMode":"balanced"}""").Notes);
+        Assert.Equal("", Parse("""{"notes":" \r\n\t "}""").Notes);
+        // Every run of whitespace, line breaks and Unicode spaces included, becomes one space.
+        Assert.Equal("Prefer plan B. Budget under 5,000 dollars.",
+            Parse("""{"notes":"  Prefer plan B.\r\n\r\n  Budget\tunder\u00a05,000\u3000dollars.  "}""").Notes);
+        Assert.Equal("B안 선호 예산 5천 달러 이하", Parse("""{"notes":"B안 선호\u2028예산 5천 달러 이하"}""").Notes);
+        Assert.Equal(500, Parse(JsonSerializer.Serialize(new { notes = new string('a', 500) })).Notes.Length);
+        // The limit applies after normalization, so spacing never counts against it.
+        var spaced = Parse(JsonSerializer.Serialize(new { notes = new string('a', 250) + new string(' ', 400) + new string('b', 249) }));
+        Assert.Equal(500, spaced.Notes.Length);
+    }
+
     [Theory]
     [InlineData("""{"responseMode":"conversation"}""", "conversation", null, null)]
     [InlineData("""{"responseMode":"balanced","replyKorean":true}""", "balanced", true, null)]
@@ -301,8 +321,28 @@ public sealed class SessionOptionsAndRoutingTests
     [InlineData("""{"replyOn":null}""")]
     [InlineData("""{"replyOn":false}""")]
     [InlineData("""{"replyOn":"questions","replyOn":"all"}""")]
+    [InlineData("""{"notes":null}""")]
+    [InlineData("""{"notes":1}""")]
+    [InlineData("""{"notes":["Prefer plan B."]}""")]
+    [InlineData("""{"notes":"Prefer\u0007 plan B."}""")]
+    [InlineData("""{"notes":"a","notes":"b"}""")]
     public void InvalidSessionUpdatesAreRejected(string json) =>
         Assert.Throws<JsonException>(() => ParseUpdate(json));
+
+    [Fact]
+    public void ASessionUpdateMayChangeOrClearTheNotes()
+    {
+        var notes = ParseUpdate("""{"notes":" Prefer plan B.\n\n Budget under 5,000 dollars. "}""");
+        Assert.Equal("Prefer plan B. Budget under 5,000 dollars.", notes.Notes);
+        Assert.Null(notes.ResponseMode);
+        Assert.Null(notes.ReplyKorean);
+        Assert.Null(notes.ReplyOn);
+        Assert.Equal("", ParseUpdate("""{"notes":""}""").Notes);
+        Assert.Equal("", ParseUpdate("""{"notes":"\n"}""").Notes);
+        Assert.Null(ParseUpdate("""{"replyOn":"all"}""").Notes);
+        Assert.Equal(500, ParseUpdate(JsonSerializer.Serialize(new { notes = new string('a', 500) })).Notes!.Length);
+        Assert.Throws<JsonException>(() => ParseUpdate(JsonSerializer.Serialize(new { notes = new string('a', 501) })));
+    }
 
     [Fact]
     public void AppliedUpdateChangesOnlyTheGivenSettings()
@@ -324,6 +364,12 @@ public sealed class SessionOptionsAndRoutingTests
         Assert.False(questions.ReplyKorean);
         Assert.Equal("questions", questions.Apply(ParseUpdate("""{"replyKorean":true}""")).ReplyOn);
         Assert.Equal("all", questions.Apply(ParseUpdate("""{"replyOn":"all"}""")).ReplyOn);
+        var noted = questions.Apply(ParseUpdate("""{"notes":"Prefer plan B."}"""));
+        Assert.Equal("Prefer plan B.", noted.Notes);
+        Assert.True(noted.QuestionsOnly);
+        Assert.Equal("", questions.Notes);
+        Assert.Equal("Prefer plan B.", noted.Apply(ParseUpdate("""{"responseMode":"grounded"}""")).Notes);
+        Assert.Equal("", noted.Apply(ParseUpdate("""{"notes":""}""")).Notes);
     }
 
     private static SessionUpdate ParseUpdate(string json)

@@ -34,23 +34,25 @@ recognition, tab/system-audio recognition, or focus/transparency above PowerPoin
 
 ## Browser application
 
-The current `/live.html` page and `VoiceAssistant.WebOverlay` host prioritize
-one completed English suggestion and its response-bound question. Korean meaning
+The current `/live.html` page and `VoiceAssistant.WebOverlay` host show the
+completed English suggestions at the top, **추천 1** and, when the reply has a
+second line, **추천 2 · 다른 방향** right below it, so you can choose, together with
+their response-bound question. Korean meaning
 and the recognized-conversation captions are off by default; switch them on in the
 quick row below. Streaming drafts do not replace the reading sentence; the
 previous completed answer is explicitly labeled while a newer one is prepared.
 Hold answer freezes that answer and its question locally without pausing
 capture or model requests. Release it to show the latest completed answer.
 Use the separate **일시정지** button in the header (or the right-click menu) to stop sending audio;
-**시작 / 종료** next to it starts and ends the session. **A− / A+** beside the answer change its text size.
-Conversation history (only while captions are on), alternative wording and
-source details are collapsed under the disclosure. Grounding warnings and
+**시작 / 종료** next to it starts and ends the session. **A− / A+** beside the answers change their text size.
+Conversation history (only while captions are on), grounding detail and
+source details are collapsed under the disclosure (**상세 근거**). Grounding warnings and
 connection errors remain visible. The overlay remains resizable, including narrow
 windows and enlarged text. This presentation change does not establish answer
 accuracy or real-meeting usability; the older microphone-only desktop prototype
 is unchanged.
 
-### Quick settings: document search, replies, captions, Korean meaning
+### Quick settings: document search, replies, captions, Korean meaning, notes
 
 Under the status line the live page has a quick row for the choices that most
 affect speed, screen space and how often a suggestion appears:
@@ -60,18 +62,25 @@ affect speed, screen space and how often a suggestion appears:
 | 문서검색 **사용 / 미사용** | On searches your uploaded materials (Azure AI Search). Off answers from the conversation only and skips retrieval, the fastest path | 사용 |
 | 추천 **모든 발언 / 질문만** | 모든 발언 suggests a reply for every meaningful unit of speech. 질문만 suggests one only for a question or a direct request, which helps when several people talk and most statements are not meant for you | 모든 발언 |
 | **자막** | Shows what was heard (the recognized conversation) | off |
-| **한국어 뜻** | Shows the Korean meaning of the answer and alternative, and of heard questions while captions are on. Off makes no translation requests | off |
+| **한국어 뜻** | Shows the Korean meaning of both suggestions, and of heard questions while captions are on. Off makes no translation requests | off |
+| **내 메모** | Opens **내 입장·메모** in Settings: your position, preferences, constraints or goals for this meeting, which both suggestions then follow. Pressed while notes are set | no notes |
 
 The choices are kept in this browser/WebOverlay profile. **사용** returns to the
 last "on" mode chosen in Settings (search on every reply, or only when needed).
 With a server that announces `sessionUpdate`, a change made during a session is
 sent as `session.update` and applies from the next reply; a reply already being
 prepared keeps its settings. With an older server the page says that document
-search or 추천 changes apply from the next connection, and Stop then Start applies them.
+search, 추천 or 내 메모 changes apply from the next connection, and Stop then Start applies them.
 Korean meaning and captions work with any server.
 
-An answer is labeled **추천 영어 답변**: a line to use when you speak, not a sign that
-you must answer. No answer is highlighted as your turn.
+The answers are labeled **추천 1** and **추천 2 · 다른 방향**: lines to use when you
+speak, not a sign that you must answer. No answer is highlighted as your turn.
+
+**내 입장·메모** (optional, up to 500 characters, kept on one line) could be, for
+example, "B안 선호, 예산 5천 달러 이하, 3분기 전에는 약속하지 않음". The page keeps the
+notes in this browser/WebOverlay profile and sends them with the session; the server
+adds them only to the request that writes the suggestions, never stores or logs them,
+and never sends them back. Without notes the request is exactly as before.
 
 The deployed application's URL is environment-specific. Operators find it with
 `az containerapp show --name <app> --resource-group <group>

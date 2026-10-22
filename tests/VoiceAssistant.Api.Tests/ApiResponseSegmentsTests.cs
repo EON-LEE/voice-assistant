@@ -82,9 +82,12 @@ public sealed partial class ApiTests
         await using var host = await Host.StartAsync(provider: provider, clock: clock, configuration: SpeculationOn());
         using var socket = await host.ConnectAsync();
         await StartSpeculativeSessionAsync(socket);
+        var timers = clock.TimersCreated;
 
         provider.Emit(new("opener", 1, NameOpener, true));
         Assert.Equal("transcript.final", TypeOf(await Receive(socket)));
+        // The opener's settle wait starts after its final is sent; the pause on the partial must not count it as its own timer.
+        await clock.WaitForTimersAsync(timers + 1);
         await PauseOnPartialAsync(socket, provider, clock, new("question", 1, "when does the migration finish", false));
         await NextAsync(provider.Finished);
         provider.Emit(new("question", 2, MigrationQuestion, true));

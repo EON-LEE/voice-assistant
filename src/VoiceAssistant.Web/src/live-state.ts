@@ -16,6 +16,14 @@ export function answers(reply: LiveReply | null): string[] {
   return reply.suggestions ?? (reply.text.trim() ? [reply.text] : []);
 }
 
+/**
+ * The labels above the two suggestion cards. `previous`: the answer on screen is for an earlier question, because a newer
+ * reply is being prepared or held back (see {@link LiveState.showsEarlierAnswer}).
+ */
+export function suggestionLabels(previous: boolean): { primary: string; alternative: string } {
+  return { primary: previous ? "이전 질문용 답변" : "추천 1", alternative: "추천 2 · 다른 방향" };
+}
+
 export const meaningTexts = {
   waiting: "영어 추천 답변의 한국어 뜻이 함께 표시됩니다.",
   preparing: "한국어 번역 준비 중…",
@@ -70,6 +78,14 @@ export class LiveState {
   get latest(): LiveTurn | undefined { return this.turns.at(-1); }
   /** A newer reply is being produced. With gathered replies, not every final gets its own reply. */
   get generating(): boolean { return !!this.current && !this.current.complete; }
+  /**
+   * The answer on screen is for an earlier question: a newer reply arrived while it was held, or, while `connected`, a newer
+   * one is being prepared.
+   */
+  showsEarlierAnswer(connected: boolean): boolean {
+    const display = this.display;
+    return !!display && (this.hasNewerReply || connected && this.generating && this.current?.id !== display.id);
+  }
 
   resetSession(): void {
     this.turns = []; this.current = null; this.lastCompleted = null; this.error = "";

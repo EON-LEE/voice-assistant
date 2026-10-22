@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createStartMessage, defaultOptions, parsePhrases, validateOptions, validateUpdate, type SessionOptions, type SessionUpdate } from "../../src/VoiceAssistant.Web/src/options.js";
+import { createStartMessage, defaultOptions, normalizeNotes, notesLimit, parsePhrases, validateOptions, validateUpdate, type SessionOptions,
+  type SessionUpdate } from "../../src/VoiceAssistant.Web/src/options.js";
 import { RenderScheduler, type RenderClock } from "../../src/VoiceAssistant.Web/src/render-scheduler.js";
 import { MeetingSession } from "../../src/VoiceAssistant.Web/src/session.js";
 import { parseEvent, type ServerEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
@@ -49,17 +50,33 @@ test("replyOn is all or questions, sent only when it was set", () => {
   for (const bad of ["Questions", "question", "none", "", true, 1, null])
     assert.throws(() => validateOptions({ ...defaultOptions(), replyOn: bad as unknown as "all" }), /replyOn/, JSON.stringify(bad));
 });
+test("notes are sent normalized to one line of at most 500 characters, and only when they were set", () => {
+  assert.equal("notes" in validateOptions(defaultOptions()), false, "the index page never sends notes");
+  assert.equal(validateOptions({ ...defaultOptions(), notes: "" }).notes, "");
+  assert.equal(validateOptions({ ...defaultOptions(), notes: "  B안 선호.\n\n예산\t5천 달러 이하.\u3000 " }).notes, "B안 선호. 예산 5천 달러 이하.");
+  assert.equal(normalizeNotes(" a \r\n\v\f b\u00a0\u2029c "), "a b c");
+  assert.equal(validateOptions({ ...defaultOptions(), notes: "a".repeat(notesLimit) }).notes?.length, 500);
+  assert.equal(validateOptions({ ...defaultOptions(), notes: `${"a".repeat(250)}${" ".repeat(300)}${"b".repeat(249)}` }).notes?.length, 500,
+    "the limit applies after normalization");
+  for (const bad of [null, 5, true, ["x"], "a".repeat(501), `${"a".repeat(250)}\n${"b".repeat(250)}`, "Prefer\u0007 plan B.", "a\u0085b"])
+    assert.throws(() => validateOptions({ ...defaultOptions(), notes: bad as unknown as string }), /notes/, JSON.stringify(bad));
+  const start = createStartMessage({ ...defaultOptions(), notes: " Prefer plan B.\n" });
+  assert.equal("options" in start && start.options.notes, "Prefer plan B.");
+});
 test("A settings update carries only the known settings, at least one, and is copied", () => {
   assert.deepEqual(validateUpdate({ responseMode: "conversation" }), { responseMode: "conversation" });
   assert.deepEqual(validateUpdate({ replyKorean: false }), { replyKorean: false });
   assert.deepEqual(validateUpdate({ replyOn: "questions" }), { replyOn: "questions" });
+  assert.deepEqual(validateUpdate({ notes: " Prefer plan B.\n" }), { notes: "Prefer plan B." });
+  assert.deepEqual(validateUpdate({ notes: "" }), { notes: "" }, "empty notes clear them");
   assert.deepEqual(validateUpdate({ responseMode: "balanced", replyKorean: true }), { responseMode: "balanced", replyKorean: true });
-  assert.deepEqual(validateUpdate({ responseMode: "balanced", replyKorean: true, replyOn: "all" }),
-    { responseMode: "balanced", replyKorean: true, replyOn: "all" });
+  assert.deepEqual(validateUpdate({ responseMode: "balanced", replyKorean: true, replyOn: "all", notes: "x" }),
+    { responseMode: "balanced", replyKorean: true, replyOn: "all", notes: "x" });
   const input = { responseMode: "grounded" as const };
   assert.notEqual(validateUpdate(input), input);
   for (const bad of [{}, { responseMode: undefined }, { responseMode: "fast" }, { responseMode: 3 }, { replyKorean: "true" },
     { replyKorean: 1 }, { replyKorean: null }, { replyOn: "question" }, { replyOn: null }, { replyOn: true }, { replyOn: undefined },
+    { notes: null }, { notes: 5 }, { notes: undefined }, { notes: "a".repeat(501) }, { notes: "a\u0000b" },
     { topic: "x" }, { responseMode: "balanced", topic: "x" }, { replyOn: "all", topic: "x" }, null, [], "conversation"])
     assert.throws(() => validateUpdate(bad as unknown as SessionUpdate), /./, JSON.stringify(bad));
 });

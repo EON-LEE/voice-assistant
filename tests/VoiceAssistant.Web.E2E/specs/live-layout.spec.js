@@ -86,7 +86,7 @@ async function meetingFixture(page, { replyKorean = false, sessionUpdate = false
     };
   });
   await seedSettings(page, settings);
-  let socket, effective = { responseMode: 'grounded', replyKorean: false, replyOn: 'all' };
+  let socket, effective = { responseMode: 'grounded', replyKorean: false, replyOn: 'all', notes: '' };
   await page.routeWebSocket('**/api/meeting*', ws => {
     socket = ws;
     ws.onMessage(message => {
@@ -94,13 +94,14 @@ async function meetingFixture(page, { replyKorean = false, sessionUpdate = false
       const command = JSON.parse(message); commands.push(command);
       if (command.type === 'session.start') {
         effective = { responseMode: command.options.responseMode, replyKorean: command.options.replyKorean === true,
-          replyOn: command.options.replyOn ?? 'all' };
+          replyOn: command.options.replyOn ?? 'all', notes: command.options.notes ?? '' };
         ws.send(JSON.stringify({ type: 'session.ready', ...(replyKorean ? { protocolVersion: 1, replyKorean: true } : {}),
           ...(sessionUpdate ? { sessionUpdate: true } : {}) }));
       }
       if (command.type === 'session.update' && sessionUpdate) {
         effective = { ...effective, ...command.options };
-        ws.send(JSON.stringify({ type: 'session.updated', ...effective }));
+        // Like the server, only whether notes are set comes back, never their text.
+        ws.send(JSON.stringify({ type: 'session.updated', ...effective, notes: effective.notes !== '' }));
       }
     });
   });
@@ -120,27 +121,70 @@ function reply(ws, id, question, text, grounding = 'disabled') {
     suggestions: [text, 'Could we check that together?'], sources: [], grounding });
 }
 
-test('reading view prioritizes one English answer and keeps optional content closed', async ({ page }, testInfo) => {
+test('reading view shows both suggestions at the top and keeps the details closed', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 550, height: 860 });
   await fixture(page, false, false);
   await expect(page.locator('#live-details')).not.toHaveAttribute('open');
   await expect(page.locator('#conversation')).toBeHidden();
-  await expect(page.locator('#alternative-card')).toBeHidden();
+  await expect(page.locator('#sources-text')).toBeHidden();
+  // 추천 2 sits right below 추천 1, outside the fold, a little smaller than the first.
   await expect(page.locator('#answer-text')).toBeVisible();
-  expect(await page.locator('.live-card:visible').count()).toBe(1);
-  expect(await page.locator('#answer-text').evaluate(el => parseFloat(getComputedStyle(el).fontSize)))
-    .toBeGreaterThan(await page.locator('#answer-korean').evaluate(el => parseFloat(getComputedStyle(el).fontSize)));
+  await expect(page.locator('#alternative-text')).toBeVisible();
+  expect(await page.locator('.live-card:visible').count()).toBe(2);
+  expect(await page.evaluate(() => {
+    const alternative = document.querySelector('#alternative-card');
+    return document.querySelector('.live-card.primary').nextElementSibling === alternative &&
+      !document.querySelector('#live-details').contains(alternative);
+  })).toBe(true);
+  const size = selector => page.locator(selector).evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+  expect(await size('#alternative-text')).toBeCloseTo(await size('#answer-text') * 0.9, 1);
+  expect(await size('#alternative-text')).toBeGreaterThan(await size('#answer-korean'));
+  expect(await size('#alternative-label')).toBeLessThan(await size('#primary-label'));
   await page.locator('#live-details summary').focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('#conversation')).toBeVisible();
-  await expect(page.locator('#alternative-card')).toBeVisible();
+  await expect(page.locator('#sources-text')).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(page.locator('#live-details')).not.toHaveAttribute('open');
   await page.evaluate(() => {
     document.querySelector('#answer-text').textContent = 'I can confirm the next milestone after we review the dependencies.';
     document.querySelector('#answer-korean').textContent = '의존성을 검토한 뒤 다음 일정을 확인하겠습니다.';
+    document.querySelector('#alternative-text').textContent = 'Could we check the dependencies together first?';
+    document.querySelector('#alternative-korean').textContent = '먼저 의존성을 함께 확인해 볼까요?';
   });
   await page.screenshot({ path: testInfo.outputPath('focused-reading.png') });
+});
+
+test('추천 1 and 추천 2 stand at the top, a one-line reply shows only the first, and the fold keeps what was heard and the sources', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { showCaptions: true } });
+  reply(ws, 1, 'Which plan should we pick?', 'Plan B fits the budget.', 'grounded');
+  await expect(page.locator('#answer-text')).toHaveText('Plan B fits the budget.');
+  await expect(page.locator('#primary-label')).toHaveText('추천 1');
+  await expect(page.locator('#alternative-card')).toBeVisible();
+  await expect(page.locator('#alternative-label')).toHaveText('추천 2 · 다른 방향');
+  await expect(page.locator('#alternative-text')).toHaveText('Could we check that together?');
+  await expect(page.locator('.live-card.primary')).toHaveAttribute('aria-label', '추천 답변 1');
+  await expect(page.locator('#alternative-card')).toHaveAttribute('aria-label', '추천 답변 2');
+  await expect(page.locator('#details-summary')).toHaveText('대화 · 상세 근거');
+  await expect(page.locator('#live-details')).not.toHaveAttribute('open');
+  await page.locator('#live-details summary').click();
+  await expect(page.locator('#conversation .live-line .en')).toHaveText('Which plan should we pick?');
+  await expect(page.locator('#grounding-text')).toHaveText('근거 있음 · 내 업로드 문서');
+  await expect(page.locator('#live-details .live-card')).toHaveCount(0);
+  // While the next reply is prepared, both cards still belong to the earlier question.
+  ws.send({ type: 'transcript.final', turnId: 't2', revision: 1, text: 'And the risks?' });
+  ws.send({ type: 'response.started', turnId: 't2', responseId: 'r2' });
+  await expect(page.locator('#primary-label')).toHaveText('이전 질문용 답변');
+  await expect(page.locator('#alternative-label')).toHaveText('추천 2 · 다른 방향');
+  await expect(page.locator('#alternative-text')).toHaveText('Could we check that together?');
+  ws.send({ type: 'response.completed', turnId: 't2', responseId: 'r2', text: 'The main risk is the data migration.',
+    sources: [{ title: 'Fictional risk register', url: 'https://example.test/risks' }], grounding: 'grounded' });
+  await expect(page.locator('#answer-text')).toHaveText('The main risk is the data migration.');
+  await expect(page.locator('#primary-label')).toHaveText('추천 1');
+  await expect(page.locator('#alternative-card')).toBeHidden();
+  await expect(page.locator('#sources-text')).toHaveText('Fictional risk register');
+  await page.locator('#toggle-captions').click();
+  await expect(page.locator('#details-summary')).toHaveText('상세 근거');
 });
 
 const replyRequests = ws => ws.translations.filter(item => item.kind === 'reply');
@@ -227,12 +271,15 @@ test('drafts do not replace complete answers and hold keeps its exact question w
     await expect(page.locator('#answer-text')).toHaveText('Review the dependencies first.');
     await expect(page.locator('#question-text')).toHaveText('What is the next step?');
     await expect(page.locator('#answer-korean')).toHaveText('뜻: Review the dependencies first.');
+    // The held reply had one line, so its second card stays hidden even though the newer replies have two.
+    await expect(page.locator('#alternative-card')).toBeHidden();
   }
   await expect(page.locator('#capture-status')).toContainText('듣는 중');
   expect(await page.evaluate(() => document.querySelector('#answer-text').firstChild === window.__heldAnswerNode)).toBe(true);
   expect(ws.commands.map(value => value.type)).not.toContain('response.cancel');
   await page.locator('#hold-answer').click();
   await expect(page.locator('#answer-text')).toHaveText('Answer 3.');
+  await expect(page.locator('#alternative-text')).toHaveText('Could we check that together?');
   await expect(page.locator('#question-text')).toHaveText('Question 3?');
   await expect(page.locator('#answer-korean')).toHaveText('뜻: Answer 3.');
   await expect(page.locator('#hold-answer')).toHaveAttribute('aria-pressed', 'false');
@@ -241,6 +288,7 @@ test('drafts do not replace complete answers and hold keeps its exact question w
   ws.send({ type: 'response.delta', turnId: 't4', responseId: 'r4', text: 'New incomplete draft' });
   await expect(page.locator('#primary-label')).toContainText('이전 질문');
   await expect(page.locator('#answer-text')).toHaveText('Answer 3.');
+  await expect(page.locator('#alternative-text')).toHaveText('Could we check that together?');
   await expect(page.locator('#question-text')).toHaveText('Question 3?');
   await page.locator('#live-panel').dispatchEvent('contextmenu', { clientX: 10, clientY: 10 });
   await page.locator('[data-action="stop"]').click();
@@ -283,24 +331,28 @@ async function menuAction(page, action) {
   await page.locator(`[data-action="${action}"]`).click();
 }
 
-test('by default only the English answer shows: no captions, no Korean meaning, and no Korean is requested', async ({ page }) => {
+test('by default only the English answers show: no captions, no Korean meaning, no notes, and no Korean is requested', async ({ page }) => {
   const ws = await meetingFixture(page, { settings: null });
   expect(startOptions(ws).replyKorean).toBe(false);
   expect(startOptions(ws).replyOn).toBe('all');
+  expect(startOptions(ws).notes).toBe('');
   expect(await pressed(page, 'doc-on')).toBe('true');
   expect(await pressed(page, 'doc-off')).toBe('false');
   expect(await pressed(page, 'reply-all')).toBe('true');
   expect(await pressed(page, 'reply-questions')).toBe('false');
   expect(await pressed(page, 'toggle-captions')).toBe('false');
   expect(await pressed(page, 'toggle-korean')).toBe('false');
+  expect(await pressed(page, 'notes-chip')).toBe('false');
   await expect(page.locator('.live-answers-title')).toHaveText('말할 때 쓸 답변');
   reply(ws, 1, 'What comes first?', 'We should check the plan.');
   await expect(page.locator('#answer-text')).toHaveText('We should check the plan.');
+  await expect(page.locator('#alternative-text')).toHaveText('Could we check that together?');
   await expect(page.locator('#answer-meaning')).toBeHidden();
+  await expect(page.locator('#alternative-meaning')).toBeHidden();
   await expect(page.locator('#caption-block')).toBeHidden();
   await expect(page.locator('#conversation-section')).toBeHidden();
-  await expect(page.locator('#details-summary')).toHaveText('대안 · 상세 근거');
-  expect(await page.locator('.live-card:visible').count()).toBe(1);
+  await expect(page.locator('#details-summary')).toHaveText('상세 근거');
+  expect(await page.locator('.live-card:visible').count()).toBe(2);
   // The reply is on screen, so any request it would have caused has already been made.
   expect(await ws.requests()).toEqual([]);
   expect(ws.translations).toEqual([]);
@@ -382,7 +434,7 @@ test('captions show what was heard, and translate it only while Korean meaning i
   await page.locator('#toggle-captions').click();
   await expect(page.locator('#caption-block')).toBeVisible();
   await expect(page.locator('#question-text')).toHaveText('What comes first?');
-  await expect(page.locator('#details-summary')).toHaveText('대화 · 대안 · 상세 근거');
+  await expect(page.locator('#details-summary')).toHaveText('대화 · 상세 근거');
   await page.locator('#live-details summary').click();
   await expect(page.locator('#conversation-section')).toBeVisible();
   await expect(page.locator('#conversation .live-line .en')).toHaveText('What comes first?');
@@ -390,7 +442,7 @@ test('captions show what was heard, and translate it only while Korean meaning i
   await page.locator('#toggle-captions').click();
   await expect(page.locator('#caption-block')).toBeHidden();
   await expect(page.locator('#conversation-section')).toBeHidden();
-  await expect(page.locator('#details-summary')).toHaveText('대안 · 상세 근거');
+  await expect(page.locator('#details-summary')).toHaveText('상세 근거');
 });
 
 test('the quick settings are remembered, and settings saved by an older version load with both switches off', async ({ page }) => {
@@ -401,8 +453,12 @@ test('the quick settings are remembered, and settings saved by an older version 
   await page.locator('#reply-questions').click();
   await page.locator('#toggle-captions').click();
   await page.locator('#toggle-korean').click();
+  await page.locator('#notes-chip').click();
+  await page.locator('#my-notes').fill('  B안 선호.\n\n예산 5천 달러 이하.\t3분기 전에는 약속하지 않음.  ');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings'))))
-    .toMatchObject({ responseMode: 'conversation', documentMode: 'grounded', showCaptions: true, showKorean: true, replyOn: 'questions' });
+    .toMatchObject({ responseMode: 'conversation', documentMode: 'grounded', showCaptions: true, showKorean: true, replyOn: 'questions',
+      notes: 'B안 선호. 예산 5천 달러 이하. 3분기 전에는 약속하지 않음.' });
   await page.reload();
   await ready(page);
   expect(await pressed(page, 'doc-off')).toBe('true');
@@ -410,6 +466,8 @@ test('the quick settings are remembered, and settings saved by an older version 
   expect(await pressed(page, 'reply-all')).toBe('false');
   expect(await pressed(page, 'toggle-captions')).toBe('true');
   expect(await pressed(page, 'toggle-korean')).toBe('true');
+  expect(await pressed(page, 'notes-chip')).toBe('true');
+  await expect(page.locator('#my-notes')).toHaveValue('B안 선호. 예산 5천 달러 이하. 3분기 전에는 약속하지 않음.');
   await expect(page.locator('#caption-block')).toBeVisible();
   await expect(page.locator('#answer-meaning')).toBeVisible();
   await page.evaluate(() => localStorage.setItem('live-coach-settings',
@@ -420,9 +478,11 @@ test('the quick settings are remembered, and settings saved by an older version 
   expect(await pressed(page, 'reply-all')).toBe('true');
   expect(await pressed(page, 'toggle-captions')).toBe('false');
   expect(await pressed(page, 'toggle-korean')).toBe('false');
+  expect(await pressed(page, 'notes-chip')).toBe('false');
   await expect(page.locator('#caption-block')).toBeHidden();
   await expect(page.locator('#answer-meaning')).toBeHidden();
   await expect(page.locator('#topic')).toHaveValue('Azure sync');
+  await expect(page.locator('#my-notes')).toHaveValue('');
   await expect(page.locator('#response-mode')).toHaveValue('balanced');
   await expect(page.locator('#audio-source')).toHaveValue('display');
 });
@@ -502,7 +562,7 @@ test('the primary answer is never emphasized: respondNow and a name stored earli
   for (const [id, respondNow] of [[1, true], [2, false]]) {
     replyTo(id, `Eon, what do you think about step ${id}?`, { respondNow });
     await expect(answer).toHaveText(`Answer ${id}.`);
-    await expect(label).toHaveText('추천 영어 답변');
+    await expect(label).toHaveText('추천 1');
     await expect(card).toHaveAttribute('class', 'live-card primary');
   }
   // While a newer reply is prepared, the answer on screen belongs to an earlier question.
@@ -514,7 +574,7 @@ test('the primary answer is never emphasized: respondNow and a name stored earli
   ws.send({ type: 'response.completed', turnId: 't3', responseId: 'r3', text: 'Answer 3.', sources: [], grounding: 'disabled',
     respondNow: true });
   await expect(answer).toHaveText('Answer 3.');
-  await expect(label).toHaveText('추천 영어 답변');
+  await expect(label).toHaveText('추천 1');
   await expect(card).toHaveAttribute('class', 'live-card primary');
   await page.locator('#toggle-captions').click();
   await expect(page.locator('#toggle-captions')).toHaveAttribute('aria-pressed', 'true');
@@ -534,14 +594,14 @@ test('답변 기준 발언 shows every final a gathered reply answers, and only 
     'Next Friday, if the tests pass.');
   await expect(page.locator('#answer-text')).toHaveText('Next Friday, if the tests pass.');
   await expect(page.locator('#question-text')).toHaveText('Quick question about the rollout. When does the migration finish?');
-  await expect(page.locator('#primary-label')).toHaveText('추천 영어 답변');
+  await expect(page.locator('#primary-label')).toHaveText('추천 1');
   // A server that does not send segments: only the latest final is known to be answered.
   gathered({ id: 't3', text: 'One more thing.' }, { id: 't4', text: 'What about the budget?' }, {}, 'It stays the same.');
   await expect(page.locator('#answer-text')).toHaveText('It stays the same.');
   await expect(page.locator('#question-text')).toHaveText('What about the budget?');
 });
 
-test('the actual local Fake API answers its question with 추천 질문만, and its respondNow changes nothing on screen', async ({ page }) => {
+test('the actual local Fake API answers its question with 추천 질문만 on two cards, takes the notes, and never sends them back', async ({ page }) => {
   test.skip(process.env.VOICE_ASSISTANT_BACKEND_E2E !== '1', 'Requires the explicit local Fake API; never Azure.');
   const sent = [], received = [];
   page.on('websocket', socket => {
@@ -549,23 +609,83 @@ test('the actual local Fake API answers its question with 추천 질문만, and 
     socket.on('framesent', frame => { if (typeof frame.payload === 'string') sent.push(JSON.parse(frame.payload)); });
     socket.on('framereceived', frame => { if (typeof frame.payload === 'string') received.push(JSON.parse(frame.payload)); });
   });
-  await seedSettings(page, { replyOn: 'questions' });
+  await seedSettings(page, { replyOn: 'questions', notes: 'Prefer the shorter rollout.' });
   await page.goto('/live.html');
   await ready(page);
   await menuAction(page, 'start');
   await expect(page.locator('#capture-status')).toContainText('듣는 중');
   // The Fake recognizer hears its fixed question, which is still answered when only questions are.
   await expect(page.locator('#answer-text')).toContainText('confirm the goal', { timeout: 15_000 });
-  expect(sent.find(message => message.type === 'session.start').options.replyOn).toBe('questions');
+  await expect(page.locator('#alternative-text')).toContainText('then choose an owner');
+  expect(sent.find(message => message.type === 'session.start').options).toMatchObject({ replyOn: 'questions',
+    notes: 'Prefer the shorter rollout.' });
   expect(received.find(message => message.type === 'response.completed').respondNow).toBe(true);
-  await expect(page.locator('#primary-label')).toHaveText('추천 영어 답변');
+  await expect(page.locator('#primary-label')).toHaveText('추천 1');
+  await expect(page.locator('#alternative-label')).toHaveText('추천 2 · 다른 방향');
   await expect(page.locator('.live-card.primary')).toHaveAttribute('class', 'live-card primary');
   await page.locator('#reply-all').click();
-  await expect.poll(() => received.filter(message => message.type === 'session.updated').map(message => message.replyOn)).toEqual(['all']);
+  await expect.poll(() => received.filter(message => message.type === 'session.updated').map(message => [message.replyOn, message.notes]))
+    .toEqual([['all', true]]);
   await expect(page.locator('#quick-note')).toBeHidden();
   await expect(page.locator('#session-error')).toBeHidden();
+  expect(JSON.stringify(received)).not.toContain('shorter rollout');
   await menuAction(page, 'stop');
   await expect(page.locator('#capture-status')).toContainText('꺼짐');
+});
+
+// ---------- 내 입장·메모: notes both suggestions follow ----------
+
+test('내 메모 opens the notes, which are kept on one line, sent at the start and changed live on a server that supports it', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: { notes: 'Prefer plan B.' }, sessionUpdate: true });
+  const field = page.locator('#my-notes'), chip = page.locator('#notes-chip'), dialog = page.locator('#settings');
+  expect(startOptions(ws).notes).toBe('Prefer plan B.');
+  expect(await pressed(page, 'notes-chip')).toBe('true');
+  await expect(field).toHaveAttribute('maxlength', '500');
+  await chip.click();
+  await expect(dialog).toBeVisible();
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue('Prefer plan B.');
+  await field.fill('  B안 선호.\n\n예산 5천 달러 이하.  ');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(chip).toBeFocused();
+  const kept = 'B안 선호. 예산 5천 달러 이하.';
+  await expect.poll(() => updates(ws)).toEqual([{ type: 'session.update', options: { notes: kept } }]);
+  await expect(field).toHaveValue(kept);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).notes)).toBe(kept);
+  await expect(page.locator('#quick-note')).toBeHidden();
+  await expect(page.locator('#session-error')).toBeHidden();
+  // Cleared notes turn the chip off and reach the session as well.
+  await chip.click();
+  await expect(field).toBeFocused();
+  await field.fill('');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect.poll(() => updates(ws).map(update => update.options)).toEqual([{ notes: kept }, { notes: '' }]);
+  expect(await pressed(page, 'notes-chip')).toBe('false');
+  await menuAction(page, 'stop');
+  await expect(page.locator('#capture-status')).toContainText('꺼짐');
+  await menuAction(page, 'start');
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  expect(ws.commands.filter(command => command.type === 'session.start').map(command => command.options.notes))
+    .toEqual(['Prefer plan B.', '']);
+});
+
+test('a server that cannot change settings during a session takes the notes at the next connection', async ({ page }) => {
+  const ws = await meetingFixture(page, { settings: null });
+  await page.locator('#notes-chip').click();
+  await page.locator('#my-notes').fill('Do not commit before the third quarter.');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await expect(page.locator('#quick-note')).toHaveText('이 서버는 연결 중 내 메모 변경을 지원하지 않아요 · 다음 연결부터 적용돼요');
+  expect(await pressed(page, 'notes-chip')).toBe('true');
+  await menuAction(page, 'stop');
+  await expect(page.locator('#capture-status')).toContainText('꺼짐');
+  await menuAction(page, 'start');
+  await expect(page.locator('#capture-status')).toContainText('듣는 중');
+  expect(ws.commands.filter(command => command.type === 'session.start').map(command => command.options.notes))
+    .toEqual(['', 'Do not commit before the third quarter.']);
+  expect(updates(ws)).toEqual([]);
+  await expect(page.locator('#quick-note')).toBeHidden();
 });
 
 async function assertLayout(page) {
@@ -589,7 +709,7 @@ async function assertLayout(page) {
   await page.locator('#alternative-korean').scrollIntoViewIfNeeded();
   await expect(page.locator('#alternative-korean')).toBeInViewport();
   for (const id of ['live-toggle', 'live-pause', 'doc-on', 'doc-off', 'reply-all', 'reply-questions', 'toggle-captions', 'toggle-korean',
-    'answer-smaller', 'answer-larger']) {
+    'notes-chip', 'answer-smaller', 'answer-larger']) {
     await page.locator(`#${id}`).scrollIntoViewIfNeeded();
     await expect(page.locator(`#${id}`)).toBeInViewport();
   }

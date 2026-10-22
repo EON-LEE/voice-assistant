@@ -16,7 +16,7 @@ export interface ServerEvent {
   respondNow?: boolean;
   /** `session.ready`: the server pushes a Korean meaning (`response.korean`) for every reply line. `session.updated`: the effective value. */
   replyKorean?: boolean;
-  /** `session.ready`: this server accepts `session.update` (document search, Korean and `replyOn` can change while running). */
+  /** `session.ready`: this server accepts `session.update` (document search, Korean, `replyOn` and notes can change while running). */
   sessionUpdate?: boolean;
   /** `session.ready`: how many finalized turns of the previous connection the server continued with (`resumeConversation`). */
   resumedTurns?: number;
@@ -24,6 +24,8 @@ export interface ServerEvent {
   responseMode?: "balanced" | "grounded" | "conversation";
   /** `session.updated`: which speech starts an automatic reply; a server older than `replyOn` omits it. */
   replyOn?: "all" | "questions";
+  /** `session.updated`: whether notes ("내 입장·메모") are set; never their text. A server older than notes omits it. */
+  notes?: boolean;
   /** `response.started`: how many finalized utterances the reply answers, ending with `turnId`. Older servers omit it. */
   segments?: number;
   /** `response.delta`: the primary line (first suggestion) is complete with this delta; sent at most once per response. */
@@ -62,7 +64,9 @@ export function parseEvent(data: unknown): ServerEvent {
     if (responseMode !== "balanced" && responseMode !== "grounded" && responseMode !== "conversation")
       throw new Error("Invalid responseMode in server event.");
     if (e.replyOn !== undefined && e.replyOn !== "all" && e.replyOn !== "questions") throw new Error("Invalid replyOn in server event.");
-    return { type, responseMode, replyKorean: e.replyKorean, ...(e.replyOn === undefined ? {} : { replyOn: e.replyOn }) };
+    if (e.notes !== undefined && typeof e.notes !== "boolean") throw new Error("Invalid notes flag in server event.");
+    return { type, responseMode, replyKorean: e.replyKorean, ...(e.replyOn === undefined ? {} : { replyOn: e.replyOn }),
+      ...(e.notes === undefined ? {} : { notes: e.notes }) };
   }
   if (type === "error") {
     if (typeof e.retryable !== "boolean") throw new Error("Invalid retryable error flag.");
