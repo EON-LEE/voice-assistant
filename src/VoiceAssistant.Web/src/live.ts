@@ -5,14 +5,15 @@ import { CaptureError, DisplayAudioSource, MicrophoneAudioSource, isHostSource, 
   type CaptureSourceKind } from "./capture.js";
 import { HostAudioSource, hostKind, hostWebView, isHostAudioAvailable } from "./host-audio.js";
 import { SocketTransport, asError } from "./transport.js";
-import type { SessionOptions } from "./options.js";
+import type { SessionOptions, SessionUpdate } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
 import type { Grounding, ServerEvent } from "./protocol.js";
-import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply,
+import { LiveState, answers, meaningTexts, primaryMeaning, suggestionLabels, translatable, translationChunks, type LiveReply,
   type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
-import { deferredUpdateNote, liveStartOptions, parseSettings, pendingUpdate, settingsKey, stepAnswerSize, withDocumentSearch,
-  withResponseMode, documentSearchOn, type AppliedSettings, type HostSources, type LiveSettings, type ResponseMode } from "./live-settings.js";
+import { acknowledgedSettings, deferredUpdateNote, keptNotes, liveStartOptions, notesChipName, parseSettings, pendingUpdate,
+  settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, documentSearchOn, type AppliedSettings, type HostSources,
+  type LiveSettings, type ResponseMode } from "./live-settings.js";
 import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
 import { actionLabels, captureMessage, liveHost, liveMessage, reconnectText, sourceNames, warningMessage, type LiveWarning,
   type PageAction } from "./live-errors.js";
@@ -29,7 +30,7 @@ const toggleButton = $<HTMLButtonElement>("live-toggle"), pauseButton = $<HTMLBu
 const smallerButton = $<HTMLButtonElement>("answer-smaller"), largerButton = $<HTMLButtonElement>("answer-larger");
 const settingsDialog = $<HTMLDialogElement>("settings");
 const micDevice = $<HTMLSelectElement>("mic-device"), responseMode = $<HTMLSelectElement>("response-mode");
-const topic = $<HTMLInputElement>("topic");
+const topic = $<HTMLInputElement>("topic"), notesField = $<HTMLTextAreaElement>("my-notes");
 const audioSource = $<HTMLSelectElement>("audio-source");
 const microphoneSettings = $("microphone-settings"), displayHint = $("display-hint");
 /** LiveCoach.exe (WebView2) or a browser tab: the share picker offers different surfaces in each. */
@@ -63,9 +64,11 @@ let pushing = false;
 // Only a reply that began while the server was pushing Korean has a pushed line to wait for.
 const pushedAtStart = new Set<string>();
 // What the connected session runs with, and whether the server accepts setting changes while connected.
-let applied: AppliedSettings = { responseMode: "grounded", replyKorean: false, replyOn: "all" };
-let started: Omit<AppliedSettings, "replyKorean"> = { responseMode: "grounded", replyOn: "all" };
+let applied: AppliedSettings = { responseMode: "grounded", replyKorean: false, replyOn: "all", notes: "" };
+let started: Omit<AppliedSettings, "replyKorean"> = { responseMode: "grounded", replyOn: "all", notes: "" };
 let canUpdate = false, updating = false;
+/** The `session.update` waiting for its `session.updated`, which reports only whether notes are set. */
+let sentUpdate: SessionUpdate | null = null;
 let quickNote = "";
 const recentTranslatedTurns = 6;
 
@@ -80,6 +83,7 @@ function loadSettings(): LiveSettings {
 }
 let settings = loadSettings();
 responseMode.value = settings.responseMode; topic.value = settings.topic; audioSource.value = settings.audioSource;
+notesField.value = settings.notes;
 if (host === "app") {
   // WebView2 has no browser tabs to pick; only a whole screen carries (system) audio there.
   displayHint.textContent = "라이브 시작 시 뜨는 공유 선택창에서 '전체 화면'을 고르고 '시스템 오디오 공유'를 체크하세요. "
@@ -100,11 +104,16 @@ function selectedSource(): CaptureSourceKind {
   return value === "display" || value === "teams" || value === "host-system" ? value : "microphone";
 }
 function saveSettings(): void {
-  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: selectedSource() };
+  settings = { ...settings, deviceId: micDevice.value, topic: topic.value.trim(), audioSource: selectedSource(),
+    notes: keptNotes(notesField.value) };
+  // The field shows the notes as they are kept and sent: on one line, without extra spaces.
+  if (notesField.value !== settings.notes) notesField.value = settings.notes;
   persist();
 }
 micDevice.addEventListener("change", saveSettings);
 topic.addEventListener("change", saveSettings);
+// Notes reach a connected session at once; the next reply follows them.
+notesField.addEventListener("change", () => { saveSettings(); syncSession(); render(); });
 audioSource.addEventListener("change", () => {
   renderAudioSource(); saveSettings();
   // Choosing the source in use again also cancels a switch that is still being prepared.
@@ -128,6 +137,7 @@ $("reply-all").addEventListener("click", () => changeSettings({ ...settings, rep
 $("reply-questions").addEventListener("click", () => changeSettings({ ...settings, replyOn: "questions" }));
 $("toggle-captions").addEventListener("click", () => changeSettings({ ...settings, showCaptions: !settings.showCaptions }));
 $("toggle-korean").addEventListener("click", () => changeSettings({ ...settings, showKorean: !settings.showKorean }));
+$("notes-chip").addEventListener("click", () => openSettings(notesField));
 responseMode.addEventListener("change", () => changeSettings(withResponseMode(settings, responseMode.value as ResponseMode)));
 
 /** A− / A+ step the English answer size. At the smallest or largest size the pressed button turns off, so focus moves to the other. */
@@ -153,14 +163,14 @@ function syncSession(): void {
   quickNote = "";
   if (updating) return;
   controller.update(update);
-  updating = true;
+  updating = true; sentUpdate = update;
 }
 /** Forgets what the last connection accepted; the next `session.ready` says it again. */
-function resetUpdate(): void { canUpdate = updating = false; quickNote = ""; }
+function resetUpdate(): void { canUpdate = updating = false; sentUpdate = null; quickNote = ""; }
 
 function sessionOptions(): SessionOptions {
   const options = liveStartOptions(settings);
-  started = { responseMode: options.responseMode, replyOn: options.replyOn ?? "all" };
+  started = { responseMode: options.responseMode, replyOn: options.replyOn ?? "all", notes: options.notes ?? "" };
   return options;
 }
 
@@ -351,9 +361,8 @@ function onEvent(e: ServerEvent): void {
     syncSession();
   }
   if (e.type === "session.updated") {
-    applied = { responseMode: e.responseMode ?? applied.responseMode, replyKorean: e.replyKorean === true,
-      replyOn: e.replyOn ?? applied.replyOn };
-    pushing = applied.replyKorean; updating = false;
+    applied = acknowledgedSettings(applied, e, sentUpdate);
+    pushing = applied.replyKorean; updating = false; sentUpdate = null;
     syncSession();
   }
   if (e.type === "response.started" && pushing && settings.showKorean) pushedAtStart.add(e.responseId!);
@@ -525,9 +534,13 @@ function renderQuick(): void {
   setPressed("doc-on", search); setPressed("doc-off", !search);
   setPressed("reply-all", settings.replyOn === "all"); setPressed("reply-questions", settings.replyOn === "questions");
   setPressed("toggle-captions", settings.showCaptions); setPressed("toggle-korean", settings.showKorean);
+  // 내 메모 opens the notes and toggles nothing: whether they are set is in its name and its ✓ (data-set), not aria-pressed.
+  const notesChip = $("notes-chip"), notesSet = String(settings.notes.length > 0), notesName = notesChipName(settings.notes);
+  if (notesChip.dataset.set !== notesSet) notesChip.dataset.set = notesSet;
+  if (notesChip.getAttribute("aria-label") !== notesName) notesChip.setAttribute("aria-label", notesName);
   setHidden("caption-block", !settings.showCaptions); setHidden("conversation-section", !settings.showCaptions);
   setHidden("answer-meaning", !settings.showKorean); setHidden("alternative-meaning", !settings.showKorean);
-  setText("details-summary", settings.showCaptions ? "대화 · 대안 · 상세 근거" : "대안 · 상세 근거");
+  setText("details-summary", settings.showCaptions ? "대화 · 상세 근거" : "상세 근거");
   if (responseMode.value !== settings.responseMode) responseMode.value = settings.responseMode;
   // The default size sets no property, so the answer keeps exactly its stylesheet size.
   const scale = settings.answerSize === 100 ? "" : String(settings.answerSize / 100);
@@ -591,9 +604,11 @@ function renderSuggestions(): void {
   setText("alternative-text", values[1] ?? "");
   const generating = controller.isReady && state.generating;
   const finishing = !!display && generating && state.current?.id === display.id;
-  const previous = !!display && (state.hasNewerReply || generating && state.current?.id !== display.id);
-  // Nothing emphasizes the answer: the server's respondNow guess is not shown.
-  setText("primary-label", previous ? "이전 질문용 답변" : "추천 영어 답변");
+  const previous = state.showsEarlierAnswer(controller.isReady);
+  // Nothing emphasizes either answer: the server's respondNow guess is not shown.
+  const labels = suggestionLabels(previous);
+  setText("primary-label", labels.primary);
+  setText("alternative-label", labels.alternative);
   const answersSection = panel.querySelector<HTMLElement>(".live-answers")!;
   if (answersSection.dataset.previous !== String(previous)) answersSection.dataset.previous = String(previous);
   // What the reply answers: every final gathered into it (see LiveState), or the latest speech before any reply.
@@ -781,17 +796,19 @@ function renderAccount(): void {
 }
 /** The element the settings dialog was opened from; focus returns to it when the dialog closes. */
 let settingsOpener: Element | null = null;
-function openSettings(): void {
+/** Opens the settings dialog, with focus on `field` when one is given (the "내 메모" chip opens the notes). */
+function openSettings(field?: HTMLElement): void {
   settingsOpener = panel.ownerDocument.activeElement;
   if (pipWindow) window.focus();
   renderAccount();
   void navigator.mediaDevices?.enumerateDevices().then(fillDevices).catch(() => undefined);
   settingsDialog.showModal();
+  field?.focus();
 }
 $("signin").addEventListener("click", () => {
   void auth.signIn().then(renderAccount, error => { $("account-status").textContent = `로그인 실패: ${asError(error).message}`; });
 });
-settingsDialog.addEventListener("close", () => { saveSettings(); render(); returnFocus(settingsOpener); });
+settingsDialog.addEventListener("close", () => { saveSettings(); syncSession(); render(); returnFocus(settingsOpener); });
 
 // ---------- Always-on-top floating window (Document Picture-in-Picture, Edge/Chrome) ----------
 

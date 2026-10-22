@@ -121,7 +121,8 @@ test('A−/A+ resize the English answers only, are remembered, and long answers 
   const english = 'I can confirm the next milestone after reviewing the dependencies with the team. '.repeat(6);
   reply(server, 1, english + 'LongUnbrokenSyntheticIdentifier'.repeat(8));
   await expect(page.locator('#answer-text')).toContainText('I can confirm');
-  await page.locator('#live-details').evaluate(details => { details.open = true; });
+  // 추천 2 is on top too and follows the size: always 0.9 of 추천 1.
+  await expect(page.locator('#alternative-text')).toBeVisible();
   const sizes = () => page.evaluate(() => {
     const size = selector => parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
     return { answer: size('#answer-text'), alternative: size('#alternative-text'), meaning: size('#answer-korean'),
@@ -137,8 +138,8 @@ test('A−/A+ resize the English answers only, are remembered, and long answers 
     return size;
   });
   expect(await page.locator('#answer-text').evaluate(el => getComputedStyle(el).fontSize)).toBe(original);
-  expect(await page.locator('#alternative-text').evaluate(el => getComputedStyle(el).fontSize)).toBe('19px');
   const base = await sizes();
+  expect(base.alternative).toBeCloseTo(parseFloat(original) * 0.9, 1);
   expect(base.scale).toBe('');
   await expect(page.locator('#answer-smaller')).toBeEnabled();
 
@@ -146,7 +147,7 @@ test('A−/A+ resize the English answers only, are remembered, and long answers 
   let now = await sizes();
   expect(now.scale).toBe('1.15');
   expect(now.answer).toBeCloseTo(base.answer * 1.15, 1);
-  expect(now.alternative).toBeCloseTo(19 * 1.15, 1);
+  expect(now.alternative).toBeCloseTo(base.alternative * 1.15, 1);
   expect(now.meaning).toBe(base.meaning);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('live-coach-settings')).answerSize)).toBe(115);
 
@@ -172,12 +173,16 @@ test('A−/A+ resize the English answers only, are remembered, and long answers 
   // The largest size in the narrowest window still wraps: nothing is cut off sideways, the answers scroll down instead.
   await page.setViewportSize({ width: 360, height: 400 });
   const layout = await page.evaluate(() => {
-    const answer = document.querySelector('#answer-text'), card = document.querySelector('.live-card.primary').getBoundingClientRect();
+    const within = (text, card) => {
+      const box = document.querySelector(text).getBoundingClientRect(), frame = document.querySelector(card).getBoundingClientRect();
+      return box.left >= frame.left - 1 && box.right <= frame.right + 1;
+    };
+    const answer = document.querySelector('#answer-text');
     const box = answer.getBoundingClientRect(), line = parseFloat(getComputedStyle(answer).lineHeight);
     return {
-      overflow: [answer, document.querySelector('.live-answers'), document.querySelector('.live-card.primary')]
-        .filter(el => el.scrollWidth > el.clientWidth + 1).length,
-      inside: box.left >= card.left - 1 && box.right <= card.right + 1,
+      overflow: ['#answer-text', '#alternative-text', '.live-answers', '.live-card.primary', '#alternative-card']
+        .map(selector => document.querySelector(selector)).filter(el => el.scrollWidth > el.clientWidth + 1).length,
+      inside: within('#answer-text', '.live-card.primary') && within('#alternative-text', '#alternative-card'),
       lines: Math.round(box.height / line),
       scrolls: document.querySelector('.live-answers').scrollHeight > document.querySelector('.live-answers').clientHeight,
     };

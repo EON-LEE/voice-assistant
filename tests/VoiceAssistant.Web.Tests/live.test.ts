@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LiveState, answers, meaningTexts, primaryMeaning, translatable, translationChunks, type LiveReply } from "../../src/VoiceAssistant.Web/src/live-state.js";
+import { LiveState, answers, meaningTexts, primaryMeaning, suggestionLabels, translatable, translationChunks,
+  type LiveReply } from "../../src/VoiceAssistant.Web/src/live-state.js";
 import { parseEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 
 const final = (turnId: string, text: string) => ({ type: "transcript.final", turnId, revision: 1, text });
@@ -48,6 +49,38 @@ test("Live: a reply to gathered finals answers all of them, so what it answers i
   assert.equal(reply(2).question, "Quick question about the rollout. When does the migration finish?", "finals only, joined with single spaces");
   for (const [segments, why] of [[undefined, "an older server"], [1, "one final"], [3, "a final that is no longer known"]] as const)
     assert.equal(reply(segments).question, "When does the migration finish? ", why);
+});
+
+test("Live: the two suggestion cards are 추천 1 and 추천 2, and the first names an earlier question while a newer reply is prepared", () => {
+  assert.deepEqual(suggestionLabels(false), { primary: "추천 1", alternative: "추천 2 · 다른 방향" });
+  assert.deepEqual(suggestionLabels(true), { primary: "이전 질문용 답변", alternative: "추천 2 · 다른 방향" });
+  const state = new LiveState();
+  assert.equal(state.showsEarlierAnswer(true), false, "nothing is on screen yet");
+  state.apply(final("t1", "Which plan should we pick?"));
+  state.apply({ type: "response.started", turnId: "t1", responseId: "r1" });
+  state.apply({ type: "response.completed", turnId: "t1", responseId: "r1", text: "Plan B fits the budget.", sources: [],
+    suggestions: ["Plan B fits the budget.", "Could we compare the timelines first?"] });
+  assert.deepEqual(answers(state.display), ["Plan B fits the budget.", "Could we compare the timelines first?"], "both cards are shown");
+  assert.equal(state.showsEarlierAnswer(true), false);
+  state.apply(final("t2", "And the risks?"));
+  state.apply({ type: "response.started", turnId: "t2", responseId: "r2" });
+  assert.equal(state.showsEarlierAnswer(true), true, "a newer reply is being prepared");
+  assert.equal(state.showsEarlierAnswer(false), false, "not once the connection that prepared it is gone");
+  state.holdDisplay();
+  state.apply({ type: "response.completed", turnId: "t2", responseId: "r2", text: "The main risk is the data migration.", sources: [] });
+  assert.equal(state.showsEarlierAnswer(false), true, "a newer reply arrived while the answer was held");
+  assert.deepEqual(answers(state.display), ["Plan B fits the budget.", "Could we compare the timelines first?"]);
+  state.releaseDisplay();
+  assert.equal(state.showsEarlierAnswer(true), false);
+  assert.deepEqual(answers(state.display), ["The main risk is the data migration."], "a one-line reply leaves the second card hidden");
+});
+
+test("Live: session.updated says whether notes are set, as a flag that older servers leave out", () => {
+  const updated = (extra: object) => JSON.stringify({ type: "session.updated", responseMode: "grounded", replyKorean: false, ...extra });
+  assert.equal(parseEvent(updated({ notes: true })).notes, true);
+  assert.equal(parseEvent(updated({ notes: false })).notes, false);
+  assert.equal("notes" in parseEvent(updated({})), false);
+  for (const bad of ["Prefer plan B.", 1, null, {}]) assert.throws(() => parseEvent(updated({ notes: bad })), /notes/, JSON.stringify(bad));
 });
 
 test("Live: a pushed Korean line parses strictly as either a meaning or a failure for one of the two reply lines", () => {

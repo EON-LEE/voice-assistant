@@ -178,6 +178,8 @@ public sealed partial class ApiTests
     [InlineData("""{"type":"session.update","options":{"replyKorean":"yes"}}""")]
     [InlineData("""{"type":"session.update","options":{"replyOn":"questions only"}}""")]
     [InlineData("""{"type":"session.update","options":{"replyOn":null}}""")]
+    [InlineData("""{"type":"session.update","options":{"notes":null}}""")]
+    [InlineData("""{"type":"session.update","options":{"notes":5}}""")]
     [InlineData("""{"type":"session.update","options":{"topic":"changed"}}""")]
     public async Task MalformedSessionUpdateEndsTheSessionWithInvalidCommand(string command)
     {

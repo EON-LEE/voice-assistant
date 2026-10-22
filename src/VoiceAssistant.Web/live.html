@@ -34,6 +34,7 @@
             </div>
             <button id="toggle-captions" class="live-chip" type="button" aria-pressed="false">자막</button>
             <button id="toggle-korean" class="live-chip" type="button" aria-pressed="false">한국어 뜻</button>
+            <button id="notes-chip" class="live-chip" type="button" aria-haspopup="dialog" aria-label="내 메모" data-set="false" title="내 입장·메모 열기">내 메모</button>
           </div>
           <p id="quick-note" class="live-note" role="status" hidden></p>
           <p id="session-error" class="live-error" role="alert" hidden></p>
@@ -54,16 +55,24 @@
           </div>
           <p id="reading-status" class="live-reading-status" role="status">시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴</p>
           <article class="live-card primary" aria-label="추천 답변 1">
-            <div class="live-choice"><span id="primary-label">추천 영어 답변</span></div>
+            <div class="live-choice"><span id="primary-label">추천 1</span></div>
             <p id="answer-text" class="live-english" lang="en" aria-live="polite" aria-atomic="true">답변이 완성되면 여기에 표시됩니다.</p>
             <div id="answer-meaning" class="live-meaning" hidden>
               <div class="live-meaning-label">한국어 뜻</div>
               <p id="answer-korean" lang="ko">영어 추천 답변의 한국어 뜻이 함께 표시됩니다.</p>
             </div>
           </article>
+          <article id="alternative-card" class="live-card secondary" aria-label="추천 답변 2" hidden>
+            <div class="live-choice"><span id="alternative-label">추천 2 · 다른 방향</span></div>
+            <p id="alternative-text" class="live-english" lang="en"></p>
+            <div id="alternative-meaning" class="live-meaning" hidden>
+              <div class="live-meaning-label">한국어 뜻</div>
+              <p id="alternative-korean" lang="ko"></p>
+            </div>
+          </article>
           <p class="live-grounding"><span id="grounding-badge" class="live-badge" role="status">근거 상태 대기</span></p>
           <details id="live-details" class="live-details">
-            <summary id="details-summary">대안 · 상세 근거</summary>
+            <summary id="details-summary">상세 근거</summary>
             <section id="conversation-section" class="live-conversation" aria-label="들은 대화, AI 추천 아님" hidden>
               <h2 class="live-label">들은 대화</h2>
               <div id="conversation" class="live-history" aria-live="off">
@@ -71,14 +80,6 @@
               </div>
               <p class="live-context">이전 대화 맥락 기본 연결 · 추천은 실제 발화로 기억하지 않음</p>
             </section>
-            <article id="alternative-card" class="live-card secondary" aria-label="추천 답변 2" hidden>
-              <div class="live-choice"><span>다른 대응 방식</span><span>대안 표현</span></div>
-              <p id="alternative-text" class="live-english" lang="en"></p>
-              <div id="alternative-meaning" class="live-meaning" hidden>
-                <div class="live-meaning-label">한국어 뜻</div>
-                <p id="alternative-korean" lang="ko"></p>
-              </div>
-            </article>
             <p id="continuity" class="live-continuity">추천은 실제로 말한 내용이 아닙니다.</p>
             <footer class="live-footer">
               <p id="grounding-text">문서 근거 상태는 답변 완료 후 표시됩니다</p>
@@ -134,6 +135,10 @@
         <label>회의 주제 (선택)
           <input id="topic" maxlength="300" placeholder="예: Azure migration weekly sync">
         </label>
+        <label>내 입장·메모 (선택)
+          <textarea id="my-notes" maxlength="500" rows="3" aria-describedby="my-notes-hint"></textarea>
+        </label>
+        <p id="my-notes-hint" class="live-hint">회의에서 내가 원하는 방향, 선호, 제약을 적어 두면 추천이 이 입장을 따릅니다. 예: B안 선호, 예산 5천 달러 이하, 3분기 전에는 약속하지 않음. 답변을 만들 때 서버로 보내지만 서버에 저장하지 않습니다.</p>
         <p class="live-hint">라이브 시작은 선택한 오디오(마이크, 공유한 탭/시스템 오디오 또는 LiveCoach가 듣는 Teams/PC 소리)를 Azure로 전송합니다. 회의 참여자의 허락을 받은 뒤 시작하세요. 오디오는 저장하지 않습니다.</p>
         <p><a href="/materials.html" target="_blank" rel="noopener">내 문서 업로드 / 관리 (새 탭)</a></p>
         <div class="live-settings-actions"><button value="close">닫기</button></div>

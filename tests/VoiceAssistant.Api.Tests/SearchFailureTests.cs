@@ -289,6 +289,8 @@ internal sealed class FaultTransport : HttpMessageHandler
     /// <summary>Raw chunk JSON streamed after <see cref="ChatChunks"/>, before <c>[DONE]</c>: a finish reason or a filter verdict.</summary>
     public string[] ChatTrailer { get; init; } = [];
     public ConcurrentQueue<string> ChatBodies { get; } = new();
+    /// <summary>Every request body in arrival order: Search, embeddings and chat.</summary>
+    public ConcurrentQueue<string> RequestBodies { get; } = new();
     public int SearchCalls => Volatile.Read(ref searchCalls);
     public int EmbeddingCalls => Volatile.Read(ref embeddingCalls);
     public int ChatCalls => Volatile.Read(ref chatCalls);
@@ -365,6 +367,7 @@ internal sealed class FaultTransport : HttpMessageHandler
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
+        RequestBodies.Enqueue(body);
         if (request.RequestUri!.Host.Contains("search.windows.net", StringComparison.Ordinal))
         {
             Interlocked.Increment(ref searchCalls);

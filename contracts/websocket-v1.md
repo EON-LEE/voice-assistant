@@ -38,13 +38,13 @@ At the maximum duration the server emits existing `error` with `code:"session_ti
 
 Speech recovery: when the recognizer stops with a connection failure, a service time-out or service unavailable, the server recreates it in-process instead of ending the session. This happens at most 3 times per session, and a failed attempt also counts. The waits before the attempts are 0.5, 1 and 2 seconds. No event is sent. The transcript history, settings and any reply in progress are kept, but audio that arrives while the recognizer is being replaced is not transcribed. Any other cancellation, or a retryable one after the restarts are used up, ends the session with `error` `code:"speech_unavailable"` as before. A failed renewal of the Speech token is retried while the current token is still valid. Only a token that expired without a successful renewal ends the session, with `speech_authentication_failed`.
 
-Optional top-level `session.start.options` is immutable for this socket, except `responseMode`, `replyKorean` and `replyOn`, which `session.update` can change while the session runs (see below):
+Optional top-level `session.start.options` is immutable for this socket, except `responseMode`, `replyKorean`, `replyOn` and `notes`, which `session.update` can change while the session runs (see below):
 
 ```json
 {"responseMode":"balanced","profile":{"name":"Mina","role":"Software engineer","project":"Evaluating email client interoperability"},"profileConfirmed":true,"topic":"Email protocols","phrases":["JMAP","IMAP","CONDSTORE","QRESYNC"],"endSilenceMs":500}
 ```
 
-The example profile is fictional test data, not the user's identity. Missing options preserve legacy `grounded` mode and700ms segmentation silence. Missing individual properties use those same defaults; the new browser explicitly sends `balanced`/500ms. Allowed modes are `balanced`, `grounded`, `conversation`. Profile name/role/project limits are100/160/300 characters; topic300. Any nonempty profile requires explicit `profileConfirmed:true`; edit/reset confirmation in the browser before starting another session. Phrase list is at most40 nonblank strings, each at most64 characters, at most2048 total characters. Silence is an integer350..1500ms inclusive and applies to silence segmentation and recognition-only sessions; it has no effect under `semanticSegmentation` (see below). Unknown options/profile fields, duplicate fields, wrong types, control characters, unconfirmed profile and oversized values fail as `invalid_start`. JSON null is not an omission. No profile/topic/phrase is persisted or logged. A server running the phrase-hint experiment (server configuration `Speech:MaterialPhraseHints`, off by default) also gives the speech recognizer up to 100 hints from the caller's own materials, after the client's phrases. Prompts and translation still use only the client's phrases, and `transcribeOnly` sessions get no hints.
+The example profile is fictional test data, not the user's identity. Missing options preserve legacy `grounded` mode and700ms segmentation silence. Missing individual properties use those same defaults; the new browser explicitly sends `balanced`/500ms. Allowed modes are `balanced`, `grounded`, `conversation`. Profile name/role/project limits are100/160/300 characters; topic300. Any nonempty profile requires explicit `profileConfirmed:true`; edit/reset confirmation in the browser before starting another session. Phrase list is at most40 nonblank strings, each at most64 characters, at most2048 total characters. Silence is an integer350..1500ms inclusive and applies to silence segmentation and recognition-only sessions; it has no effect under `semanticSegmentation` (see below). Unknown options/profile fields, duplicate fields, wrong types, control characters, unconfirmed profile and oversized values fail as `invalid_start`. JSON null is not an omission. No profile/topic/phrase/notes text is persisted or logged. A server running the phrase-hint experiment (server configuration `Speech:MaterialPhraseHints`, off by default) also gives the speech recognizer up to 100 hints from the caller's own materials, after the client's phrases. Prompts and translation still use only the client's phrases, and `transcribeOnly` sessions get no hints.
 
 Optional `transcribeOnly` (boolean, default false, JSON null is not an omission) makes the socket recognition-only for practice mode: `transcript.partial/final` are emitted as usual but there is no automatic response, no Search and no model call, and `response.request` returns `error` `code:"transcribe_only"`, `retryable:false` while the session continues. See `practice-v1.md`.
 
@@ -104,16 +104,26 @@ Korean and push it as `response.korean`, so the client needs no second HTTP requ
 then carries `"replyKorean":true`. A client that did not opt in receives neither that field nor `response.korean` events, and
 the server makes no translation calls for it. A server that does not know the option rejects the start as `invalid_start`.
 
-Optional `session.update` changes the document-search mode, the Korean push and `replyOn` of a running session, so a client can
-switch any of them without reconnecting:
+Optional `notes` (string, default empty; JSON null is not an omission) are the participant's own position, preferences,
+constraints or goals for this meeting ("내 입장·메모"), for example `Prefer plan B; budget at most 5,000 dollars`. The server
+normalizes them: every run of whitespace (line breaks, tabs and Unicode space separators included) becomes one space, with none
+at either end. The result may have at most 500 characters and no other control characters; otherwise the start fails as
+`invalid_start`, and so does the option on a server that does not know it. Empty notes, also whitespace only, mean none. Only
+the answer prompt uses them: they are added to its untrusted session context as `ParticipantNotes`, with one instruction to keep
+both suggestions consistent with them, as data and never as instructions. Retrieval, the Korean translation and the turn
+classifier never see them, and the server neither persists, logs, measures nor sends them back. Without notes the answer prompt
+is byte-for-byte the one before this option existed.
+
+Optional `session.update` changes the document-search mode, the Korean push, `replyOn` and the notes of a running session, so a
+client can switch any of them without reconnecting:
 
 ```json
-{"type":"session.update","options":{"responseMode":"conversation","replyKorean":false,"replyOn":"questions"}}
+{"type":"session.update","options":{"responseMode":"conversation","replyKorean":false,"replyOn":"questions","notes":"Prefer plan B."}}
 ```
 
-`options` accepts only `responseMode` (`balanced`, `grounded`, `conversation`), `replyKorean` (boolean) and `replyOn` (`all`, `questions`); at least one must be present. Unknown or duplicate properties, wrong types, unknown values, JSON null and an empty object fail as the
-fatal `invalid_command`. The server answers in order with `{"type":"session.updated","responseMode":…,"replyKorean":…,"replyOn":…}` carrying the full effective values;
-`replyOn` is `"all"` also for a client that never sent it.
+`options` accepts only `responseMode` (`balanced`, `grounded`, `conversation`), `replyKorean` (boolean), `replyOn` (`all`, `questions`) and `notes` (validated like the start option; an empty string removes the notes, and 500 characters fit the 4 KiB command limit even fully escaped); at least one must be present. Unknown or duplicate properties, wrong types, unknown values, JSON null and an empty object fail as the
+fatal `invalid_command`. The server answers in order with `{"type":"session.updated","responseMode":…,"replyKorean":…,"replyOn":…,"notes":…}` carrying the full effective values;
+`replyOn` is `"all"` also for a client that never sent it, and `notes` is only a boolean, `true` while notes are set: their text is never sent back.
 A reply that was already started (`response.started` sent) keeps the settings it started with: a switch to `conversation` does not stop a search that
 reply already depends on, and a reply started without `replyKorean` gets no pushed Korean. The change applies from the next reply, and a pending
 partial-speech retrieval is dropped when the mode changes. A changed `replyOn` decides from the next time a wait ends (without
@@ -143,7 +153,7 @@ For a clear individual/group introduction request with any confirmed profile fie
 | type | Additional fields |
 | --- | --- |
 | `session.ready` | `protocolVersion: 1`; `replyKorean: true` only when the client opted in with `replyKorean`; `sessionUpdate: true` when the socket accepts `session.update` (every socket except `transcribeOnly`); `resumedTurns: integer` (1–12) only when a `resumeConversation` start continued that many finalized turns of the previous session |
-| `session.updated` | `responseMode`, `replyKorean`, `replyOn`: the effective values after a `session.update`. Sent in order with the other events, so it is known which reply started before or after it. A server older than `replyOn` omits that field |
+| `session.updated` | `responseMode`, `replyKorean`, `replyOn`: the effective values after a `session.update`; `notes: boolean`, whether notes are set (never their text). Sent in order with the other events, so it is known which reply started before or after it. A server older than `replyOn` omits that field, and one older than `notes` omits `notes` |
 | `transcript.partial` / `transcript.final` | `turnId: string`, `revision: integer` (increasing within turn), `text: string` (replacement, not delta) |
 | `response.started` | `responseId: string`, `turnId: string`, `segments: integer` (at least 1): how many finalized utterances the reply answers, ending with `turnId`. With `replySettleMs` a reply answers the finals gathered in its wait (and a reply that replaces an early one, all the finals gathered by then), but `turnId` names only the latest of them; `response.request` and a session without `replySettleMs` answer one final. A client that shows what a reply answers (the live web page's **답변 기준 발언** caption) uses it to show all of them. Older servers omit it |
 | `response.delta` | `responseId`, `turnId`, `text: string` (append); `primaryDone: true` once per streamed reply when the primary line is complete (see below) |

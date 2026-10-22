@@ -18,6 +18,11 @@ export interface SessionOptions {
    */
   replyOn?: ReplyOn;
   /**
+   * "내 입장·메모": the participant's own position, preferences, constraints or goals for this meeting, which both suggestions
+   * follow. Sent as {@link normalizeNotes} keeps them, at most {@link notesLimit} characters; empty means none.
+   */
+  notes?: string;
+  /**
    * Continue the conversation of this user's previous server session. The live page sets it only when it reconnects or rolls
    * over a live session whose earlier connection was ready, never on a Start; the server then answers with `resumedTurns`.
    */
@@ -30,11 +35,31 @@ export function isReplyOn(value: unknown): value is ReplyOn {
   return value === "all" || value === "questions";
 }
 
+/** The longest `notes`, in characters after {@link normalizeNotes}. */
+export const notesLimit = 500;
+/**
+ * `notes` as the server keeps them: every run of whitespace, line breaks and Unicode spaces included, becomes one space, with
+ * none at either end. The server collapses exactly these characters too.
+ */
+export function normalizeNotes(text: string): string {
+  return text.replace(/[\t\n\v\f\r\p{Z}]+/gu, " ").replace(/^ | $/g, "");
+}
+const controlCharacters = /[\u0000-\u001f\u007f-\u009f]/u;
+function validNotes(value: unknown): string {
+  if (typeof value !== "string") throw new Error("notes must be text.");
+  const notes = normalizeNotes(value);
+  if (notes.length > notesLimit) throw new Error(`notes must be at most ${notesLimit} characters.`);
+  if (controlCharacters.test(notes)) throw new Error("notes must not contain control characters.");
+  return notes;
+}
+
 /** What `session.update` can change while a session runs; replies that start later use it. */
 export interface SessionUpdate {
   responseMode?: SessionOptions["responseMode"];
   replyKorean?: boolean;
   replyOn?: ReplyOn;
+  /** Replaces the notes; an empty string removes them. */
+  notes?: string;
 }
 
 export function defaultOptions(): SessionOptions {
@@ -50,7 +75,7 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     if (typeof value !== "string") throw new Error(`${name} must be text.`);
     const trimmed = value.trim();
     if (trimmed.length > limit) throw new Error(`${name} must be at most ${limit} characters.`);
-    if (/[\u0000-\u001f\u007f-\u009f]/u.test(trimmed))
+    if (controlCharacters.test(trimmed))
       throw new Error(`${name} must not contain control characters or line breaks.`);
     return trimmed;
   };
@@ -78,6 +103,7 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     throw new Error("replyKorean must be a boolean.");
   if (input.replyOn !== undefined && !isReplyOn(input.replyOn))
     throw new Error("replyOn must be \"all\" or \"questions\".");
+  const notes = input.notes === undefined ? undefined : validNotes(input.notes);
   if (input.resumeConversation !== undefined && typeof input.resumeConversation !== "boolean")
     throw new Error("resumeConversation must be a boolean.");
   return { responseMode: input.responseMode, profile, profileConfirmed: input.profileConfirmed,
@@ -87,23 +113,26 @@ export function validateOptions(input: SessionOptions): SessionOptions {
     ...(input.replySettleMs === undefined ? {} : { replySettleMs: input.replySettleMs }),
     ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }),
     ...(input.replyOn === undefined ? {} : { replyOn: input.replyOn }),
+    ...(notes === undefined ? {} : { notes }),
     ...(input.resumeConversation === undefined ? {} : { resumeConversation: input.resumeConversation }) };
 }
 
 /** Validate and copy a `session.update` payload: only the given, known settings, at least one. */
 export function validateUpdate(input: SessionUpdate): SessionUpdate {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("A settings update must be an object.");
-  if (Object.keys(input).some(key => key !== "responseMode" && key !== "replyKorean" && key !== "replyOn"))
-    throw new Error("A settings update changes responseMode, replyKorean or replyOn only.");
+  if (Object.keys(input).some(key => key !== "responseMode" && key !== "replyKorean" && key !== "replyOn" && key !== "notes"))
+    throw new Error("A settings update changes responseMode, replyKorean, replyOn or notes only.");
   if (input.responseMode !== undefined && !["balanced", "grounded", "conversation"].includes(input.responseMode))
     throw new Error("Choose Document search: On when needed, On every reply, or Off.");
   if (input.replyKorean !== undefined && typeof input.replyKorean !== "boolean")
     throw new Error("replyKorean must be a boolean.");
   if (input.replyOn !== undefined && !isReplyOn(input.replyOn))
     throw new Error("replyOn must be \"all\" or \"questions\".");
+  const notes = input.notes === undefined ? undefined : validNotes(input.notes);
   const update: SessionUpdate = { ...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
     ...(input.replyKorean === undefined ? {} : { replyKorean: input.replyKorean }),
-    ...(input.replyOn === undefined ? {} : { replyOn: input.replyOn }) };
+    ...(input.replyOn === undefined ? {} : { replyOn: input.replyOn }),
+    ...(notes === undefined ? {} : { notes }) };
   if (!Object.keys(update).length) throw new Error("A settings update must change at least one setting.");
   return update;
 }

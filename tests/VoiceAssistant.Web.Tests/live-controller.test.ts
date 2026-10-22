@@ -438,22 +438,28 @@ test("A Start begins a fresh conversation: the first one, one after Stop, and on
   assert.deepEqual(resumeFlags(h), [undefined, true, undefined, undefined]);
 });
 
-test("The reply choice reaches every session.start and a running session's update", async () => {
-  let settings: LiveSettings = { ...parseSettings(null), replyOn: "questions" };
+test("The reply choice and the notes reach every session.start and a running session's update", async () => {
+  let settings: LiveSettings = { ...parseSettings(null), replyOn: "questions", notes: "Prefer plan B." };
   const h = harness(undefined, {}, () => liveStartOptions(settings));
-  const replyOn = (): (string | undefined)[] => h.transports.map(transport =>
-    (transport.sent.find(message => message.type === "session.start") as { options?: SessionOptions } | undefined)?.options?.replyOn);
+  const starts = (): (SessionOptions | undefined)[] => h.transports.map(transport =>
+    (transport.sent.find(message => message.type === "session.start") as { options?: SessionOptions } | undefined)?.options);
   await live(h);
-  assert.deepEqual(replyOn(), ["questions"]);
+  assert.deepEqual(starts().map(options => [options?.replyOn, options?.notes]), [["questions", "Prefer plan B."]]);
   // Switched back to all speech while connected: only that change is sent, and it applies from the next settle.
+  const applied = { responseMode: "grounded", replyKorean: false, replyOn: "questions", notes: "Prefer plan B." } as const;
   settings = { ...settings, replyOn: "all" };
-  h.controller.update(pendingUpdate({ responseMode: "grounded", replyKorean: false, replyOn: "questions" }, settings)!);
+  h.controller.update(pendingUpdate(applied, settings)!);
   assert.deepEqual(h.latest().sent.at(-1), { type: "session.update", options: { replyOn: "all" } });
-  // A reconnect starts with the choice as it is now.
+  // New notes are sent as they are kept; the next reply follows them.
+  settings = { ...settings, notes: "Do not commit before the third quarter." };
+  h.controller.update(pendingUpdate({ ...applied, replyOn: "all" }, settings)!);
+  assert.deepEqual(h.latest().sent.at(-1), { type: "session.update", options: { notes: "Do not commit before the third quarter." } });
+  // A reconnect starts with the choices as they are now.
   h.latest().onError(new CodedError("socket_closed", "dropped"));
   h.clock.advance(3000); await flush();
   h.latest().ready();
-  assert.deepEqual(replyOn(), ["questions", "all"]);
+  assert.deepEqual(starts().map(options => [options?.replyOn, options?.notes]),
+    [["questions", "Prefer plan B."], ["all", "Do not commit before the third quarter."]]);
 });
 
 test("A stop in the middle of a reply ends that reply, so nothing looks as if it were still being generated", async () => withMediaStream(async () => {

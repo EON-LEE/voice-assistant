@@ -474,10 +474,11 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         // and a changed replyOn from the next settle.
                         options = options.Apply((SessionUpdate)message.Value!);
                         prefetch?.UpdateOptions(options);
+                        // Only whether notes are set: their text is never sent back.
                         await SendAsync(new
                         {
                             type = "session.updated", responseMode = options.ResponseMode, replyKorean = options.ReplyKorean,
-                            replyOn = options.ReplyOn
+                            replyOn = options.ReplyOn, notes = options.Notes.Length > 0
                         }, lifetime.Token);
                         break;
                     case "session.stop":
