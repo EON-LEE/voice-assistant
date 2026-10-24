@@ -70,6 +70,28 @@ public sealed class MaterialPhraseHintsTests
     }
 
     [Fact]
+    public void LabelSeriesAndShoutedLabelsGiveWayToBrandNamesWithDigitsAndOneLetterTags()
+    {
+        string[] texts =
+        [
+            .. Enumerable.Range(1, 12).Select(index => $"S{index} shows the funnel for this slide."),
+            "Option B costs less, and Option B's timeline is shorter. Vitamin C serums sell well; Vitamin C toners too.",
+            "Customers mention kestro9 and Office365 often; kestro9 tops the list and Office365 is new.",
+            "TRACKED TERMS: the tracked terms list. TRACKED TERMS again. We plan for Q3 and Q4.",
+            "Expected Q&A list and Expected Q&A notes. Tommy O'Brien met Tommy O'Brien.",
+        ];
+
+        var phrases = MaterialPhrases.Extract([], texts).ToList();
+
+        // A brand written with digits and a name with a one-letter tag, each said at least twice; a few quarter codes stay.
+        foreach (var expected in new[] { "Option B", "Vitamin C", "kestro9", "Office365", "Q3", "Q4" })
+            Assert.Contains(expected, phrases);
+        // A letter used with many numbers is a label series; a heading in capitals is a label; "Q&A" and "O'Brien" are not tags.
+        foreach (var dropped in new[] { "S1", "S7", "S12", "TRACKED TERMS", "Expected Q", "Tommy O" })
+            Assert.DoesNotContain(dropped, phrases);
+    }
+
+    [Fact]
     public void HintsAreCappedInNumberAndLength()
     {
         var texts = Enumerable.Range(1, 300).Select(index => $"Part AB-{index} is listed.").ToArray();

@@ -33,6 +33,13 @@ public sealed class ServiceSettings
     /// the final adopts it.
     /// </summary>
     public bool SpeculativeStart { get; init; }
+    /// <summary>
+    /// Experiment: a short statement that waits for more context is answered after this much more quiet (milliseconds after
+    /// the settle window); 0 keeps waiting for more speech.
+    /// </summary>
+    public int QuietReplyMs { get; init; }
+    /// <summary>The most search chunks one reply may use as evidence.</summary>
+    public int SearchMaxEvidence { get; init; } = 5;
     /// <summary>Experiment: add phrase hints from the caller's own materials to the speech recognizer.</summary>
     public bool MaterialPhraseHints { get; init; }
     /// <summary>Experiment: tell the answer model to decline guarantees and promises and state the documented policy instead.</summary>
@@ -65,9 +72,11 @@ public sealed class ServiceSettings
             SearchIndex = Get("Azure:SearchIndex"),
             SearchSemanticConfiguration = config["Azure:SearchSemanticConfiguration"] ?? "meeting-semantic",
             SearchMinimumRerankerScore = ReadMinimumRerankerScore(config),
+            SearchMaxEvidence = ReadSearchMaxEvidence(config),
             AllowedOrigins = config.GetSection("Security:AllowedOrigins").Get<string[]>() ?? [],
             EarlyStartAtFinal = ReadSwitch(config, "Session:EarlyStartAtFinal"),
             SpeculativeStart = ReadSwitch(config, "Session:SpeculativeStart"),
+            QuietReplyMs = ReadQuietReplyMs(config),
             MaterialPhraseHints = ReadSwitch(config, "Speech:MaterialPhraseHints"),
             CommitmentPolicy = ReadSwitch(config, "Reply:CommitmentPolicy")
         };
@@ -144,6 +153,26 @@ public sealed class ServiceSettings
             System.Text.RegularExpressions.RegexOptions.CultureInvariant)
             ? version
             : throw new InvalidOperationException("Azure:ChatApiVersion must be a dated api-version such as 2025-04-01-preview when set.");
+    }
+
+    /// <summary>Optional <c>Session:QuietReplyMs</c>: unset or 0 is off; otherwise an integer from 500 to 10000.</summary>
+    public static int ReadQuietReplyMs(IConfiguration config)
+    {
+        var value = config["Session:QuietReplyMs"];
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+        if (int.TryParse(value.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
+            out var milliseconds) && (milliseconds == 0 || milliseconds is >= 500 and <= 10000)) return milliseconds;
+        throw new InvalidOperationException("Session:QuietReplyMs must be 0 or an integer from 500 to 10000 when set.");
+    }
+
+    /// <summary>Optional <c>Azure:SearchMaxEvidence</c>: unset is 5; otherwise an integer from 1 to 10.</summary>
+    public static int ReadSearchMaxEvidence(IConfiguration config)
+    {
+        var value = config["Azure:SearchMaxEvidence"];
+        if (string.IsNullOrWhiteSpace(value)) return 5;
+        if (int.TryParse(value.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
+            out var count) && count is >= 1 and <= 10) return count;
+        throw new InvalidOperationException("Azure:SearchMaxEvidence must be an integer from 1 to 10 when set.");
     }
 
     public static int ReadMaxSessionMinutes(IConfiguration config)

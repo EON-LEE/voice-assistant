@@ -13,6 +13,8 @@ internal static partial class MaterialPhrases
     internal const int MaxPhrases = 100;
     internal const int MaxLength = 50;
     private const int MaxTitles = 30;
+    /// <summary>A letter used with this many different numbers ("S1", "S2", … "S5") is a label series, not a set of names.</summary>
+    private const int MinLabelSeries = 5;
 
     [Flags]
     private enum Kind { None = 0, Title = 1, Code = 2, Acronym = 4, Camel = 8, Name = 16, Word = 32 }
@@ -57,6 +59,10 @@ internal static partial class MaterialPhrases
                 foreach (Match match in CamelCase().Matches(text)) Add(match.Value, Kind.Camel);
                 foreach (Match match in CapitalizedRun().Matches(text))
                     if (NameFrom(match.Value) is { } name) Add(name, Kind.Name);
+                // Brand names with digits ("kestro9", "Office365") and a name with a one-letter tag ("Option B", "Vitamin C").
+                foreach (Match match in AlphanumericName().Matches(text)) Add(match.Value, Kind.Name);
+                foreach (Match match in LetterTaggedName().Matches(text))
+                    if (!LeadingWords.Contains(match.Groups[1].Value) && !CommonWords.Contains(match.Groups[1].Value)) Add(match.Value, Kind.Name);
                 foreach (Match match in SingleWord().Matches(text))
                 {
                     var word = match.Value;
@@ -76,6 +82,11 @@ internal static partial class MaterialPhrases
             candidate.Count += total;
             candidate.Kinds |= Kind.Word;
         }
+        // One letter with a number from a numbered series ("S1" to "S20" slide labels, "Q1" to "Q12" question labels) labels
+        // things rather than naming them, and would crowd out real names; a few such codes ("Q3", "Q4") stay.
+        foreach (var series in candidates.Values.Where(candidate => candidate.Kinds == Kind.Code && LabelCode().IsMatch(candidate.Text))
+                     .GroupBy(candidate => char.ToUpperInvariant(candidate.Text[0])).Where(series => series.Count() >= MinLabelSeries).ToArray())
+            foreach (var label in series) candidates.Remove(label.Text);
 
         // Titles first (most recent documents first, as listed), then the most frequent terms. A capitalized name needs two
         // occurrences, so a sentence-initial capital rarely qualifies.
@@ -109,11 +120,14 @@ internal static partial class MaterialPhrases
     private static string Normalize(string phrase) =>
         Whitespace().Replace(phrase, " ").Trim().Trim('"', '\'', '(', ')', '[', ']', '.', ',', ':', ';', '!', '?', '-', '/');
 
-    /// <summary>A capitalized run without its leading function words; null when fewer than two words or only common words remain.</summary>
+    /// <summary>
+    /// A capitalized run without its leading function words; null when fewer than two words or only common words remain, or when
+    /// every word is in capitals (a shouted heading or screen label such as "TRACKED TERMS"; its acronyms count on their own).
+    /// </summary>
     private static string? NameFrom(string run)
     {
         var words = run.Split(' ', StringSplitOptions.RemoveEmptyEntries).SkipWhile(LeadingWords.Contains).ToArray();
-        if (words.Length < 2 || words.All(CommonWords.Contains)) return null;
+        if (words.Length < 2 || words.All(CommonWords.Contains) || words.All(word => !word.Any(char.IsLower))) return null;
         return string.Join(' ', words);
     }
 
@@ -169,6 +183,14 @@ internal static partial class MaterialPhrases
     private static partial Regex CapitalizedRun();
     [GeneratedRegex(@"\b[A-Z][a-z]{3,}\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
     private static partial Regex SingleWord();
+    // A word of three or more letters followed by digits, any case: "kestro9", "Office365".
+    [GeneratedRegex(@"\b[A-Za-z][a-z]{2,}[0-9]+[a-z]*\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
+    private static partial Regex AlphanumericName();
+    // A capitalized word and a one-letter tag other than "I": "Option B", "Vitamin C"; not "Q&A" or a name such as "Tommy O'Brien".
+    [GeneratedRegex(@"\b([A-Z][a-z]{2,}) [A-HJ-Z]\b(?!&|['’][A-Za-z]{2})", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
+    private static partial Regex LetterTaggedName();
+    [GeneratedRegex(@"\A[A-Z][0-9]{1,3}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex LabelCode();
     [GeneratedRegex(@"\b[a-z]{2,}\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
     private static partial Regex LowercaseWord();
     [GeneratedRegex(@"\.(?:pptx|docx|pdf|txt|md)\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
