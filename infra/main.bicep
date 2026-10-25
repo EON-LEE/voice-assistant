@@ -345,6 +345,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           // Evaluated against a same-image control run at the same time: about 0.1 s earlier first line at p50 and p95,
           // with the same answer quality. Requires Session__EarlyStartAtFinal.
           { name: 'Session__SpeculativeStart', value: 'true' }
+          // Evaluated on staging: the other person's short answer to the user's own question now gets a reply about 2.5 s
+          // after it ends (it got none before), with the same answer quality and latency on the other questions.
+          { name: 'Session__QuietReplyMs', value: '1500' }
           { name: 'Session__MaxMinutes', value: string(sessionMaxMinutes) }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: enableDiagnostics ? insights!.properties.ConnectionString : '' }
           { name: 'OTEL_SERVICE_NAME', value: appName }
