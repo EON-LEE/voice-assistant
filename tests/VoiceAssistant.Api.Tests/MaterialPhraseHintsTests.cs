@@ -79,15 +79,21 @@ public sealed class MaterialPhraseHintsTests
             "Customers mention kestro9 and Office365 often; kestro9 tops the list and Office365 is new.",
             "TRACKED TERMS: the tracked terms list. TRACKED TERMS again. We plan for Q3 and Q4.",
             "Expected Q&A list and Expected Q&A notes. Tommy O'Brien met Tommy O'Brien.",
+            "The OPC UA bridge reads OPC UA servers.",
+            "Vitamin A serums and Vitamin A creams sell well. We chose Option B. The rollout starts in May.",
+            "Making A Difference\nOur plan for Contoso U.S. sales and Contoso U.S. support. John F. Kennedy said so.",
+            "Making A Difference\nJohn F. Kennedy said it again.",
         ];
 
         var phrases = MaterialPhrases.Extract([], texts).ToList();
 
-        // A brand written with digits and a name with a one-letter tag, each said at least twice; a few quarter codes stay.
-        foreach (var expected in new[] { "Option B", "Vitamin C", "kestro9", "Office365", "Q3", "Q4" })
+        // A brand written with digits and a name with a one-letter tag, each said at least twice; a few quarter codes and an
+        // acronym pair (its words never written in lower case) stay.
+        foreach (var expected in new[] { "Option B", "Vitamin C", "Vitamin A", "kestro9", "Office365", "Q3", "Q4", "OPC UA" })
             Assert.Contains(expected, phrases);
-        // A letter used with many numbers is a label series; a heading in capitals is a label; "Q&A" and "O'Brien" are not tags.
-        foreach (var dropped in new[] { "S1", "S7", "S12", "TRACKED TERMS", "Expected Q", "Tommy O" })
+        // A letter used with many numbers is a label series; ordinary words in capitals are a label; "Q&A", "O'Brien", the
+        // article "A" in a title-case heading, an abbreviation such as "U.S." and a middle initial are not tags.
+        foreach (var dropped in new[] { "S1", "S7", "S12", "TRACKED TERMS", "Expected Q", "Tommy O", "Making A", "Contoso U", "John F" })
             Assert.DoesNotContain(dropped, phrases);
     }
 

@@ -58,11 +58,12 @@ internal static partial class MaterialPhrases
                     if (!CommonAcronyms.Contains(match.Value) && !lowercase.Contains(match.Value.ToLowerInvariant())) Add(match.Value, Kind.Acronym);
                 foreach (Match match in CamelCase().Matches(text)) Add(match.Value, Kind.Camel);
                 foreach (Match match in CapitalizedRun().Matches(text))
-                    if (NameFrom(match.Value) is { } name) Add(name, Kind.Name);
+                    if (NameFrom(match.Value, lowercase) is { } name) Add(name, Kind.Name);
                 // Brand names with digits ("kestro9", "Office365") and a name with a one-letter tag ("Option B", "Vitamin C").
                 foreach (Match match in AlphanumericName().Matches(text)) Add(match.Value, Kind.Name);
                 foreach (Match match in LetterTaggedName().Matches(text))
-                    if (!LeadingWords.Contains(match.Groups[1].Value) && !CommonWords.Contains(match.Groups[1].Value)) Add(match.Value, Kind.Name);
+                    if (!LeadingWords.Contains(match.Groups[1].Value) && !CommonWords.Contains(match.Groups[1].Value) && !TagIsWord(text, match))
+                        Add(match.Value, Kind.Name);
                 foreach (Match match in SingleWord().Matches(text))
                 {
                     var word = match.Value;
@@ -83,7 +84,7 @@ internal static partial class MaterialPhrases
             candidate.Kinds |= Kind.Word;
         }
         // One letter with a number from a numbered series ("S1" to "S20" slide labels, "Q1" to "Q12" question labels) labels
-        // things rather than naming them, and would crowd out real names; a few such codes ("Q3", "Q4") stay.
+        // things rather than naming them, and would crowd out real names; a letter used with fewer numbers ("Q3", "Q4") stays.
         foreach (var series in candidates.Values.Where(candidate => candidate.Kinds == Kind.Code && LabelCode().IsMatch(candidate.Text))
                      .GroupBy(candidate => char.ToUpperInvariant(candidate.Text[0])).Where(series => series.Count() >= MinLabelSeries).ToArray())
             foreach (var label in series) candidates.Remove(label.Text);
@@ -122,12 +123,14 @@ internal static partial class MaterialPhrases
 
     /// <summary>
     /// A capitalized run without its leading function words; null when fewer than two words or only common words remain, or when
-    /// every word is in capitals (a shouted heading or screen label such as "TRACKED TERMS"; its acronyms count on their own).
+    /// every word is an ordinary word in capitals, also written in lower case in the materials (a shouted heading or screen label
+    /// such as "TRACKED TERMS"). An acronym pair such as "OPC UA" stays.
     /// </summary>
-    private static string? NameFrom(string run)
+    private static string? NameFrom(string run, IReadOnlySet<string> lowercase)
     {
         var words = run.Split(' ', StringSplitOptions.RemoveEmptyEntries).SkipWhile(LeadingWords.Contains).ToArray();
-        if (words.Length < 2 || words.All(CommonWords.Contains) || words.All(word => !word.Any(char.IsLower))) return null;
+        if (words.Length < 2 || words.All(CommonWords.Contains)) return null;
+        if (words.All(word => !word.Any(char.IsLower) && lowercase.Contains(word.ToLowerInvariant()))) return null;
         return string.Join(' ', words);
     }
 
@@ -146,6 +149,22 @@ internal static partial class MaterialPhrases
         while (position >= 0 && char.IsLetter(text[position])) position--;
         var previous = text[(position + 1)..end];
         return !char.IsUpper(previous[0]) || LeadingWords.Contains(previous) || CommonWords.Contains(previous);
+    }
+
+    /// <summary>
+    /// Whether the one-letter tag of a <see cref="LetterTaggedName"/> match is really an ordinary word: the article "A" before a
+    /// capitalized word in a title-case heading ("Making A Difference"), or a middle initial before a surname ("John F. Kennedy").
+    /// A tag that ends a sentence ("We chose Option B. The rollout ...") stays a tag.
+    /// </summary>
+    private static bool TagIsWord(string text, Match match)
+    {
+        var rest = text.AsSpan(match.Index + match.Length);
+        if (match.Groups[2].Value == "A" && rest.Length >= 2 && rest[0] == ' ' && char.IsUpper(rest[1])) return true;
+        if (rest.Length < 3 || rest[0] != '.' || rest[1] != ' ' || !char.IsUpper(rest[2])) return false;
+        var next = rest[2..];
+        var length = 0;
+        while (length < next.Length && char.IsLetter(next[length])) length++;
+        return !LeadingWords.Contains(next[..length].ToString());
     }
 
     private static readonly HashSet<string> CommonAcronyms = new(StringComparer.Ordinal)
@@ -186,8 +205,9 @@ internal static partial class MaterialPhrases
     // A word of three or more letters followed by digits, any case: "kestro9", "Office365".
     [GeneratedRegex(@"\b[A-Za-z][a-z]{2,}[0-9]+[a-z]*\b", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
     private static partial Regex AlphanumericName();
-    // A capitalized word and a one-letter tag other than "I": "Option B", "Vitamin C"; not "Q&A" or a name such as "Tommy O'Brien".
-    [GeneratedRegex(@"\b([A-Z][a-z]{2,}) [A-HJ-Z]\b(?!&|['’][A-Za-z]{2})", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
+    // A capitalized word and a one-letter tag other than "I": "Option B", "Vitamin C"; not "Q&A", a name such as "Tommy O'Brien"
+    // or an abbreviation such as "U.S.".
+    [GeneratedRegex(@"\b([A-Z][a-z]{2,}) ([A-HJ-Z])\b(?!&|['’][A-Za-z]{2}|\.[A-Za-z])", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
     private static partial Regex LetterTaggedName();
     [GeneratedRegex(@"\A[A-Z][0-9]{1,3}\z", RegexOptions.CultureInvariant)]
     private static partial Regex LabelCode();
