@@ -831,7 +831,14 @@ function openSettings(field?: HTMLElement): void {
 $("signin").addEventListener("click", () => {
   void auth.signIn().then(renderAccount, error => { $("account-status").textContent = `로그인 실패: ${asError(error).message}`; });
 });
-settingsDialog.addEventListener("close", () => { saveSettings(); syncSession(); render(); returnFocus(settingsOpener); });
+settingsDialog.addEventListener("close", () => {
+  saveSettings(); syncSession(); render();
+  // The browser has already put focus back where the dialog was opened from. The close event comes a task later, when focus
+  // may have moved on: only focus left nowhere or in the closed dialog (its opener is gone or turned off) goes to the opener
+  // or the panel.
+  const focused = panel.ownerDocument.activeElement;
+  if (!focused || focused === panel.ownerDocument.body || settingsDialog.contains(focused)) returnFocus(settingsOpener);
+});
 
 // ---------- Always-on-top floating window (Document Picture-in-Picture, Edge/Chrome) ----------
 

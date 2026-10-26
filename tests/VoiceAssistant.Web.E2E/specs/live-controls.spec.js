@@ -250,6 +250,17 @@ test('closing the menu or the settings returns focus to the button they were ope
   await expect(dialog).toBeVisible();
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await expect(page.locator('#answer-larger')).toBeFocused();
+  // The dialog's close event comes a task after it closed: focus that moved on by then stays where it went.
+  await openMenuFrom(page, '#answer-larger');
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => new Promise(resolve => {
+    const settings = document.querySelector('#settings');
+    settings.addEventListener('close', () => setTimeout(resolve), { once: true });
+    settings.close();
+    document.querySelector('#live-toggle').focus();
+  }));
+  await expect(toggle).toBeFocused();
 
   // A click outside on nothing in particular returns focus to the opener; a click on another control keeps it there.
   await openMenuFrom(page, '#live-toggle');

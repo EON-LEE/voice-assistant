@@ -39,7 +39,8 @@ microphone, ticketed WebSocket and MSAL modules and matches the desktop behaviou
 - **Keyboard and focus.** Shift+F10 or the menu key opens the menu on the focused panel or any of its buttons; ↑/↓,
   Home and End move between items, Enter or Space chooses, Escape or Tab closes. Closing the menu or the settings
   dialog (Escape, a choice or a click outside) returns focus to the element it was opened from, or to the panel when
-  that element is gone or turned off. Streaming replies and reconnects never move focus, so typing in Teams or
+  that element is gone or turned off. Focus that has already moved on when the dialog's `close` event arrives (a task
+  later) stays where it went. Streaming replies and reconnects never move focus, so typing in Teams or
   presenting is not interrupted.
 - A change made during a live session is sent as `session.update` when `session.ready` carries `sessionUpdate:true`. One update is in flight at a time and a later toggle is sent after the `session.updated` acknowledgement, so rapid toggling converges on the final state. It applies from the next reply, because a reply that already started keeps its settings (a changed **추천** choice applies from the next settle). A server that does not announce `sessionUpdate` keeps the start-time document-search mode, reply choice and notes: the page shows "이 서버는 연결 중 문서검색 변경을 지원하지 않아요 · 다음 연결부터 적용돼요", naming **추천** or **내 메모** (joined as in **문서검색·추천·내 메모**) when those changed, and Stop then Start applies it. Korean meaning still works there because the page translates by itself.
 - Korean via `translationOnly` enrichment (only while 한국어 뜻 is on), chunked at 600 characters, retried 3 times on transient failure,
