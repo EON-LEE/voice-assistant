@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { acknowledgedSettings, answerSizes, deferredUpdateNote, documentSearchOn, keptNotes, liveStartOptions, noHostSources, notesChipName,
+import { acknowledgedSettings, answerSizes, deferredUpdateNote, documentSearchOn, idleStatus, keptNotes, liveStartOptions, noHostSources, notesChipName,
   parseSettings, pendingUpdate, resolveAudioSource, settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, type AppliedSettings,
   type HostSources, type LiveSettings } from "../../src/VoiceAssistant.Web/src/live-settings.js";
 import { createStartMessage, validateUpdate } from "../../src/VoiceAssistant.Web/src/options.js";
@@ -70,6 +70,15 @@ test("Live settings: the 내 메모 chip says in its name whether notes are set,
   assert.equal(notesChipName(""), "내 메모");
   assert.equal(notesChipName("Prefer plan B."), "내 메모 (설정됨)");
   assert.equal(notesChipName(parseSettings(JSON.stringify({ notes: " \n " })).notes), "내 메모", "notes of only spaces are none");
+});
+
+test("Live settings: before a start, the status suggests notes only when neither a topic nor notes are set", () => {
+  const suggestion = "시작을 누르면 듣기 시작 · '내 메모'에 내 역할과 입장을 적으면 추천이 그 입장을 따릅니다";
+  const plain = "시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴";
+  assert.equal(idleStatus(defaults), suggestion);
+  assert.equal(idleStatus(parseSettings(JSON.stringify({ notes: " \n ", topic: "" }))), suggestion, "notes of only spaces are none");
+  assert.equal(idleStatus({ ...defaults, notes: "I present the dashboard; questions are for me." }), plain);
+  assert.equal(idleStatus({ ...defaults, topic: "Azure sync" }), plain);
 });
 
 test("Live settings: a document mode and its remembered choice never disagree", () => {

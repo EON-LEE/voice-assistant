@@ -1,10 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LiveState, answers, meaningTexts, primaryMeaning, suggestionLabels, translatable, translationChunks,
+import { LiveState, answers, leadSentence, meaningTexts, primaryMeaning, suggestionLabels, translatable, translationChunks,
   type LiveReply } from "../../src/VoiceAssistant.Web/src/live-state.js";
 import { parseEvent } from "../../src/VoiceAssistant.Web/src/protocol.js";
 
 const final = (turnId: string, text: string) => ({ type: "transcript.final", turnId, revision: 1, text });
+
+test("Live: 추천 1's lead is its first sentence, and the parts join back to exactly the line", () => {
+  const cases: [string, [string, string]][] = [
+    ["Not yet. In this demo, Approved only saves the status.", ["Not yet.", " In this demo, Approved only saves the status."]],
+    ["No! We keep the old plan. Then we review it.", ["No!", " We keep the old plan. Then we review it."]],
+    ["Is it weekly? 2 runs a month, actually.", ["Is it weekly?", " 2 runs a month, actually."]],
+    ["We said “no.” Then we checked again.", ["We said “no.”", " Then we checked again."]],
+    ["It compares share: 0.0446% to 0.0676% within August.", ["It compares share: 0.0446% to 0.0676% within August.", ""]],
+    ["It’s broader than that: U.S. customer voices, not only young users.",
+      ["It’s broader than that: U.S. customer voices, not only young users.", ""]],
+    ["Plan B fits the budget", ["Plan B fits the budget", ""]],
+    ["Wait... let me check.", ["Wait... let me check.", ""]],
+    ["", ["", ""]],
+  ];
+  for (const [line, expected] of cases) {
+    assert.deepEqual(leadSentence(line), expected, line);
+    assert.equal(leadSentence(line).join(""), line);
+  }
+});
 
 test("Live: two suggestions parse and the first must equal text", () => {
   const e = parseEvent(JSON.stringify({ type: "response.completed", turnId: "t", responseId: "r", text: "Review first.",

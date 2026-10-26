@@ -289,6 +289,8 @@ internal sealed class FaultTransport : HttpMessageHandler
     /// <summary>Raw chunk JSON streamed after <see cref="ChatChunks"/>, before <c>[DONE]</c>: a finish reason or a filter verdict.</summary>
     public string[] ChatTrailer { get; init; } = [];
     public ConcurrentQueue<string> ChatBodies { get; } = new();
+    /// <summary>The request path of every chat call, in the same order as <see cref="ChatBodies"/>.</summary>
+    public ConcurrentQueue<string> ChatPaths { get; } = new();
     /// <summary>Every request body in arrival order: Search, embeddings and chat.</summary>
     public ConcurrentQueue<string> RequestBodies { get; } = new();
     public int SearchCalls => Volatile.Read(ref searchCalls);
@@ -387,6 +389,7 @@ internal sealed class FaultTransport : HttpMessageHandler
             }));
         }
         ChatBodies.Enqueue(body);
+        ChatPaths.Enqueue(request.RequestUri.AbsolutePath);
         Interlocked.Increment(ref chatCalls);
         var streamed = body.Contains("\"stream\":true", StringComparison.Ordinal);
         bool queuedAnswer;

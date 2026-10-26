@@ -32,6 +32,16 @@ param chatDeploymentName string = 'meeting-chat'
 param chatDeploymentSku string
 @minValue(1)
 param chatCapacity int
+@description('Model for the live answer only (the two suggested replies). The turn classifier, Korean translation and practice use the chat deployment.')
+param answerModelName string = 'gpt-5.6-terra'
+param answerModelVersion string = '2026-07-09'
+param answerDeploymentName string = 'meeting-answer'
+param answerDeploymentSku string = 'GlobalStandard'
+@minValue(1)
+param answerCapacity int = 150
+@allowed(['low', 'medium'])
+@description('Reasoning effort of the live answer request (API Azure__ChatReasoningEffort).')
+param answerReasoningEffort string = 'low'
 @allowed([
   'text-embedding-3-small'
 ])
@@ -140,6 +150,18 @@ resource embedding 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01'
     versionUpgradeOption: 'NoAutoUpgrade'
   }
   dependsOn: [chat]
+}
+
+@description('The live answer model; serialized after the other account deployments.')
+resource answer 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: openAI
+  name: answerDeploymentName
+  sku: { name: answerDeploymentSku, capacity: answerCapacity }
+  properties: {
+    model: { format: 'OpenAI', name: answerModelName, version: answerModelVersion }
+    versionUpgradeOption: 'NoAutoUpgrade'
+  }
+  dependsOn: [embedding]
 }
 
 resource search 'Microsoft.Search/searchServices@2023-11-01' = {
@@ -333,6 +355,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'Azure__SpeechEndpoint', value: speech.properties.endpoint }
           { name: 'Azure__OpenAIEndpoint', value: openAI.properties.endpoint }
           { name: 'Azure__ChatDeployment', value: chatDeploymentName }
+          // Evaluated on staging against the chat model on the same hold-out questions: more usable answers and fewer factual
+          // errors at about the same first-line latency. The classifier and translation stay on the chat deployment.
+          { name: 'Azure__AnswerDeployment', value: answerDeploymentName }
+          { name: 'Azure__ChatReasoningEffort', value: answerReasoningEffort }
           { name: 'Azure__EmbeddingDeployment', value: embeddingDeploymentName }
           { name: 'Azure__SearchEndpoint', value: 'https://${search.name}.search.windows.net' }
           { name: 'Azure__SearchIndex', value: searchIndexName }
@@ -362,7 +388,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       }]
     }
   }
-  dependsOn: [speechAccess, openAIAccess, searchAccess, embedding]
+  dependsOn: [speechAccess, openAIAccess, searchAccess, embedding, answer]
 }
 
 resource replicaAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {

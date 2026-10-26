@@ -55,7 +55,7 @@ test('the header start/stop and pause buttons run the session like the menu and 
   const server = await liveFixture(page);
   const toggle = page.locator('#live-toggle'), pause = page.locator('#live-pause'), status = page.locator('#capture-status');
   await expect(status).toHaveText('마이크 꺼짐 · 시작을 누르세요');
-  await expect(page.locator('#reading-status')).toHaveText('시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴');
+  await expect(page.locator('#reading-status')).toHaveText("시작을 누르면 듣기 시작 · '내 메모'에 내 역할과 입장을 적으면 추천이 그 입장을 따릅니다");
   await expect(toggle).toHaveText('시작');
   await expect(toggle).toHaveAttribute('title', /^라이브 시작/);
   await expect(pause).toBeDisabled();
@@ -121,7 +121,7 @@ test('A−/A+ resize the English answers only, are remembered, and long answers 
   const english = 'I can confirm the next milestone after reviewing the dependencies with the team. '.repeat(6);
   reply(server, 1, english + 'LongUnbrokenSyntheticIdentifier'.repeat(8));
   await expect(page.locator('#answer-text')).toContainText('I can confirm');
-  // 추천 2 is on top too and follows the size: always 0.9 of 추천 1.
+  // 추천 2 is on top too and follows the size: always 0.8 of 추천 1.
   await expect(page.locator('#alternative-text')).toBeVisible();
   const sizes = () => page.evaluate(() => {
     const size = selector => parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
@@ -139,7 +139,7 @@ test('A−/A+ resize the English answers only, are remembered, and long answers 
   });
   expect(await page.locator('#answer-text').evaluate(el => getComputedStyle(el).fontSize)).toBe(original);
   const base = await sizes();
-  expect(base.alternative).toBeCloseTo(parseFloat(original) * 0.9, 1);
+  expect(base.alternative).toBeCloseTo(parseFloat(original) * 0.8, 1);
   expect(base.scale).toBe('');
   await expect(page.locator('#answer-smaller')).toBeEnabled();
 
@@ -250,6 +250,17 @@ test('closing the menu or the settings returns focus to the button they were ope
   await expect(dialog).toBeVisible();
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await expect(page.locator('#answer-larger')).toBeFocused();
+  // The dialog's close event comes a task after it closed: focus that moved on by then stays where it went.
+  await openMenuFrom(page, '#answer-larger');
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => new Promise(resolve => {
+    const settings = document.querySelector('#settings');
+    settings.addEventListener('close', () => setTimeout(resolve), { once: true });
+    settings.close();
+    document.querySelector('#live-toggle').focus();
+  }));
+  await expect(toggle).toBeFocused();
 
   // A click outside on nothing in particular returns focus to the opener; a click on another control keeps it there.
   await openMenuFrom(page, '#live-toggle');

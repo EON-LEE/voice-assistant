@@ -504,7 +504,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
             })));
         // The request (and its single allowed retry) is sent within this scope, on the first step of the stream.
         using var call = LiveChatCall.Begin("answer", AnswerBudget, withinReply: true);
-        await foreach (var update in openAI.GetChatClient(settings.ChatDeployment)
+        await foreach (var update in openAI.GetChatClient(settings.AnswerDeployment ?? settings.ChatDeployment)
             .CompleteChatStreamingAsync(messages, CreateChatOptions(settings, settings.ChatReasoningEffort), cancellation))
         {
             // With asynchronous filtering the verdict can follow text already streamed, even a "stop" update, so every update
