@@ -8,10 +8,10 @@ import { SocketTransport, asError } from "./transport.js";
 import type { SessionOptions, SessionUpdate } from "./options.js";
 import { CoachClient, CoachError, type CoachKind } from "./coach-client.js";
 import type { Grounding, ServerEvent } from "./protocol.js";
-import { LiveState, answers, meaningTexts, primaryMeaning, suggestionLabels, translatable, translationChunks, type LiveReply,
-  type LiveTurn } from "./live-state.js";
+import { LiveState, answers, leadSentence, meaningTexts, primaryMeaning, suggestionLabels, translatable, translationChunks,
+  type LiveReply, type LiveTurn } from "./live-state.js";
 import { PushedKorean, pushedKoreanWaitMs } from "./reply-korean.js";
-import { acknowledgedSettings, deferredUpdateNote, keptNotes, liveStartOptions, notesChipName, parseSettings, pendingUpdate,
+import { acknowledgedSettings, deferredUpdateNote, idleStatus, keptNotes, liveStartOptions, notesChipName, parseSettings, pendingUpdate,
   settingsKey, stepAnswerSize, withDocumentSearch, withResponseMode, documentSearchOn, type AppliedSettings, type HostSources,
   type LiveSettings, type ResponseMode } from "./live-settings.js";
 import { LiveController, liveLimits, type SourceHooks } from "./live-controller.js";
@@ -480,6 +480,20 @@ function write(element: HTMLElement, text: string): void {
   if (element.textContent !== text) element.textContent = text;
 }
 function setText(id: string, text: string): void { write($(id), text); }
+/** 추천 1 with its first sentence set apart (see leadSentence); the element's text stays exactly the line. */
+function writeAnswer(element: HTMLElement, text: string, reply: boolean): void {
+  if (element.textContent === text) return;
+  if (!reply) { element.textContent = text; return; }
+  const span = (className: string, value: string): HTMLSpanElement => {
+    const part = element.ownerDocument.createElement("span");
+    part.className = className; part.textContent = value;
+    return part;
+  };
+  const [lead, rest] = leadSentence(text);
+  element.replaceChildren(span("live-lead", lead), ...rest ? [span("live-rest", rest)] : []);
+}
+/** The reply whose arrival on screen the first card last marked. */
+let markedReply: string | undefined;
 
 /** What the error line says, most important first. */
 function statusMessage(): string {
@@ -595,7 +609,16 @@ function renderSuggestions(): void {
   const shown = state.shown;
   if (shown) latency.shownReply(shown.id, shown.turnId, shown.complete);
   const ko = display ? replyKo.get(display.id) ?? [] : [];
-  setText("answer-text", values[0] ?? "답변이 완성되면 여기에 표시됩니다.");
+  const answerText = $("answer-text");
+  writeAnswer(answerText, values[0] ?? "답변이 완성되면 여기에 표시됩니다.", values[0] !== undefined);
+  // A new answer on screen glows once, so a glance tells it from the one read before; no motion if the user asked for less.
+  if (display && display.id !== markedReply) {
+    markedReply = display.id;
+    const card = answerText.closest<HTMLElement>(".live-card"), view = answerText.ownerDocument.defaultView;
+    if (card && view && !view.matchMedia("(prefers-reduced-motion: reduce)").matches)
+      card.animate([{ boxShadow: "0 0 0 3px rgba(143, 193, 255, .9)" }, { boxShadow: "0 0 0 0 rgba(143, 193, 255, 0)" }],
+        { duration: 1000, easing: "ease-out" });
+  }
   if (settings.showKorean) {
     setText("answer-korean", primaryMeaning(display, ko[0], display ? pushes.peek(display.id, 0) : undefined));
     setText("alternative-korean", ko[1] ?? meaningTexts.preparing);
@@ -622,7 +645,7 @@ function renderSuggestions(): void {
       : generating ? display ? "새 답변 준비 중 · 아래는 이전 질문용 답변" : "답변 준비 중 · 완성되면 표시합니다"
         : display?.interrupted ? "답변 생성이 중단되었습니다 · 근거를 확인하지 못했습니다"
           : display ? "추천 문장입니다 · 내용 확인 후 사용하세요"
-            : controller.active ? "듣는 중 · 답변이 완성되면 표시합니다" : "시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴");
+            : controller.active ? "듣는 중 · 답변이 완성되면 표시합니다" : idleStatus(settings));
   const hold = $<HTMLButtonElement>("hold-answer");
   hold.disabled = !display;
   setPressed("hold-answer", state.readingHeld);

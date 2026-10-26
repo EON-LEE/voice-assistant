@@ -127,7 +127,7 @@ test('reading view shows both suggestions at the top and keeps the details close
   await expect(page.locator('#live-details')).not.toHaveAttribute('open');
   await expect(page.locator('#conversation')).toBeHidden();
   await expect(page.locator('#sources-text')).toBeHidden();
-  // 추천 2 sits right below 추천 1, outside the fold, a little smaller than the first.
+  // 추천 2 sits right below 추천 1, outside the fold, clearly smaller than the first.
   await expect(page.locator('#answer-text')).toBeVisible();
   await expect(page.locator('#alternative-text')).toBeVisible();
   expect(await page.locator('.live-card:visible').count()).toBe(2);
@@ -137,7 +137,7 @@ test('reading view shows both suggestions at the top and keeps the details close
       !document.querySelector('#live-details').contains(alternative);
   })).toBe(true);
   const size = selector => page.locator(selector).evaluate(el => parseFloat(getComputedStyle(el).fontSize));
-  expect(await size('#alternative-text')).toBeCloseTo(await size('#answer-text') * 0.9, 1);
+  expect(await size('#alternative-text')).toBeCloseTo(await size('#answer-text') * 0.8, 1);
   expect(await size('#alternative-text')).toBeGreaterThan(await size('#answer-korean'));
   expect(await size('#alternative-label')).toBeLessThan(await size('#primary-label'));
   await page.locator('#live-details summary').focus();
@@ -185,6 +185,46 @@ test('추천 1 and 추천 2 stand at the top, a one-line reply shows only the fi
   await expect(page.locator('#sources-text')).toHaveText('Fictional risk register');
   await page.locator('#toggle-captions').click();
   await expect(page.locator('#details-summary')).toHaveText('상세 근거');
+});
+
+test('a glance finds 추천 1: its first sentence stands out on a solid card, a new answer glows once and an earlier one dims', async ({ page }) => {
+  // Records which elements start an animation, so the glow is checked without racing its one second.
+  await page.addInitScript(() => {
+    window.__glows = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (...args) { window.__glows.push(this.getAttribute('aria-label')); return animate.apply(this, args); };
+  });
+  const ws = await meetingFixture(page);
+  const answer = page.locator('#answer-text'), card = page.locator('.live-card.primary');
+  const parts = () => answer.evaluate(el => [...el.children].map(part => [part.className, part.textContent]));
+  const color = () => answer.evaluate(el => getComputedStyle(el).color);
+  const glows = () => page.evaluate(() => window.__glows);
+  await expect(answer).toHaveText('답변이 완성되면 여기에 표시됩니다.');
+  expect(await parts()).toEqual([]);
+  reply(ws, 1, 'Does approval start the drafts?', 'Not yet. In this demo, approval only saves the status.');
+  await expect(answer).toHaveText('Not yet. In this demo, approval only saves the status.');
+  expect(await parts()).toEqual([['live-lead', 'Not yet.'], ['live-rest', ' In this demo, approval only saves the status.']]);
+  // Whatever shows through the see-through window, 추천 1 sits on an opaque card.
+  expect(await card.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(13, 21, 34)');
+  expect(await color()).toBe('rgb(255, 255, 255)');
+  expect(await glows()).toEqual(['추천 답변 1']);
+  // While the next reply is prepared, the earlier answer dims; it glows again only when a new answer replaces it.
+  ws.send({ type: 'transcript.final', turnId: 't2', revision: 1, text: 'And the risks?' });
+  ws.send({ type: 'response.started', turnId: 't2', responseId: 'r2' });
+  await expect(page.locator('#primary-label')).toHaveText('이전 질문용 답변');
+  expect(await color()).toBe('rgb(148, 165, 189)');
+  expect(await glows()).toEqual(['추천 답변 1']);
+  ws.send({ type: 'response.completed', turnId: 't2', responseId: 'r2', text: 'The main risk is the data migration.',
+    sources: [], grounding: 'disabled' });
+  await expect(answer).toHaveText('The main risk is the data migration.');
+  expect(await parts()).toEqual([['live-lead', 'The main risk is the data migration.']]);
+  expect(await color()).toBe('rgb(255, 255, 255)');
+  expect(await glows()).toEqual(['추천 답변 1', '추천 답변 1']);
+  // No glow for a user who asked the system for less motion.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  reply(ws, 3, 'Who owns it?', 'Your team owns the approval. We run the weekly refresh.');
+  await expect(answer).toHaveText('Your team owns the approval. We run the weekly refresh.');
+  expect(await glows()).toEqual(['추천 답변 1', '추천 답변 1']);
 });
 
 const replyRequests = ws => ws.translations.filter(item => item.kind === 'reply');
@@ -478,6 +518,8 @@ test('the quick settings are remembered, and settings saved by an older version 
   expect(await pressed(page, 'toggle-korean')).toBe('true');
   await expectNotesChip(page, true);
   await expect(page.locator('#my-notes')).toHaveValue('B안 선호. 예산 5천 달러 이하. 3분기 전에는 약속하지 않음.');
+  // With notes written, the idle status no longer suggests writing them.
+  await expect(page.locator('#reading-status')).toHaveText('시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴');
   await expect(page.locator('#caption-block')).toBeVisible();
   await expect(page.locator('#answer-meaning')).toBeVisible();
   await page.evaluate(() => localStorage.setItem('live-coach-settings',

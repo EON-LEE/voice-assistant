@@ -87,7 +87,13 @@ html, body.live-body { margin: 0; min-height: 100%; }
 .live-context { margin: 9px 0 0; font-size: 11px; color: #9db5d4; }
 
 .live-answers { min-width: 0; min-height: 0; overflow-y: auto; padding: 18px 20px; }
-.live-question { margin: 6px 0 22px; max-height: 6em; overflow-y: auto; font-size: 15px; line-height: 1.5; color: #b4c3d8; }
+/* What was heard sits on the same dark backing as the cards; text straight on the see-through panel gets a slight dark
+   halo against bright content behind the window. */
+.live-heard { margin-bottom: 18px; padding: 9px 12px 10px; border-radius: 9px; background: rgba(13, 21, 34, .92); }
+.live-status, .live-answers-header, .live-reading-status, .live-grounding, .live-details {
+  text-shadow: 0 0 2px #000, 0 1px 3px rgba(0, 0, 0, .9);
+}
+.live-question { margin: 5px 0 0; max-height: 6em; overflow-y: auto; font-size: 15px; line-height: 1.5; color: #d3deec; }
 .live-answers-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .live-answers-title { margin: 0; font-size: 14px; font-weight: 700; color: #a9c9ff; text-wrap: balance; }
 .live-hold {
@@ -113,22 +119,33 @@ html, body.live-body { margin: 0; min-height: 100%; }
 .live-grounding { margin: 12px 0 18px; }
 .live-badge {
   display: inline-block; font-size: 12px; line-height: 1.5; color: #c1cfe2; border: 1px solid #4b5c74;
-  border-radius: 6px; padding: 4px 8px;
+  border-radius: 6px; padding: 4px 8px; background: rgba(13, 21, 34, .9);
 }
 .live-badge[data-grounding="no_matches"], .live-badge[data-grounding="unavailable"] { color: #ffe2aa; border-color: #b08d53; }
 .live-badge[data-grounding="grounded"] { color: #b4e2c8; border-color: #57876a; }
+/* The cards carry their own dark backing: in the see-through LiveCoach window a white slide behind a 65% panel turns the
+   panel mid-grey, and the answers must stay readable whatever is behind them. */
 .live-card { margin-top: 12px; padding: 15px 16px; border-radius: 11px; }
-.live-card.primary { background: rgba(115, 156, 222, .07); border: 1px solid rgba(154, 187, 238, .21); }
-/* 추천 2 sits right below 추천 1, a little quieter: a lighter card, a smaller label and 0.9 of the English size. */
-.live-card.secondary { background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .13); }
-.live-card.secondary .live-choice { font-size: 10px; }
+.live-card.primary { background: #0d1522; border: 1px solid rgba(154, 187, 238, .38); border-left: 4px solid #8fc1ff; }
+/* 추천 2 sits right below 추천 1, clearly quieter, so a glance lands on 추천 1: a smaller label, 0.8 of the English size
+   and dimmer text. */
+.live-card.secondary { background: rgba(13, 21, 34, .96); border: 1px solid rgba(255, 255, 255, .13); }
+.live-card.secondary .live-choice { font-size: 10px; color: #a6b5cc; }
 .live-choice { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: #b7d2ff; }
 /* --answer-scale is the A− / A+ choice; without it (the default) the sizes are exactly the stylesheet's. */
 .live-english { margin: 12px 0 16px; font-size: calc(clamp(22px, 4.8vw, 28px) * var(--answer-scale, 1)); line-height: 1.45; font-weight: 600; color: #fff; overflow-wrap: anywhere; }
-.live-card.secondary .live-english { font-size: calc(clamp(22px, 4.8vw, 28px) * var(--answer-scale, 1) * .9); }
+/* 추천 1's first sentence is the direct answer the reply starts with: it stands out, the rest reads as its follow-up. */
+.live-lead { font-weight: 700; }
+.live-rest { font-weight: 500; color: #dce5f2; }
+.live-card.secondary .live-english { font-size: calc(clamp(22px, 4.8vw, 28px) * var(--answer-scale, 1) * .8); font-weight: 500; color: #ccd7e6; }
 .live-meaning { border-top: 1px solid rgba(161, 197, 255, .19); padding-top: 10px; }
 .live-meaning-label { font-size: 11px; color: #aec8ef; }
-.live-meaning p { margin: 5px 0 0; font-size: 15px; line-height: 1.6; color: #b9c8de; }
+.live-meaning p { margin: 5px 0 0; font-size: 15px; line-height: 1.6; color: #d3deec; }
+.live-card.secondary .live-meaning p { font-size: 14px; color: #aebdd2; }
+/* While a newer reply is prepared, the answers on screen belong to the earlier question: they dim until it arrives. */
+.live-answers[data-previous="true"] .live-card.primary { border-left-color: #5d7394; }
+.live-answers[data-previous="true"] .live-english, .live-answers[data-previous="true"] .live-rest,
+.live-answers[data-previous="true"] .live-meaning p { color: #94a5bd; }
 .live-continuity { margin: 12px 0 0; font-size: 10px; color: #9baec9; white-space: pre-line; }
 .live-details { border-top: 1px solid #3a4a60; padding-top: 12px; }
 .live-details summary { width: fit-content; color: #c1cfe2; font-size: 12px; cursor: pointer; touch-action: manipulation; }

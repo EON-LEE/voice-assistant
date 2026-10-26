@@ -152,6 +152,16 @@ export function notesChipName(notes: string): string {
 }
 
 /**
+ * The reading status before a session starts. With neither a meeting topic nor notes, it suggests writing notes first, so a
+ * meeting does not start without them by oversight: suggestions follow the participant's notes (their role and position).
+ */
+export function idleStatus(settings: Pick<LiveSettings, "topic" | "notes">): string {
+  return settings.topic || settings.notes
+    ? "시작을 누르면 듣기 시작 · 설정은 우클릭 메뉴"
+    : "시작을 누르면 듣기 시작 · '내 메모'에 내 역할과 입장을 적으면 추천이 그 입장을 따릅니다";
+}
+
+/**
  * The live page's `session.start` options: its fixed meeting settings plus the chosen document search, topic, Korean,
  * `replyOn` and notes.
  */

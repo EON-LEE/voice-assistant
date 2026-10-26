@@ -15,6 +15,17 @@ export function answers(reply: LiveReply | null): string[] {
   if (!reply) return [];
   return reply.suggestions ?? (reply.text.trim() ? [reply.text] : []);
 }
+/**
+ * A reply line split after its first sentence, the direct answer the reply starts with, so the screen can set it apart.
+ * The two parts join back to exactly the line. A sentence ends at ".", "!" or "?" before a space and a capital letter or
+ * digit, so "U.S. customers" or "0.0446%" do not split; a line without such an end is all lead.
+ */
+export function leadSentence(text: string): [lead: string, rest: string] {
+  const end = /[.!?]+["'’”)\]]*(?=\s+["'‘“(]?[A-Z0-9])/u.exec(text);
+  if (!end) return [text, ""];
+  const at = end.index + end[0].length;
+  return [text.slice(0, at), text.slice(at)];
+}
 
 /**
  * The labels above the two suggestion cards. `previous`: the answer on screen is for an earlier question, because a newer
