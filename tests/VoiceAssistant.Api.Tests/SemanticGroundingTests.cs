@@ -146,6 +146,42 @@ public sealed class SemanticGroundingTests
         Assert.False(failure.Retrieval?.Transient);
     }
 
+    [Fact]
+    public async Task ConfiguredEvidenceCapLetsMoreRelevantChunksReachTheModel()
+    {
+        using var handler = new FixtureTransport(SearchResponse(3, count: 9));
+        using var http = new HttpClient(handler);
+        var grounding = await Provider(http, new ServiceSettings { ChatDeployment = "chat", EmbeddingDeployment = "embedding", SearchMaxEvidence = 8 })
+            .RetrieveAsync("Lighthouse plan", Oid, CancellationToken.None);
+        Assert.Equal(8, grounding.Documents.Count);
+    }
+
+    [Theory]
+    [InlineData(null, 5)]
+    [InlineData("", 5)]
+    [InlineData("1", 1)]
+    [InlineData("8", 8)]
+    [InlineData("10", 10)]
+    public void EvidenceCapDefaultsToFiveAndAcceptsOneToTen(string? value, int expected)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Azure:SearchMaxEvidence"] = value }).Build();
+        Assert.Equal(expected, ServiceSettings.ReadSearchMaxEvidence(config));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("11")]
+    [InlineData("-1")]
+    [InlineData("5.0")]
+    [InlineData("five")]
+    public void InvalidEvidenceCapFailsStartup(string value)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Azure:SearchMaxEvidence"] = value }).Build();
+        Assert.Throws<InvalidOperationException>(() => ServiceSettings.ReadSearchMaxEvidence(config));
+    }
+
     [Theory]
     [InlineData("""{"value":[{"@search.score":100,"title":"Fictional","content":"Text","url":"https://example.test"}]}""")]
     [InlineData("""{"@search.semanticPartialResponseReason":"maxWaitExceeded","value":[]}""")]
@@ -336,9 +372,9 @@ public sealed class SemanticGroundingTests
         Assert.Equal(1, handler.ChatCalls);
     }
 
-    private static AzureMeetingProvider Provider(HttpClient http)
+    private static AzureMeetingProvider Provider(HttpClient http, ServiceSettings? configured = null)
     {
-        var settings = new ServiceSettings { ChatDeployment = "chat", EmbeddingDeployment = "embedding" };
+        var settings = configured ?? new ServiceSettings { ChatDeployment = "chat", EmbeddingDeployment = "embedding" };
         var openAI = new AzureOpenAIClient(new Uri("https://example.openai.azure.com"),
             new ApiKeyCredential("test-only"), new AzureOpenAIClientOptions { Transport = new HttpClientPipelineTransport(http) });
         var search = new SearchClient(new Uri("https://example.search.windows.net"), "meeting", new AzureKeyCredential("test-only"),

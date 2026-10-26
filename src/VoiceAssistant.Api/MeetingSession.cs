@@ -436,7 +436,13 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                             else await StartResponseAsync(lifetime.Token, manual: false, gathered);
                             break;
                         }
-                        if (decision == ReplyDecision.Wait) break;
+                        if (decision == ReplyDecision.Wait)
+                        {
+                            // Experiment (Session:QuietReplyMs): a short statement nobody follows up is answered once the room
+                            // stays quiet; newer speech re-arms the settle, which voids this timer.
+                            if (features.QuietReplyMs > 0) ScheduleQuiet(lifetime);
+                            break;
+                        }
                         var currentSegments = pendingSpeech.Count;
                         pendingSpeech.Clear();
                         if (decision == ReplyDecision.Discard) break;
@@ -446,6 +452,20 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
                         }
                         else await StartResponseAsync(lifetime.Token, manual: false, currentSegments);
                         break;
+                    case "quiet" when message.Generation == settleNumber && pendingSpeech.Count > 0 && earlyReply is null:
+                    {
+                        // Nothing was said since the settle decided to wait, so the speaker is done: answer what was gathered.
+                        if (ReplyTrigger.Evaluate(pendingSpeech, options.QuestionsOnly) == ReplyDecision.Discard)
+                        {
+                            pendingSpeech.Clear();
+                            break;
+                        }
+                        var quietSegments = pendingSpeech.Count;
+                        pendingSpeech.Clear();
+                        if (responseActive) PreparePendingResponse(quietSegments);
+                        else await StartResponseAsync(lifetime.Token, manual: false, quietSegments);
+                        break;
+                    }
                     case "response.request":
                         if (options.TranscribeOnly) await ErrorAsync("transcribe_only", "This session only transcribes speech.", false, lifetime.Token);
                         else if (lastTurn is null) await ErrorAsync("no_transcript", "Wait for a finalized utterance.", true, lifetime.Token);
@@ -877,6 +897,19 @@ public sealed class MeetingSession(WebSocket socket, IMeetingProvider provider, 
         _ = Task.Delay(delay, clock, lifetime.Token).ContinueWith(task =>
         {
             if (task.IsCompletedSuccessfully) EnqueueCallback(new("settle", Generation: number), lifetime);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Experiment (<see cref="MeetingFeatures.QuietReplyMs"/>): after a settle that decided to wait for more context, a "quiet"
+    /// callback answers the gathered speech unless newer speech re-armed the settle (a newer settle number) in the meantime.
+    /// </summary>
+    private void ScheduleQuiet(CancellationTokenSource lifetime)
+    {
+        var number = settleNumber;
+        _ = Task.Delay(TimeSpan.FromMilliseconds(features.QuietReplyMs), clock, lifetime.Token).ContinueWith(task =>
+        {
+            if (task.IsCompletedSuccessfully) EnqueueCallback(new("quiet", Generation: number), lifetime);
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 

@@ -19,6 +19,13 @@ public sealed record MeetingFeatures
     public bool SpeculativeStart { get; init; }
 
     /// <summary>
+    /// With a settle window: gathered speech that waits for more context (a short statement, not a question or request) is
+    /// answered once the room stays quiet this many milliseconds after the settle. 0 (off) keeps waiting for more speech, so a
+    /// short answer to the user's own question ("Sure. The pricing first, then the timeline.") never got a reply.
+    /// </summary>
+    public int QuietReplyMs { get; init; }
+
+    /// <summary>
     /// Speech phrase hints from the caller's own materials, merged after the client's phrases into the recognizer's phrase list
     /// (not into prompts or translation). Null when switched off.
     /// </summary>

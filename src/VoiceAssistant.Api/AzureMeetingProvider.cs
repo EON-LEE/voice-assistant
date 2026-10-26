@@ -186,7 +186,7 @@ public sealed class AzureMeetingProvider : IMeetingProvider
                 var relevant = SemanticRelevance(match.SemanticSearch?.RerankerScore, settings.SearchMinimumRerankerScore);
                 if (relevant is null) { unscored++; continue; }
                 scored++;
-                if (relevant is false || documents.Count >= 5) continue;
+                if (relevant is false || documents.Count >= settings.SearchMaxEvidence) continue;
                 var document = match.Document;
                 if (!document.TryGetValue("content", out var body) || body is not string content ||
                     !document.TryGetValue("title", out var heading) || heading is not string title ||
