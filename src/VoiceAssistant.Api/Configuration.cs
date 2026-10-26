@@ -13,6 +13,11 @@ public sealed class ServiceSettings
     public string SpeechResourceId { get; init; } = "";
     public string OpenAIEndpoint { get; init; } = "";
     public string ChatDeployment { get; init; } = "";
+    /// <summary>
+    /// The deployment for the live answer only (the two suggested replies); null uses <see cref="ChatDeployment"/>. The turn
+    /// classifier, the Korean translation and practice keep <see cref="ChatDeployment"/>.
+    /// </summary>
+    public string? AnswerDeployment { get; init; }
     public int ChatMaxOutputTokens { get; init; } = 2048;
     /// <summary>Reasoning effort sent with the live answer request (minimal, low or medium); null sends none.</summary>
     public string? ChatReasoningEffort { get; init; }
@@ -63,6 +68,7 @@ public sealed class ServiceSettings
             SpeechResourceId = Get("Azure:SpeechResourceId"),
             OpenAIEndpoint = Get("Azure:OpenAIEndpoint"),
             ChatDeployment = Get("Azure:ChatDeployment"),
+            AnswerDeployment = ReadDeploymentName(config, "Azure:AnswerDeployment"),
             ChatMaxOutputTokens = ReadChatTokenLimit(config),
             ChatReasoningEffort = ReadReasoningEffort(config, "Azure:ChatReasoningEffort"),
             ChatAuxiliaryReasoningEffort = ReadReasoningEffort(config, "Azure:ChatAuxiliaryReasoningEffort"),
@@ -131,6 +137,21 @@ public sealed class ServiceSettings
         return effort is "minimal" or "low" or "medium"
             ? effort
             : throw new InvalidOperationException($"{key} must be minimal, low or medium when set.");
+    }
+
+    /// <summary>
+    /// An optional Azure OpenAI deployment name (letters, digits, '.', '-' and '_', at most 64 characters). Unset or empty is
+    /// null; anything else prevents startup rather than sending requests to a malformed path.
+    /// </summary>
+    public static string? ReadDeploymentName(IConfiguration config, string key)
+    {
+        var value = config[key];
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var name = value.Trim();
+        return System.Text.RegularExpressions.Regex.IsMatch(name, @"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\z",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+            ? name
+            : throw new InvalidOperationException($"{key} must be a deployment name (letters, digits, '.', '-', '_') when set.");
     }
 
     /// <summary>An optional experiment switch: unset is off; <c>true</c> or <c>false</c> in any case; anything else prevents startup.</summary>
