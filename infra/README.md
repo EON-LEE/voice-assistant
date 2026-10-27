@@ -10,7 +10,7 @@ document crawler, or production fake-authentication mode is provisioned.
 
 `main.bicep` targets an **existing resource group**. It creates a Consumption
 Container Apps environment/app, user-assigned runtime identity, Speech account
-with a custom subdomain, Azure OpenAI account with chat, live-answer and embedding deployments,
+with a custom subdomain, Azure OpenAI account with chat and embedding deployments (and an optional live-answer deployment, off by default),
 AI Search, an anonymous-access-disabled Blob documents container, and a
 metric-only no-replica alert. The Azure OpenAI resource exposes the standard
 Azure OpenAI endpoint usable with Foundry/Azure SDKs; this does not create a
