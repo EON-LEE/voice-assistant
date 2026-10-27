@@ -132,13 +132,15 @@ try {
         (@($env | Where-Object name -EQ 'Session__QuietReplyMs')[0].value -eq '1500')) 'The evaluated early reply start, material phrase hints, speculative start and quiet reply are enabled'
     $answer = @($template.resources | Where-Object { $_.type -EQ 'Microsoft.CognitiveServices/accounts/deployments' -and
         $_.properties.model.name -eq "[parameters('answerModelName')]" })[0]
-    Assert-True ($null -ne $answer -and $answer.properties.versionUpgradeOption -eq 'NoAutoUpgrade' -and
+    Assert-True ($null -ne $answer -and $answer.condition -eq "[parameters('useAnswerDeployment')]" -and
+        $template.parameters.useAnswerDeployment.defaultValue -eq $false -and
+        $answer.properties.versionUpgradeOption -eq 'NoAutoUpgrade' -and
         $template.parameters.answerModelName.defaultValue -eq 'gpt-5.6-terra' -and
         $template.parameters.answerDeploymentName.defaultValue -eq 'meeting-answer' -and
         $template.parameters.answerReasoningEffort.defaultValue -eq 'low' -and
-        (@($env | Where-Object name -EQ 'Azure__AnswerDeployment')[0].value -eq "[parameters('answerDeploymentName')]") -and
-        (@($env | Where-Object name -EQ 'Azure__ChatReasoningEffort')[0].value -eq "[parameters('answerReasoningEffort')]") -and
-        (@($env | Where-Object name -EQ 'Azure__ChatDeployment')[0].value -eq "[parameters('chatDeploymentName')]")) 'The evaluated answer model has its own pinned deployment; the classifier and translation keep the chat deployment'
+        (@($env | Where-Object name -EQ 'Azure__AnswerDeployment')[0].value -eq "[if(parameters('useAnswerDeployment'), parameters('answerDeploymentName'), '')]") -and
+        (@($env | Where-Object name -EQ 'Azure__ChatReasoningEffort')[0].value -eq "[if(parameters('useAnswerDeployment'), parameters('answerReasoningEffort'), '')]") -and
+        (@($env | Where-Object name -EQ 'Azure__ChatDeployment')[0].value -eq "[parameters('chatDeploymentName')]")) 'The evaluated answer model is an opt-in, pinned deployment (off by default); the classifier and translation keep the chat deployment'
     $environment = @($template.resources | Where-Object type -EQ 'Microsoft.App/managedEnvironments')[0]
     Assert-True ($template.parameters.enableDiagnostics.defaultValue -eq $true -and
         $environment.properties.appLogsConfiguration -match "if\(parameters\('enableDiagnostics'\)" -and

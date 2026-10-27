@@ -32,7 +32,9 @@ param chatDeploymentName string = 'meeting-chat'
 param chatDeploymentSku string
 @minValue(1)
 param chatCapacity int
-@description('Model for the live answer only (the two suggested replies). The turn classifier, Korean translation and practice use the chat deployment.')
+@description('Write the live answer (the two suggested replies) with its own deployment, below. Off: the chat deployment writes it. On staging the answer model gave more usable answers on held-out questions, but at a busy hour its first line came about 1.1 s later at p50 and 2 of 108 answers hit the 30 s deadline, so it is off by default.')
+param useAnswerDeployment bool = false
+@description('Model for the live answer only, when useAnswerDeployment is on. The turn classifier, Korean translation and practice use the chat deployment.')
 param answerModelName string = 'gpt-5.6-terra'
 param answerModelVersion string = '2026-07-09'
 param answerDeploymentName string = 'meeting-answer'
@@ -152,8 +154,8 @@ resource embedding 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01'
   dependsOn: [chat]
 }
 
-@description('The live answer model; serialized after the other account deployments.')
-resource answer 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+@description('The live answer model, when useAnswerDeployment is on; serialized after the other account deployments.')
+resource answer 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = if (useAnswerDeployment) {
   parent: openAI
   name: answerDeploymentName
   sku: { name: answerDeploymentSku, capacity: answerCapacity }
@@ -355,10 +357,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           { name: 'Azure__SpeechEndpoint', value: speech.properties.endpoint }
           { name: 'Azure__OpenAIEndpoint', value: openAI.properties.endpoint }
           { name: 'Azure__ChatDeployment', value: chatDeploymentName }
-          // Evaluated on staging against the chat model on the same hold-out questions: more usable answers and fewer factual
-          // errors at about the same first-line latency. The classifier and translation stay on the chat deployment.
-          { name: 'Azure__AnswerDeployment', value: answerDeploymentName }
-          { name: 'Azure__ChatReasoningEffort', value: answerReasoningEffort }
+          // Off by default (useAnswerDeployment): empty values leave both unset, so the chat deployment writes the answer
+          // without a reasoning effort. The classifier and translation always stay on the chat deployment.
+          { name: 'Azure__AnswerDeployment', value: useAnswerDeployment ? answerDeploymentName : '' }
+          { name: 'Azure__ChatReasoningEffort', value: useAnswerDeployment ? answerReasoningEffort : '' }
           { name: 'Azure__EmbeddingDeployment', value: embeddingDeploymentName }
           { name: 'Azure__SearchEndpoint', value: 'https://${search.name}.search.windows.net' }
           { name: 'Azure__SearchIndex', value: searchIndexName }
